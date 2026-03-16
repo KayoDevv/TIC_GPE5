@@ -1,0 +1,16 @@
+# Standard Python & Node.js gitignore
+node_modules/
+__pycache__/
+*.py[cod]
+*$py.class
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+dist/
+build/
+*.egg-info/
+.DS_Store

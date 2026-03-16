@@ -1,0 +1,55 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "VerdictResultEvent",
+    "type": "object",
+    "properties": {
+        "job_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "ID unique de la requête d'analyse"
+        },
+        "final_decision": {
+            "type": "string",
+            "enum": [
+                "allowed",
+                "blocked",
+                "warning"
+            ],
+            "description": "Décision finale à appliquer par le Frontend"
+        },
+        "user_explanation": {
+            "type": "string",
+            "description": "Texte explicatif généré par le LLM Layer (si disponible) ou généré par défaut lors d'un timeout Sandbox"
+        },
+        "technical_summary": {
+            "type": "object",
+            "properties": {
+                "ml_layer_score": {
+                    "type": "integer"
+                },
+                "sandbox_layer_iocs": {
+                    "type": "array",
+                    "items": {
+                        "type": "object"
+                    }
+                },
+                "sandbox_layer_timeout": {
+                    "type": "boolean"
+                },
+                "llm_layer_malicious": {
+                    "type": "boolean"
+                }
+            },
+            "description": "Résumé des données ayant conduit à la décision (utile pour l'historique et le dashboard Admin)"
+        },
+        "timestamp": {
+            "type": "string",
+            "format": "date-time"
+        }
+    },
+    "required": [
+        "job_id",
+        "final_decision",
+        "timestamp"
+    ]
+}

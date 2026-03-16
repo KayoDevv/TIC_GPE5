@@ -1,0 +1,36 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "FileRequestedEvent",
+  "type": "object",
+  "properties": {
+    "job_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "ID unique de la requête d'analyse"
+    },
+    "s3_url": {
+      "type": "string",
+      "format": "uri",
+      "description": "URL S3 pré-signée ou chemin du fichier à analyser dans le bucket"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[A-Fa-f0-9]{64}$",
+      "description": "Empreinte SHA-256 du fichier"
+    },
+    "email_context": {
+      "type": "object",
+      "properties": {
+        "sender": {"type": "string", "format": "email"},
+        "subject": {"type": "string"},
+        "body_text": {"type": "string", "description": "Contenu du corps de l'email pour le LLM"}
+      },
+      "required": ["sender", "subject", "body_text"]
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "required": ["job_id", "s3_url", "sha256", "email_context", "timestamp"]
+}

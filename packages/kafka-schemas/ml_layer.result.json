@@ -1,0 +1,38 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "MlLayerResultEvent",
+    "type": "object",
+    "properties": {
+        "job_id": {
+            "type": "string",
+            "format": "uuid"
+        },
+        "risk_score": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100,
+            "description": "Score de risque calculé par le modèle ML statique"
+        },
+        "static_tags": {
+            "type": "array",
+            "items": {
+                "type": "string"
+            },
+            "description": "Tags tels que 'packer_detected', 'high_entropy', 'known_malware'"
+        },
+        "processing_time_ms": {
+            "type": "integer",
+            "description": "Temps de traitement en ms (SLA < 500ms)"
+        },
+        "timestamp": {
+            "type": "string",
+            "format": "date-time"
+        }
+    },
+    "required": [
+        "job_id",
+        "risk_score",
+        "static_tags",
+        "timestamp"
+    ]
+}

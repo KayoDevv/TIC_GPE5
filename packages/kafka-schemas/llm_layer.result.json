@@ -1,0 +1,34 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "LlmLayerResultEvent",
+    "type": "object",
+    "properties": {
+        "job_id": {
+            "type": "string",
+            "format": "uuid"
+        },
+        "is_malicious": {
+            "type": "boolean",
+            "description": "Décision binaire Malveillant/Sain"
+        },
+        "explanation_text": {
+            "type": "string",
+            "description": "Explication en langage naturel pour l'UI Frontend"
+        },
+        "confidence_score": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100
+        },
+        "timestamp": {
+            "type": "string",
+            "format": "date-time"
+        }
+    },
+    "required": [
+        "job_id",
+        "is_malicious",
+        "explanation_text",
+        "timestamp"
+    ]
+}
