@@ -1,0 +1,86 @@
+name: Sanity & Credentials Checks
+
+on:
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  credentials-check:
+    name: Credentials Checker
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          verbose: true
+
+  sanity-check:
+    name: Codebase Sanity Checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check for empty files
+        run: |
+          echo "Scanning for empty files..."
+          # Python __init__.py files are allowed to be empty, as well as typical placeholder files
+          EMPTY_FILES=$(find . -type f -empty -not -path "*/\.git/*" -not -name "__init__.py" -not -name ".gitkeep" -not -path "*/node_modules/*" -not -path "*/\.github/*" -not -path "*/venv/*" -not -path "*/\.venv/*")
+          if [ -n "$EMPTY_FILES" ]; then
+            echo "❌ Error: Found empty files which are not allowed:"
+            echo "$EMPTY_FILES"
+            exit 1
+          fi
+          echo "✅ No empty files found."
+
+      - name: Check for unrequired files
+        run: |
+          echo "Scanning for unrequired/forbidden files (.DS_Store, *.pyc, *.log, __pycache__)..."
+          BAD_FILES=$(find . -type f \( -name ".DS_Store" -o -name "*.pyc" -o -name "*.log" \) -not -path "*/\.git/*" -not -path "*/node_modules/*" -not -path "*/venv/*" -not -path "*/\.venv/*")
+          BAD_DIRS=$(find . -type d -name "__pycache__" -not -path "*/\.git/*" -not -path "*/node_modules/*" -not -path "*/venv/*" -not -path "*/\.venv/*")
+          
+          FAILED=0
+          if [ -n "$BAD_FILES" ]; then
+            echo "❌ Error: Found forbidden files:"
+            echo "$BAD_FILES"
+            FAILED=1
+          fi
+          
+          if [ -n "$BAD_DIRS" ]; then
+            echo "❌ Error: Found forbidden directories:"
+            echo "$BAD_DIRS"
+            FAILED=1
+          fi
+          
+          if [ $FAILED -ne 0 ]; then
+            exit 1
+          fi
+          echo "✅ No unrequired files found."
+
+      - name: Check for merge conflict markers
+        run: |
+          echo "Scanning for remaining merge conflict markers..."
+          MARKERS=$(grep -rn '^<<<<<<< ' . --exclude-dir=.git --exclude-dir=node_modules || true)
+          if [ -n "$MARKERS" ]; then
+            echo "❌ Error: Found merge conflict markers:"
+            echo "$MARKERS"
+            exit 1
+          fi
+          echo "✅ No merge conflict markers found."
+
+      - name: Base Python Syntax Check
+        run: |
+          echo "Running Python syntax validation..."
+          python -m compileall -q .
+          echo "✅ All Python files have valid syntax."
