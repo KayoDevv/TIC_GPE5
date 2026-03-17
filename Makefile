@@ -1,18 +1,22 @@
-.PHONY: help up down test lint format
+.PHONY: help up down test lint format kafka-logs
 
 help:
 	@echo "Commandes disponibles :"
-	@echo "  make up      - Démarre l'environnement de développement local (Kafka, Redis, MinIO)"
-	@echo "  make down    - Arrête l'environnement de développement local"
-	@echo "  make test    - Lance tous les tests (Frontend et Backend)"
-	@echo "  make lint    - Vérifie le formatage du code"
-	@echo "  make format  - Formate le code (--fix)"
+	@echo "  make up          - Démarre l'environnement de développement local (Kafka, Redis, MinIO)"
+	@echo "  make down        - Arrête l'environnement de développement local"
+	@echo "  make kafka-logs  - Affiche les logs du conteneur d'init Kafka"
+	@echo "  make test        - Lance tous les tests (Frontend et Backend)"
+	@echo "  make lint        - Vérifie le formatage du code"
+	@echo "  make format      - Formate le code (--fix)"
 
 up:
 	docker-compose up -d
 
 down:
 	docker-compose down
+
+kafka-logs:
+	docker-compose logs -f kafka-init
 
 test:
 	# Ajoutez ici les commandes pour lancer vos tests (ex: pytest, playwright)
