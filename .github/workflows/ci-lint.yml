@@ -1,0 +1,110 @@
+name: CI - Lint YAML, Kubernetes, Docker, Terraform
+
+on:
+  push:
+    branches: [main, feat/**]
+  pull_request:
+    branches: [main]
+
+jobs:
+  yaml-lint:
+    name: YAML Syntax Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Install yamllint
+        run: pip install yamllint
+
+      - name: Run yamllint
+        run: |
+          FILES=$(find . \( -name '*.yaml' -o -name '*.yml' \) | grep -v '.github/' || true)
+          if [ -z "$FILES" ]; then
+            echo "No YAML files found, skipping"
+            exit 0
+          fi
+          echo "$FILES" | xargs yamllint -c .yamllint.yml
+
+  kube-validate:
+    name: Kubernetes Manifest Validation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Install kubeconform
+        run: |
+          curl -sSL https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz | \
+          sudo tar xz -C /usr/local/bin
+
+      - name: Validate K8s manifests
+        run: |
+          FILES=$(find infrastructure \( -name '*.yaml' -o -name '*.yml' \) | grep -v 'terraform/' | grep -v 'scripts/' || true)
+          if [ -z "$FILES" ]; then
+            echo "No K8s manifests found, skipping validation"
+            exit 0
+          fi
+          echo "$FILES" | xargs kubeconform -strict -verbose -summary
+
+  dockerfile-lint:
+    name: Dockerfile Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Install hadolint
+        run: |
+          curl -sSL https://github.com/hadolint/hadolint/releases/latest/download/hadolint-Linux-x86_64 \
+          -o /usr/local/bin/hadolint && sudo chmod +x /usr/local/bin/hadolint
+
+      - name: Lint Dockerfiles
+        run: |
+          FILES=$(find . -name 'Dockerfile*')
+          if [ -z "$FILES" ]; then
+            echo "No Dockerfiles found, skipping"
+            exit 0
+          fi
+          while IFS= read -r f; do
+            echo "Linting $f"
+            hadolint "$f"
+          done <<< "$FILES"
+
+  docker-compose-validate:
+    name: Docker Compose Validation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Validate docker-compose
+        run: |
+          FILES=$(find . \( -name 'docker-compose*.yml' -o -name 'docker-compose*.yaml' \))
+          if [ -z "$FILES" ]; then
+            echo "No docker-compose files found, skipping"
+            exit 0
+          fi
+          while IFS= read -r f; do
+            echo "Validating $f"
+            docker compose -f "$f" config --quiet
+          done <<< "$FILES"
+
+  terraform-validate:
+    name: Terraform Validation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Check formatting
+        run: terraform -chdir=infrastructure/terraform fmt -check -recursive
+
+      - name: Initialize Terraform
+        run: terraform -chdir=infrastructure/terraform init -backend=false
+
+      - name: Validate Terraform
+        run: terraform -chdir=infrastructure/terraform validate
