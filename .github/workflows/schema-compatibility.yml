@@ -1,0 +1,132 @@
+name: Kafka Schema Compatibility
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'packages/kafka-schemas/**'
+
+jobs:
+  schema-compatibility:
+    name: Validate Schema Backward Compatibility
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout PR branch
+        uses: actions/checkout@v4
+
+      - name: Start Kafka stack
+        run: |
+          docker compose up -d zookeeper kafka schema-registry
+          echo "Waiting for Schema Registry to be ready..."
+          for i in $(seq 1 30); do
+            if curl -s -o /dev/null -w "%{http_code}" http://localhost:8081/subjects | grep -q "200"; then
+              echo "Schema Registry is ready."
+              break
+            fi
+            echo "  Retry $i/30..."
+            sleep 3
+          done
+
+      - name: Set global compatibility to BACKWARD_TRANSITIVE
+        run: |
+          curl -s -X PUT \
+            -H "Content-Type: application/vnd.schemaregistry.v1+json" \
+            --data '{"compatibility": "BACKWARD_TRANSITIVE"}' \
+            http://localhost:8081/config
+
+      - name: Register base schemas from main branch
+        run: |
+          # Fetch main branch schemas
+          git fetch origin main
+          mkdir -p /tmp/base-schemas
+          git show origin/main:packages/kafka-schemas/file.requested.json        > /tmp/base-schemas/file.requested.json        2>/dev/null || true
+          git show origin/main:packages/kafka-schemas/ml_layer.result.json       > /tmp/base-schemas/ml_layer.result.json       2>/dev/null || true
+          git show origin/main:packages/kafka-schemas/sandbox_layer.result.json  > /tmp/base-schemas/sandbox_layer.result.json  2>/dev/null || true
+          git show origin/main:packages/kafka-schemas/llm_layer.result.json      > /tmp/base-schemas/llm_layer.result.json      2>/dev/null || true
+          git show origin/main:packages/kafka-schemas/verdict_layer.result.json  > /tmp/base-schemas/verdict_layer.result.json  2>/dev/null || true
+
+          # Register each base schema (skip if file is empty / new schema)
+          declare -A SCHEMA_MAP=(
+            ["file.requested"]="file.requested.json"
+            ["ml_layer.result"]="ml_layer.result.json"
+            ["sandbox_layer.result"]="sandbox_layer.result.json"
+            ["llm_layer.result"]="llm_layer.result.json"
+            ["verdict.result"]="verdict_layer.result.json"
+          )
+
+          for TOPIC in "${!SCHEMA_MAP[@]}"; do
+            FILE="/tmp/base-schemas/${SCHEMA_MAP[$TOPIC]}"
+            SUBJECT="${TOPIC}-value"
+            if [ ! -s "$FILE" ]; then
+              echo "No base schema for $SUBJECT (new schema) — skipping."
+              continue
+            fi
+            SCHEMA_CONTENT=$(cat "$FILE" | python3 -c "import sys,json; print(json.dumps(json.dumps(json.load(sys.stdin))))")
+            PAYLOAD="{\"schema\": ${SCHEMA_CONTENT}, \"schemaType\": \"JSON\"}"
+            echo "Registering base: $SUBJECT"
+            curl -s -X POST \
+              -H "Content-Type: application/vnd.schemaregistry.v1+json" \
+              --data "$PAYLOAD" \
+              "http://localhost:8081/subjects/$SUBJECT/versions"
+            echo ""
+          done
+
+      - name: Test PR schemas for compatibility
+        run: |
+          declare -A SCHEMA_MAP=(
+            ["file.requested"]="file.requested.json"
+            ["ml_layer.result"]="ml_layer.result.json"
+            ["sandbox_layer.result"]="sandbox_layer.result.json"
+            ["llm_layer.result"]="llm_layer.result.json"
+            ["verdict.result"]="verdict_layer.result.json"
+          )
+
+          FAILED=0
+          for TOPIC in "${!SCHEMA_MAP[@]}"; do
+            FILE="packages/kafka-schemas/${SCHEMA_MAP[$TOPIC]}"
+            SUBJECT="${TOPIC}-value"
+            if [ ! -f "$FILE" ]; then
+              continue
+            fi
+
+            SCHEMA_CONTENT=$(cat "$FILE" | python3 -c "import sys,json; print(json.dumps(json.dumps(json.load(sys.stdin))))")
+            PAYLOAD="{\"schema\": ${SCHEMA_CONTENT}, \"schemaType\": \"JSON\"}"
+
+            # Check if subject exists (new schemas skip compatibility test)
+            EXISTS=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:8081/subjects/$SUBJECT/versions")
+            if [ "$EXISTS" != "200" ]; then
+              echo "New schema $SUBJECT — no compatibility check needed."
+              continue
+            fi
+
+            echo -n "Checking compatibility: $SUBJECT ... "
+            RESPONSE=$(curl -s -X POST \
+              -H "Content-Type: application/vnd.schemaregistry.v1+json" \
+              --data "$PAYLOAD" \
+              "http://localhost:8081/compatibility/subjects/$SUBJECT/versions/latest")
+
+            IS_COMPATIBLE=$(echo "$RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin).get('is_compatible', False))" 2>/dev/null || echo "false")
+
+            if [ "$IS_COMPATIBLE" = "True" ]; then
+              echo "PASS"
+            else
+              echo "FAIL"
+              echo "  Response: $RESPONSE"
+              FAILED=1
+            fi
+          done
+
+          if [ $FAILED -ne 0 ]; then
+            echo ""
+            echo "Schema compatibility check failed. Your changes break the BACKWARD_TRANSITIVE contract."
+            echo "See: docs/architecture/schema_registry_specifications.md for evolution rules."
+            exit 1
+          fi
+
+          echo ""
+          echo "All schema compatibility checks passed."
+
+      - name: Teardown
+        if: always()
+        run: docker compose down
