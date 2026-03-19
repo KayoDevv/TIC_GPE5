@@ -1,0 +1,1 @@
+# Fichier principal - Les ressources sont réparties dans les fichiers thématiques.
