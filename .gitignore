@@ -20,3 +20,7 @@ build/
 *.tfstate
 *.tfstate.backup
 .terraform.lock.hcl
+
+# Claude
+.claude/
+*CLAUDE.md
