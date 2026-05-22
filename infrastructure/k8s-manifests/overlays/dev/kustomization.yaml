@@ -1,0 +1,21 @@
+# Overlay dev — K3s natif (GPE-NYX) avec Bitnami Kafka + MinIO StatefulSet
+# in-cluster. NetworkPolicies enforced via kube-router (DaemonSet kube-system).
+#
+# Déploiement : make deploy-dev (qui chaîne import-images + apply -k).
+
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: sandbox
+
+resources:
+  - ../../applications/sandbox
+
+patches:
+  - path: consumer-env-patch.yaml
+    target:
+      kind: Deployment
+      name: sandbox-consumer
+  - path: watcher-env-patch.yaml
+    target:
+      kind: Deployment
+      name: minio-watcher

@@ -1,0 +1,148 @@
+# MinIO standalone StatefulSet — pivot depuis MinIO Operator Tenant (2026-05-13).
+#
+# Pourquoi le pivot :
+#   - La VM GPE-NYX a un CPU x86-64-v1 (baseline, sans SSE4.2)
+#   - MinIO post 2023-03 est compilé avec GOAMD64=v2 → crash "Fatal glibc error: CPU does not support x86-64-v2"
+#   - On doit pin MinIO RELEASE.2023-01-25 (dernière build v1-compatible)
+#   - Mais MinIO Operator v5 ne supporte plus cette image (matrice de compat)
+#
+# Solution : StatefulSet standard avec MinIO standalone. Plus simple, pas d'Operator.
+# Même comportement que docker-compose mais in-cluster.
+#
+# Durcissement Phase 9 : reconfigurer la VM en CPU host-passthrough pour exposer
+# SSE4.2+ et migrer vers MinIO Operator + MinIO récent.
+---
+# Secret credentials (durcissement Phase 9 : External Secrets Operator + Vault)
+apiVersion: v1
+kind: Secret
+metadata:
+  name: minio-creds
+  namespace: minio
+type: Opaque
+stringData:
+  MINIO_ROOT_USER: minioadmin
+  MINIO_ROOT_PASSWORD: minioadmin
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: minio
+  namespace: minio
+  labels:
+    app: minio
+spec:
+  serviceName: minio-headless
+  replicas: 1
+  selector:
+    matchLabels:
+      app: minio
+  template:
+    metadata:
+      labels:
+        app: minio
+    spec:
+      containers:
+        - name: minio
+          # Dernière release MinIO compilée pour x86-64-v1 (janvier 2023).
+          # Les versions ultérieures requièrent v2 (SSE4.2/POPCNT).
+          image: quay.io/minio/minio:RELEASE.2023-01-25T00-19-54Z
+          imagePullPolicy: IfNotPresent
+          args:
+            - server
+            - /data
+            - --console-address
+            - ":9001"
+          ports:
+            - name: api
+              containerPort: 9000
+              protocol: TCP
+            - name: console
+              containerPort: 9001
+              protocol: TCP
+          envFrom:
+            - secretRef:
+                name: minio-creds
+          env:
+            # Notification target Kafka — active dès le démarrage MinIO,
+            # poussée sur le topic minio.events (consumé par minio-watcher).
+            - name: MINIO_NOTIFY_KAFKA_ENABLE_charon
+              value: "on"
+            - name: MINIO_NOTIFY_KAFKA_BROKERS_charon
+              value: "kafka.kafka.svc.cluster.local:9092"
+            - name: MINIO_NOTIFY_KAFKA_TOPIC_charon
+              value: minio.events
+            - name: MINIO_NOTIFY_KAFKA_TLS_charon
+              value: "off"
+            - name: MINIO_NOTIFY_KAFKA_SASL_ENABLE_charon
+              value: "off"
+          readinessProbe:
+            httpGet:
+              path: /minio/health/ready
+              port: 9000
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /minio/health/live
+              port: 9000
+            initialDelaySeconds: 30
+            periodSeconds: 15
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "1"
+              memory: "1Gi"
+          volumeMounts:
+            - name: data
+              mountPath: /data
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        # storageClassName laissé vide → utilise local-path (K3s par défaut)
+        resources:
+          requests:
+            storage: 5Gi
+---
+# Service `minio` ClusterIP — DNS minio.minio.svc.cluster.local:9000
+# (raccourci aligné avec overlays prod, consumer/watcher env vars, CLAUDE.md).
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio
+  namespace: minio
+  labels:
+    app: minio
+spec:
+  type: ClusterIP
+  selector:
+    app: minio
+  ports:
+    - name: api
+      port: 9000
+      targetPort: 9000
+      protocol: TCP
+    - name: console
+      port: 9001
+      targetPort: 9001
+      protocol: TCP
+---
+# Service headless requis par le StatefulSet (DNS stable per-pod).
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio-headless
+  namespace: minio
+  labels:
+    app: minio
+spec:
+  clusterIP: None
+  selector:
+    app: minio
+  ports:
+    - name: api
+      port: 9000
+      targetPort: 9000

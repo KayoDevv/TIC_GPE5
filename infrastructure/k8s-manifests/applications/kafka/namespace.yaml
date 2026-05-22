@@ -1,0 +1,10 @@
+# Namespace pour Kafka in-cluster (Bitnami chart). Le label
+# `kubernetes.io/metadata.name: kafka` (auto-ajouté par K8s) est référencé par
+# les NetworkPolicies sandbox via `namespaceSelector` pour autoriser l'egress.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: kafka
+  labels:
+    name: kafka

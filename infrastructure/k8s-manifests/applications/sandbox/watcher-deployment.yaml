@@ -1,0 +1,78 @@
+# minio-watcher — transformateur MinIO events → FileRequestedEvent.
+# Écoute le topic minio.events (notifications S3 natives MinIO),
+# génère un FileRequestedEvent et publie sur file.requested.
+#
+# Sécurité — moindre privilège :
+#   - ServiceAccount sans aucun droit API K8s
+#   - automountServiceAccountToken: false
+#   - runAsNonRoot, readOnlyRootFilesystem, drop ALL caps, seccomp RuntimeDefault
+#   - NetworkPolicy egress : Kafka + MinIO uniquement (pas d'API K8s)
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: minio-watcher
+  namespace: sandbox
+  labels:
+    app.kubernetes.io/name: minio-watcher
+    app.kubernetes.io/part-of: charon
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: minio-watcher
+  template:
+    metadata:
+      labels:
+        app: minio-watcher
+    spec:
+      serviceAccountName: sandbox-watcher
+      automountServiceAccountToken: false
+      containers:
+        - name: watcher
+          image: ghcr.io/kayodevv/charon-minio-watcher:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            # IP du node K8s où tourne ce pod (injectée par DownwardAPI).
+            - name: NODE_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.hostIP
+            # Endpoints fallback ($(NODE_IP) résolu à l'IP du node).
+            # Override par overlays/dev/watcher-env-patch.yaml pour pointer
+            # sur les DNS K8s in-cluster.
+            - name: KAFKA_BOOTSTRAP
+              value: "$(NODE_IP):9093"
+            - name: MINIO_ENDPOINT
+              value: "$(NODE_IP):9000"
+            - name: MINIO_PRESIGN_ENDPOINT
+              value: "$(NODE_IP):9000"
+            # Constantes.
+            - name: MINIO_TOPIC_IN
+              value: "minio.events"
+            - name: KAFKA_TOPIC_OUT
+              value: "file.requested"
+            - name: MINIO_ACCESS_KEY
+              value: "minioadmin"
+            - name: MINIO_SECRET_KEY
+              value: "minioadmin"
+            - name: MINIO_BUCKET
+              value: "sandbox-reports"
+          resources:
+            requests: {cpu: "50m", memory: "64Mi"}
+            limits: {cpu: "200m", memory: "128Mi"}
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 10002
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
+            readOnlyRootFilesystem: true
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}

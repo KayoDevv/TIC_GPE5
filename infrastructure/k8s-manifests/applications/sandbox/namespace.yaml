@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: sandbox
+  labels:
+    app.kubernetes.io/part-of: charon
+    # Pod Security Admission = privileged (INTENTIONNEL).
+    # Les Jobs d'analyse ajoutent CAP_SYS_PTRACE (requis par `strace -f`), or
+    # SYS_PTRACE n'est PAS dans la whitelist capabilities de `baseline` ni de
+    # `restricted` (allow-list = NET_BIND_SERVICE, CHOWN, SETUID… sans SYS_PTRACE)
+    # → ces deux niveaux REJETTENT les Jobs à l'admission. D'où `privileged` ici.
+    # Le vrai durcissement vit dans le securityContext des Jobs (consumer.py) :
+    # runAsNonRoot, allowPrivilegeEscalation=false, readOnlyRootFilesystem,
+    # cap-drop ALL (add SYS_PTRACE seul), seccomp RuntimeDefault/Localhost.
+    # Cible durcissement : prouver empiriquement que `strace -f` marche SANS le
+    # cap add (tracing d'enfant, ptrace_scope par défaut) → retirer l'add →
+    # basculer en baseline/restricted et récupérer le garde-fou admission-time.
+    pod-security.kubernetes.io/enforce: privileged
+    pod-security.kubernetes.io/audit: privileged
+    pod-security.kubernetes.io/warn: privileged

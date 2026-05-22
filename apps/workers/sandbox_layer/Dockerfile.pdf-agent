@@ -1,0 +1,178 @@
+# PDF sandbox image — ubuntu-pdf-sandbox:v1
+# Runs in a batch/v1 K8s Job with cap SYS_PTRACE.
+# Tools: mupdf 1.24.10 (built from source) + pdfid + strace + Python agent
+#
+# Build:
+#   docker build -t ghcr.io/kayodevv/ubuntu-pdf-sandbox:v1 \
+#                -f apps/workers/sandbox_layer/Dockerfile.pdf-agent .
+#
+# Hardened build (recommended for prod / audit):
+#   # 1. Get current ubuntu:22.04 digest
+#   docker pull ubuntu:22.04
+#   UBUNTU_DIGEST=$(docker inspect ubuntu:22.04 --format='{{index .RepoDigests 0}}' | cut -d@ -f2)
+#   # 2. Get mupdf source SHA-256
+#   MUPDF_SHA=$(curl -fsSL https://mupdf.com/downloads/archive/mupdf-1.24.10-source.tar.gz | sha256sum | cut -d' ' -f1)
+#   # 3. Pick a pdfid commit and get its SHA
+#   PDFID_COMMIT=<commit-sha-from-github>
+#   PDFID_SHA=$(curl -fsSL https://raw.githubusercontent.com/DidierStevens/DidierStevensSuite/${PDFID_COMMIT}/pdfid.py | sha256sum | cut -d' ' -f1)
+#   # 4. Build with all SHAs pinned
+#   docker build \
+#     --build-arg MUPDF_SHA256=$MUPDF_SHA \
+#     --build-arg PDFID_COMMIT=$PDFID_COMMIT \
+#     --build-arg PDFID_SHA256=$PDFID_SHA \
+#     -t ghcr.io/kayodevv/ubuntu-pdf-sandbox:v1 \
+#     -f apps/workers/sandbox_layer/Dockerfile.pdf-agent .
+
+# ============================================================================
+# Stage 1 — Build mupdf 1.24.10 from source
+# Patches: CVE-2024-22206 (heap overflow), CVE-2023-46751 (stack overflow),
+#          CVE-2022-26527 (UAF), CVE-2021-3407 (double-free)
+# ============================================================================
+FROM ubuntu:22.04 AS mupdf-builder
+
+ARG MUPDF_VERSION=1.24.10
+# Default "skip" = no SHA check. Pass --build-arg MUPDF_SHA256=<sha> to enforce.
+ARG MUPDF_SHA256=skip
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# pipefail : un pipe (curl | ...) doit échouer si la 1re commande échoue (DL4006)
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+# hadolint ignore=DL3008
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    libfreetype6-dev \
+    libharfbuzz-dev \
+    libjpeg-turbo8-dev \
+    libopenjp2-7-dev \
+    libjbig2dec0-dev \
+    zlib1g-dev \
+    pkg-config \
+    curl \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+RUN curl -fsSL --proto '=https' --tlsv1.2 \
+    "https://mupdf.com/downloads/archive/mupdf-${MUPDF_VERSION}-source.tar.gz" \
+    -o mupdf.tar.gz && \
+    if [ "${MUPDF_SHA256}" != "skip" ]; then \
+        echo "${MUPDF_SHA256}  mupdf.tar.gz" | sha256sum -c -; \
+    else \
+        echo "WARN: MUPDF_SHA256 not pinned — supply chain unverified." >&2; \
+    fi && \
+    tar -xzf mupdf.tar.gz && \
+    rm mupdf.tar.gz
+
+WORKDIR /build/mupdf-${MUPDF_VERSION}-source
+RUN make HAVE_X11=no HAVE_GLUT=no -j"$(nproc)" tools && \
+    make HAVE_X11=no HAVE_GLUT=no prefix=/usr/local install
+
+# ============================================================================
+# Stage 2 — Runtime image
+# ============================================================================
+# To pin by digest (recommended): replace `ubuntu:22.04` below with
+#   ubuntu@sha256:<digest-from-docker-inspect>
+FROM ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONUNBUFFERED=1 \
+    NODE_PATH=/opt/pdfjs/node_modules
+
+# pipefail : un pipe (curl | bash) doit échouer si la 1re commande échoue (DL4006)
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+# Runtime deps only — no build toolchain, no mupdf-tools (we use the built one)
+# hadolint ignore=DL3008
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    strace \
+    procps \
+    iproute2 \
+    findutils \
+    coreutils \
+    libcap2-bin \
+    python3 \
+    python3-pip \
+    curl \
+    ca-certificates \
+    gnupg \
+    qpdf \
+    yara \
+    libfreetype6 \
+    libharfbuzz0b \
+    libjpeg-turbo8 \
+    libopenjp2-7 \
+    libjbig2dec0 \
+    zlib1g \
+    && rm -rf /var/lib/apt/lists/*
+
+# Node 20 LTS (pour couche dynamique PDF.js — exécution du JS PDF)
+# hadolint ignore=DL3008
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
+    apt-get install -y --no-install-recommends nodejs && \
+    rm -rf /var/lib/apt/lists/* && \
+    node --version && npm --version
+
+# pdfjs-dist (Mozilla PDF.js) — pin v3.x pour le build legacy CommonJS sans DOM polyfill
+WORKDIR /opt/pdfjs
+RUN npm init -y --silent && \
+    npm install --omit=dev --no-audit --no-fund pdfjs-dist@3.11.174 && \
+    node -e "require('pdfjs-dist/legacy/build/pdf.js'); console.log('pdfjs-dist OK')"
+
+# Copy mupdf 1.24.10 binaries from builder stage
+COPY --from=mupdf-builder /usr/local/bin/mutool /usr/local/bin/mutool
+COPY --from=mupdf-builder /usr/local/lib/ /usr/local/lib/
+COPY --from=mupdf-builder /usr/local/include/mupdf/ /usr/local/include/mupdf/
+RUN ldconfig
+
+# Python deps for the agent
+RUN pip3 install --no-cache-dir \
+    aiokafka==0.10.0 \
+    pydantic==2.7.1 \
+    urllib3==2.2.1
+
+# Didier Stevens' pdfid (the real one — PyPI pdfid != this tool)
+# Pinning: pass --build-arg PDFID_COMMIT=<sha> --build-arg PDFID_SHA256=<sha256>
+# Default "master" is unpinned (supply chain unverified).
+ARG PDFID_COMMIT=master
+ARG PDFID_SHA256=skip
+
+RUN curl -fsSL --proto '=https' --tlsv1.2 \
+    "https://raw.githubusercontent.com/DidierStevens/DidierStevensSuite/${PDFID_COMMIT}/pdfid.py" \
+    -o /usr/local/bin/pdfid && \
+    if [ "${PDFID_SHA256}" != "skip" ]; then \
+        echo "${PDFID_SHA256}  /usr/local/bin/pdfid" | sha256sum -c -; \
+    else \
+        echo "WARN: PDFID_SHA256 not pinned — supply chain unverified." >&2; \
+    fi && \
+    chmod +x /usr/local/bin/pdfid && \
+    ln -s /usr/bin/python3 /usr/bin/python
+
+# Anti-sandbox decoys — fake user files (same as ELF sandbox)
+RUN mkdir -p /home/user/Documents /home/user/Downloads /home/user/Desktop && \
+    echo "Rapport_Q1_2026" > /home/user/Documents/rapport.txt && \
+    echo "budget_2026"     > /home/user/Documents/budget.txt
+
+# Non-root user `agent` (UID=10001)
+RUN useradd --system --uid 10001 --shell /usr/sbin/nologin --no-create-home agent
+
+# Working dirs writable by agent
+RUN mkdir -p /out /sample && \
+    chown -R 10001:10001 /out /sample && \
+    chmod 0755 /out /sample
+
+# Analysis agent — owned by root, read-only for agent
+RUN mkdir -p /opt/agent
+COPY apps/workers/sandbox_layer/agent/ /opt/agent/
+RUN chown -R 0:0 /opt/agent && \
+    chmod -R 0755 /opt/agent
+
+# strace file capability (best-effort)
+RUN setcap cap_sys_ptrace+ep /usr/bin/strace || true
+
+WORKDIR /sample
+USER 10001
+
+# The K8s Job injects:
+#   python3 /opt/agent/run_pdf_analysis.py --job-id <uuid> --s3-url <presigned>

@@ -1,0 +1,110 @@
+# Template du Job d'analyse — UN par sample.
+# Le consumer instancie ce Job dynamiquement (substitution job_id + sample_id)
+# via l'API K8s. Garde ce manifeste comme source de vérité du contrat
+# d'isolation (seccomp, capabilities, ressources, deadline).
+#
+# Substitutions runtime côté consumer:
+#   - metadata.name              <- charon-{job_id_short}
+#   - spec.template.spec.containers[0].args
+#       <- ["--job-id", "<uuid>", "--s3-url", "<presigned>"]
+#   - metadata.labels.job-id     <- <uuid>
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: charon-analysis-TEMPLATE
+  namespace: sandbox
+  labels:
+    app.kubernetes.io/part-of: charon
+    charon.io/role: analysis
+spec:
+  backoffLimit: 0                 # pas de retry — un sample = une chance
+  ttlSecondsAfterFinished: 120    # GC auto 2min — aligné sur le runtime (consumer.py) et le cahier
+  activeDeadlineSeconds: 180      # kill dur si > 3min (sandbox SLA = 120s)
+  template:
+    metadata:
+      labels:
+        charon.io/role: analysis
+    spec:
+      restartPolicy: Never
+      serviceAccountName: sandbox-analysis
+      automountServiceAccountToken: false
+      hostNetwork: false
+      hostPID: false
+      hostIPC: false
+      # Hardening Tranche B — V3: gVisor (uncomment to activate; runc otherwise)
+      # runtimeClassName: gvisor
+      # Hardening Tranche B — V7: sinkhole DNS (replace with actual ClusterIP)
+      # dnsPolicy: None
+      # dnsConfig:
+      #   nameservers: ["10.43.X.Y"]   # sinkhole-dns ClusterIP
+      #   searches:
+      #     - sandbox.svc.cluster.local
+      #     - svc.cluster.local
+      #     - cluster.local
+      #   options:
+      #     - {name: ndots, value: "2"}
+      # Optionnel mais conseillé : pool de nœuds dédié bursty.
+      # nodeSelector:
+      #   charon.io/workload: sandbox-analysis
+      # tolerations:
+      #   - key: charon.io/sandbox
+      #     operator: Exists
+      #     effect: NoSchedule
+      containers:
+        - name: analysis
+          image: ghcr.io/kayodevv/ubuntu-sandbox:v1
+          imagePullPolicy: IfNotPresent
+          command: ["/opt/agent/run_analysis.sh"]
+          args: ["--job-id", "REPLACED_BY_CONSUMER", "--s3-url", "REPLACED_BY_CONSUMER"]
+          resources:
+            requests: {cpu: "500m", memory: "512Mi", ephemeral-storage: "1Gi"}
+            limits: {cpu: "2000m", memory: "2Gi", ephemeral-storage: "2Gi"}
+          securityContext:
+            # Hardening Tranche B — V5: non-root user `agent` (UID=10001).
+            # The Dockerfile creates the user; SYS_PTRACE is propagated to ambient
+            # caps when runAsUser != 0 (modern containerd) and a `setcap`
+            # fallback on /usr/bin/strace covers older runtimes.
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+              add: ["SYS_PTRACE"]    # strict minimum pour strace
+            # Hardening Tranche A — V2 : RuntimeDefault (containerd/Docker default).
+            # Tranche B (target) : Localhost + charon-seccomp.json (Charon-strict).
+            # Once seccomp-distributor.yaml has populated the profile on every
+            # node, switch the type to Localhost.
+            seccompProfile:
+              type: RuntimeDefault
+              # type: Localhost
+              # localhostProfile: charon-seccomp.json
+          env:
+            - name: MINIO_ENDPOINT
+              value: "minio.minio.svc.cluster.local:9000"
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              value: "kafka.kafka.svc.cluster.local:9092"
+          volumeMounts:
+            - name: scratch
+              mountPath: /out
+            # Hardening Tranche A — V6 : avec rootfs read-only, /tmp et /var/tmp
+            # doivent être writable pour Python tempfile, gcc, pip, etc.
+            - name: tmp
+              mountPath: /tmp
+            - name: var-tmp
+              mountPath: /var/tmp
+      volumes:
+        - name: scratch
+          emptyDir:
+            sizeLimit: 1Gi
+            medium: ""              # disque, pas tmpfs (PCAP peut être gros)
+        - name: tmp
+          emptyDir:
+            medium: Memory          # tmpfs RAM, compté dans memory limit du pod
+            sizeLimit: 256Mi
+        - name: var-tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 64Mi

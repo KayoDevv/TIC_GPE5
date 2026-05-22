@@ -1,0 +1,9 @@
+# Configuration hadolint — sévérité du lint Dockerfile.
+# Aligné sur le .yamllint.yml du repo : on REPORTE tout, mais seules les
+# règles de niveau >= warning font échouer le CI.
+#
+# DL3059 (multiples RUN consécutifs) est de niveau "info" : c'est de l'hygiène
+# de couches, pas un risque de sécurité ni de taille significative ici (aucun
+# nettoyage de temp à fusionner). On la laisse visible dans les logs sans
+# casser le build.
+failure-threshold: warning

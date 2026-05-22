@@ -1,0 +1,53 @@
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: sandbox-consumer
+  namespace: sandbox
+---
+# Le consumer crée des Jobs (un par sample). Pas de delete: l'ownerReference
+# du Job se charge du GC via TTLAfterFinished.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: sandbox-job-dispatcher
+  namespace: sandbox
+rules:
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["create", "get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods", "pods/log"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: sandbox-consumer-can-dispatch
+  namespace: sandbox
+subjects:
+  - kind: ServiceAccount
+    name: sandbox-consumer
+    namespace: sandbox
+roleRef:
+  kind: Role
+  name: sandbox-job-dispatcher
+  apiGroup: rbac.authorization.k8s.io
+---
+# ServiceAccount séparé pour les Jobs d'analyse — aucun droit API K8s.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: sandbox-analysis
+  namespace: sandbox
+automountServiceAccountToken: false
+---
+# ServiceAccount pour minio-watcher — aucun droit API K8s.
+# Le watcher ne fait que lire/écrire des messages Kafka et calculer des
+# checksums depuis MinIO. Si compromis, il ne peut pas créer de Jobs.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: sandbox-watcher
+  namespace: sandbox
+automountServiceAccountToken: false

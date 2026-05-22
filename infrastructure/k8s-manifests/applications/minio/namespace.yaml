@@ -1,0 +1,9 @@
+# Namespace MinIO Tenant — label `kubernetes.io/metadata.name: minio` (auto)
+# référencé par les NetworkPolicies sandbox via namespaceSelector.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: minio
+  labels:
+    name: minio

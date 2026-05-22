@@ -1,0 +1,90 @@
+# Hardened guest image for ELF sample execution — ubuntu-sandbox:v1
+# Runs in a batch/v1 K8s Job with cap SYS_PTRACE.
+# Contains the analysis agent (run_analysis.py) + Python deps.
+#
+# Build:
+#   docker build -t ghcr.io/kayodevv/ubuntu-sandbox:v1 \
+#                -f apps/workers/sandbox_layer/Dockerfile.agent .
+# (run from the GPE-ETNA monorepo root)
+#
+# Hardening Tranche B — V5 (audit 2026-04-30):
+#   - Non-root user `agent` (UID=10001) — sample runs as agent, not root
+#   - SYS_PTRACE granted via container capability (in pod spec); K8s
+#     propagates it to the ambient set when runAsUser != 0
+#   - /opt/agent owned by root, mode 0755 (read-only for agent), so the
+#     sample cannot rewrite the analysis code mid-run
+
+FROM ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONUNBUFFERED=1
+
+# Analysis tools + Python
+# hadolint ignore=DL3008
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    strace \
+    inotify-tools \
+    tcpdump \
+    procps \
+    iproute2 \
+    findutils \
+    coreutils \
+    util-linux \
+    libcap2-bin \
+    python3 \
+    python3-pip \
+    curl \
+    wget \
+    cron \
+    && rm -rf /var/lib/apt/lists/*
+
+# Python deps for the agent
+RUN pip3 install --no-cache-dir \
+    aiokafka==0.10.0 \
+    pydantic==2.7.1 \
+    urllib3==2.2.1
+
+# Anti-sandbox decoys — fake user files
+RUN mkdir -p /home/user/Documents /home/user/Downloads /home/user/Desktop && \
+    echo "Rapport_Q1_2026" > /home/user/Documents/rapport.txt && \
+    echo "budget_2026"     > /home/user/Documents/budget.txt
+
+# Fake bash history (anti-sandbox evasion)
+RUN printf 'ls -la\npwd\ncat /etc/hosts\napt update\n' > /root/.bash_history
+
+# ----------------------------------------------------------------------------
+# Hardening Tranche B — non-root user
+# ----------------------------------------------------------------------------
+# Create unprivileged user `agent` (UID=10001).
+# `/sample` is the sample's working dir, `/out` is the artifact volume mount.
+# Both must be writable by the agent UID.
+RUN useradd --system --uid 10001 --shell /usr/sbin/nologin --no-create-home agent
+
+# Working dirs (mode 0755 owned by agent)
+RUN mkdir -p /out /sample && \
+    chown -R 10001:10001 /out /sample && \
+    chmod 0755 /out /sample
+
+# Analysis agent — owned by root, world-readable, NOT writable by `agent`.
+# This means the sample (running as agent) cannot tamper with run_analysis.py
+# or the hypothesis modules at runtime.
+RUN mkdir -p /opt/agent
+COPY apps/workers/sandbox_layer/agent/ /opt/agent/
+RUN chown -R 0:0 /opt/agent && \
+    chmod -R 0755 /opt/agent
+
+# File capability fallback: if the K8s container caps don't propagate to the
+# ambient set on this kernel, file-cap on strace ensures it still works.
+# `+ep` = effective+permitted; activates when strace is exec'd by any user.
+# Note: `allowPrivilegeEscalation: false` (no_new_privs) DISABLES file caps.
+# The K8s ambient cap propagation (runAsUser != 0 + caps.add) is the primary
+# path; this setcap is best-effort only.
+RUN setcap cap_sys_ptrace+ep /usr/bin/strace || true
+
+WORKDIR /sample
+
+# Switch to non-root for runtime
+USER 10001
+
+# The K8s Job injects:
+#   python3 /opt/agent/run_analysis.py --job-id <uuid> --s3-url <presigned>

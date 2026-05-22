@@ -14,13 +14,29 @@ dist/
 build/
 *.egg-info/
 .DS_Store
+*.example
 
 # Terraform
 .terraform/
 *.tfstate
 *.tfstate.backup
-.terraform.lock.hcl
+# .terraform.lock.hcl est volontairement commité pour stabiliser la CI
 
 # Claude
 .claude/
 *CLAUDE.md
+
+# K8s manifests générés au déploiement (IP host dépendante du dev)
+infrastructure/k8s-manifests/overlays/dev/host-egress-patch.yaml
+
+# Pipeline de validation : DB locale + corpus (samples malware JAMAIS en clair dans git)
+validation/feeder_state.duckdb
+validation/feeder_state.duckdb.wal
+validation/results.duckdb
+validation/results.duckdb.wal
+validation/corpus/
+validation/report*.md
+# Corpus de samples — réels malwares PDF/ELF, ne doivent JAMAIS être committés
+scripts/validation/real_corpus/
+scripts/validation/corpus/
+tmp/

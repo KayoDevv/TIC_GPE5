@@ -1,0 +1,120 @@
+# Isolation réseau du namespace sandbox (enforcement par kube-router).
+#
+# Règles namespaceSelector + DNS pures (tout in-cluster) :
+# - Consumer : peut sortir vers Kafka, MinIO, API K8s.
+# - Watcher  : Kafka + MinIO uniquement (PAS d'API K8s — moindre privilège).
+# - Jobs d'analyse : Kafka (résultats) + MinIO (download sample).
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: deny-all-default
+  namespace: sandbox
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: consumer-egress
+  namespace: sandbox
+spec:
+  podSelector:
+    matchLabels:
+      app: sandbox-consumer
+  policyTypes: [Egress]
+  egress:
+    # Kafka in-cluster (service prod). Schema Registry retiré → plus de 8081.
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: kafka}
+      ports:
+        - {protocol: TCP, port: 9092}
+    # MinIO dans K8s (service in-cluster, prod)
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: minio}
+      ports:
+        - {protocol: TCP, port: 9000}
+    # API K8s — via namespaceSelector au lieu d'ipBlock car kube-router
+    # n'enforce pas correctement les rules ipBlock sur K3s 1.35.
+    # Le service `kubernetes` vit dans `default` ns (créé par K8s auto).
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: default}
+      ports:
+        - {protocol: TCP, port: 443}
+        - {protocol: TCP, port: 6443}
+    # DNS
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - {protocol: UDP, port: 53}
+        - {protocol: TCP, port: 53}
+---
+# Watcher : Kafka (lecture minio.events + publication file.requested) + MinIO
+# (calcul SHA-256 + presigned URLs). Aucun accès API K8s — si compromis,
+# ne peut pas créer de Jobs.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: watcher-egress
+  namespace: sandbox
+spec:
+  podSelector:
+    matchLabels:
+      app: minio-watcher
+  policyTypes: [Egress]
+  egress:
+    # Kafka — service in-cluster (prod)
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: kafka}
+      ports:
+        - {protocol: TCP, port: 9092}
+    # MinIO — service in-cluster (prod)
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: minio}
+      ports:
+        - {protocol: TCP, port: 9000}
+    # DNS
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - {protocol: UDP, port: 53}
+        - {protocol: TCP, port: 53}
+---
+# Analysis Jobs: egress limited to Kafka (result publication) and MinIO
+# (sample download). A malicious sample cannot reach the Internet or any
+# other internal service — only the two infra endpoints are allowed.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: analysis-egress
+  namespace: sandbox
+spec:
+  podSelector:
+    matchLabels:
+      charon.io/role: analysis
+  policyTypes: [Egress]
+  egress:
+    # Kafka — in-cluster service (prod)
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: kafka}
+      ports:
+        - {protocol: TCP, port: 9092}
+    # MinIO — in-cluster service (prod)
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: minio}
+      ports:
+        - {protocol: TCP, port: 9000}
+    # DNS
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - {protocol: UDP, port: 53}
+        - {protocol: TCP, port: 53}

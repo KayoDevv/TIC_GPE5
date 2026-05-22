@@ -55,11 +55,12 @@
 
 ### Architecture (Event-Driven Microservices)
 - **Type :** Microservices orientés événements avec pattern Scatter-Gather.
-- **Bus de messages :** Apache Kafka.
+- **Orchestration :** Kubernetes **K3s** (mono-nœud, Debian natif), réseau **flannel** (routage) + **kube-router** (enforcement des NetworkPolicies, `--run-router=false`), autoscaling **KEDA** sur le lag Kafka.
+- **Bus de messages :** Apache Kafka — chart **Bitnami** (mode KRaft, mono-broker, in-cluster), topics provisionnés par le chart.
 - **Frontend :** Vue 3 + WXT (TypeScript, Tailwind).
-- **Backend Gateway :** Python (FastAPI).
+- **Backend Gateway :** Python (FastAPI) — émet l'événement `file.requested` sur Kafka après upload MinIO.
 - **Base de données / Cache :** Redis pour le suivi des états et la gestion des WebSockets.
-- **Stockage :** S3/MinIO avec règles de cycle de vie.
+- **Stockage :** **MinIO** (StatefulSet in-cluster), accès aux samples par presigned URL, rétention 60 min.
 
 ### Données et RGPD
 - **Politique de rétention :** Destruction absolue des pièces jointes et des logs de session non-critiques au bout de 60 minutes.
@@ -80,15 +81,21 @@ Chaque Layer est un microservice Python indépendant consommant les événements
 - **Sortie Kafka :** Score de risque (0-100) et tags statiques.
 
 ### Sandbox Layer : Dynamic Sandbox Service (L'Analyse Comportementale)
-- **Rôle :** Exécuter le fichier dans un environnement contrôlé pour capturer les actions malveillantes non-visibles statiquement (obfuscation, téléchargements de payload au runtime).
-- **Processus technique :**
-    - Provisionnement d'une MicroVM isolée (Firecracker) avec OS Windows 10/11 ou Linux.
-    - L'image OS contient des "leurres" (faux fichiers, processus bureautiques simulés) pour tromper les malwares anti-sandbox.
-    - Injection du payload et exécution.
-    - Monitoring au niveau Kernel (API Hooking) pour capturer : les appels système (Syscalls), les modifications de la base de registre, les fichiers créés/supprimés.
-    - Monitoring réseau : Capture des paquets (PCAP) et résolutions DNS (détection de flux C&C).
-- **SLA de traitement :** 60 à 120 secondes (Timeout strict à 120s pour tuer la VM).
-- **Sortie Kafka :** Rapport structuré (JSON) listant les Indicateurs de Compromission (IOC) et classés par tactique MITRE ATT&CK.
+- **Rôle :** Exécuter le fichier dans un environnement contrôlé pour capturer les actions malveillantes non-visibles statiquement (obfuscation, payloads téléchargés au runtime, JavaScript auto-exécuté).
+- **Orchestration :** K3s mono-nœud (Debian natif). Le consumer Kafka crée un Job `batch/v1` par sample, **routé par magic bytes** :
+    - `\x7fELF` → image `ubuntu-sandbox:v1` + `run_analysis.py`
+    - `%PDF` / inconnu/déguisé → image `ubuntu-pdf-sandbox:v1` (mupdf 1.24.10 + Node/PDF.js + pdfid + qpdf) + `run_pdf_analysis.py`
+- **Isolation & durcissement :** runtime `runc` durci — seccomp, `cap-drop ALL` (sauf `SYS_PTRACE` pour strace), utilisateur non-root (UID 10001), NetworkPolicy deny-all (enforcement kube-router), namespace dédié. **RuntimeClass gVisor (runsc) activable** via `SANDBOX_RUNTIME_CLASS=gvisor` (isolation kernel user-space, recommandée en prod ; non activée par défaut en dev par contrainte d'installation du runtime). Leurres anti-sandbox dans l'image (faux fichiers utilisateur, faux historique bash).
+- **Collecte comportementale :**
+    - **State-diff :** snapshot avant/après (FS hashé SHA-256 sur `/etc /home /tmp /var /opt /root`, process, sockets, crontab, systemd, chemins de persistance), diff des changements significatifs, **baseline du harnais soustraite** (les fichiers système et l'outillage de l'agent ne comptent pas comme signal).
+    - **Syscalls via `strace -f`** sur les processus de détonation (`mutool draw`, `node pdf_runner.js`) — capture `execve`/`connect`/`openat`/`mprotect`/`ptrace`. *(eBPF/bpftrace envisagé en V2 ; strace retenu pour la portabilité.)*
+    - **PDF — couche dynamique :** `mutool draw` (rendu, exerce zlib/JPEG/JBIG2, déclenche les CVE de parseur) + `node pdf_runner.js` (exécute le JS embarqué dans un `vm` Node à contexte Adobe stubbé → `app.launchURL`/`submitForm` déclenchent de **vrais** syscalls réseau observables).
+- **Scoring (defense-in-depth) :**
+    - 5 sondes statiques PDF : `pdfid` (règles combinatoires), entropie locale, magic embarqué (ELF/PE/ZIP), actions `/URI` (phishing — scan du contenu décompressé, hébergement jetable, params base64), anomalies structurelles (`missing_pdf_magic`, ratio obj/pages…).
+    - 7 hypothèses comportementales sur les syscalls : persistance, C2, injection, chiffrement, évasion, propagation, lolbins.
+    - `anomaly_score` = somme pondérée. **Verdict à 3 bandes** : `malicious` (signal fort), `needs_more_context` (ambigu → escaladé au LLM avec l'`email_context`), `benign`.
+- **SLA de traitement :** timeout dur 120s (`activeDeadlineSeconds`), GC du Job `ttlSecondsAfterFinished: 120`. Au-delà : message `timeout_with_partial` — jamais de blocage de l'agrégateur.
+- **Sortie Kafka (`sandbox_layer.result`) :** rapport JSON — `verdict`, `iocs` classés par tactique **MITRE ATT&CK**, `behavior_summary` (narratif clair pour le LLM/UI), `_meta` (`anomaly_score`, scores par hypothèse).
 
 ### LLM Layer : LLM Cognitive Service (L'Analyste Sémantique)
 - **Rôle :** Corréler le contexte initial avec les résultats techniques pour déterminer l'intention réelle, et générer une explication claire.
@@ -121,7 +128,7 @@ Chaque Layer est un microservice Python indépendant consommant les événements
 
 ## 9. Sécurité
 - **Protection en transit :** TLS 1.3 obligatoire. WebSockets sécurisées (WSS).
-- **Isolation stricte :** Utilisation impérative de MicroVMs (Firecracker) jetées après chaque exécution pour le Sandbox Layer. L'utilisation de conteneurs Docker classiques est strictement interdite pour la détonation de malwares en raison des risques de fuite (Container Escape).
+- **Isolation stricte :** containers durcis sur K3s — `runc` + seccomp + `cap-drop ALL` + utilisateur non-root (UID 10001) + NetworkPolicy deny-all (enforcement kube-router) + namespace dédié. **RuntimeClass gVisor (runsc) activable** (`SANDBOX_RUNTIME_CLASS=gvisor`) pour l'isolation kernel user-space — recommandée en production, activée selon la disponibilité du runtime sur le nœud. Chaque Job est détruit après exécution (`ttlSecondsAfterFinished: 120`).
 - **Authentification :** JWT tokens émis via une politique Single Sign-On (SSO) d'entreprise.
 
 ## 10. Performance
@@ -147,12 +154,12 @@ Chaque Layer est un microservice Python indépendant consommant les événements
 ## 14. Risques
 - **Risque technique (Hallucination IA) :** Le LLM pourrait minimiser la gravité d'un fichier malveillant complexe.
     - _Mitigation :_ L'architecture relègue le LLM à un rôle explicatif. La matrice de décision du Verdict Engine garantit qu'un blocage dicté par les IOCs de la Sandbox ne peut pas être annulé par le LLM.
-- **Risque financier (Coûts Cloud) :** Explosion des coûts d'infrastructure liés à la consommation CPU/RAM des MicroVMs et des LLMs de grande taille.
+- **Risque financier (Coûts Cloud) :** Explosion des coûts d'infrastructure liés à la consommation CPU/RAM des containers de détonation (sandbox) et des LLMs de grande taille.
     - _Mitigation :_ Stratégie de mise en cache agressive (Redis) des empreintes de fichiers sains, et optimisation de l'early-exit au niveau du ML Layer.
 
 ## 15. Livrables attendus
 - Code source complet structuré en monorepo ou multi-repos documentés (Extension Front, API Gateway, Workers Layers 1/2/3, Verdict Engine).
-- Définitions d'architecture (Manifestes Kubernetes `.yaml`, configuration des Topics Kafka et Schema Registry).
+- Définitions d'architecture (Manifestes Kubernetes `.yaml` pour K3s, Topics Kafka provisionnés via le chart Bitnami). Schémas d'échange **JSON versionnés** (`packages/kafka-schemas/`), contrat inter-couches validé en CI (`sandbox-llm-contract.yml`) — **pas de Schema Registry au runtime** (non utilisé, retiré post-pivot Bitnami).
 - Extension packagée prête pour le déploiement (`.crx` ou zip conforme Manifest V3).
 - Documentation complète de déploiement, diagrammes de séquence et Runbook d'exploitation pour le niveau 2.
 

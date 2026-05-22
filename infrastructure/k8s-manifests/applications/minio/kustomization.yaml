@@ -1,0 +1,19 @@
+# Kustomization namespace MinIO in-cluster :
+#   - namespace `minio`
+#   - Tenant CR (MinIO Operator) + Service `minio` (DNS minio.minio.svc.cluster.local:9000)
+#   - Secret credentials
+#   - Job bucket-init (création bucket + notification Kafka)
+#
+# Prérequis : MinIO Operator installé (cible Makefile : make setup-minio-operator).
+#
+# Deploy : kubectl apply -k infrastructure/k8s-manifests/applications/minio/
+---
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: minio
+
+resources:
+  - namespace.yaml
+  - tenant.yaml
+  - bucket-init.yaml

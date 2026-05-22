@@ -1,0 +1,12 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: sandbox
+resources:
+  - namespace.yaml
+  - rbac.yaml
+  - networkpolicy.yaml
+  - consumer-deployment.yaml
+  - watcher-deployment.yaml
+  - keda-scaledobject.yaml
+  # analysis-job-template.yaml est appliqué dynamiquement par le consumer,
+  # pas via kustomize. Présent dans le repo comme source de vérité.

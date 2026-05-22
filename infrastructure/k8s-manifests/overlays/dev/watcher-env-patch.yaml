@@ -1,0 +1,18 @@
+# Patch dev — branche le minio-watcher sur Kafka + MinIO in-cluster.
+# Identique au patch prod.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: minio-watcher
+spec:
+  template:
+    spec:
+      containers:
+        - name: watcher
+          env:
+            - name: KAFKA_BOOTSTRAP
+              value: "kafka.kafka.svc.cluster.local:9092"
+            - name: MINIO_ENDPOINT
+              value: "minio.minio.svc.cluster.local:9000"
+            - name: MINIO_PRESIGN_ENDPOINT
+              value: "minio.minio.svc.cluster.local:9000"

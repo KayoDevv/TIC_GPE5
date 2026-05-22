@@ -1,0 +1,30 @@
+{
+  "job_id": "550e8400-e29b-41d4-a716-446655440001",
+  "iocs": [
+    {
+      "type": "file_hash",
+      "value": "0x<addr>-0x<addr+4096> rwxp",
+      "mitre_tactic": "TA0005",
+      "description": "code_injection: suspicious_regions[pid=<pid>].permissions"
+    },
+    {
+      "type": "syscall",
+      "value": "mmap(RWX) pid=<pid> 0x<addr>-0x<addr+4096>",
+      "mitre_tactic": "TA0005",
+      "description": "RWX memory region: rwxp 4096B"
+    }
+  ],
+  "behavior_summary": "Sample ran for 3.0s. Detected signals: code_injection. anomaly_score=0.10",
+  "email_context": {
+    "sender": "support@microsoft-update.net",
+    "subject": "Critical security patch",
+    "body_text": "Install the attached patch immediately to avoid data loss."
+  },
+  "timeout_triggered": false,
+  "timestamp": "2026-04-27T07:57:05.008892+00:00",
+  "_meta": {
+    "anomaly_score": 0.1,
+    "duration_s": 6.82,
+    "error": null
+  }
+}

@@ -1,0 +1,93 @@
+name: Sandbox <-> LLM Contract
+
+# Garantit que toute PR touchant la sandbox ou le LLM ne casse pas le contrat
+# d'échange Kafka entre les deux. Deux niveaux de garantie :
+#   1. Les golden fixtures de sortie sandbox restent valides face au schéma
+#      sandbox_layer.result.json officiel.
+#   2. Le validateur d'entrée du LLM accepte sans erreur les fixtures sandbox.
+# Si l'un des deux casse, la PR ne peut pas merger.
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'apps/workers/sandbox_layer/**'
+      - 'apps/workers/llm_layer/**'
+      - 'packages/kafka-schemas/sandbox_layer.result.json'
+      - 'packages/kafka-schemas/file.requested.json'
+      - '.github/workflows/sandbox-llm-contract.yml'
+
+jobs:
+  contract:
+    name: Validate sandbox -> LLM contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install validators
+        run: pip install jsonschema==4.23.0
+
+      - name: Validate sandbox golden fixtures vs official schema
+        run: |
+          set -e
+          SCHEMA="packages/kafka-schemas/sandbox_layer.result.json"
+          FIX_DIR="apps/workers/sandbox_layer/contract/golden"
+          if [ ! -d "$FIX_DIR" ]; then
+            echo "::warning::no golden fixtures yet at $FIX_DIR — skipping"
+            exit 0
+          fi
+          shopt -s nullglob
+          fixtures=("$FIX_DIR"/*.json)
+          if [ ${#fixtures[@]} -eq 0 ]; then
+            echo "::warning::fixtures dir present but empty"
+            exit 0
+          fi
+          for f in "${fixtures[@]}"; do
+            echo "::group::Validate $f"
+            python -c "import json,sys; from jsonschema import validate; \
+              schema=json.load(open('$SCHEMA')); data=json.load(open('$f')); \
+              validate(data, schema); print('OK')"
+            echo "::endgroup::"
+          done
+
+      - name: LLM consumer accepts sandbox fixtures
+        run: |
+          set -e
+          VALIDATOR="apps/workers/llm_layer/contract/validate_sandbox_input.py"
+          FIX_DIR="apps/workers/sandbox_layer/contract/golden"
+          if [ ! -f "$VALIDATOR" ]; then
+            echo "::warning::no LLM validator yet at $VALIDATOR — skipping"
+            exit 0
+          fi
+          if [ ! -d "$FIX_DIR" ]; then
+            echo "::warning::no fixtures to feed the LLM validator"
+            exit 0
+          fi
+          shopt -s nullglob
+          fixtures=("$FIX_DIR"/*.json)
+          for f in "${fixtures[@]}"; do
+            echo "::group::LLM accepts $f"
+            python "$VALIDATOR" "$f"
+            echo "::endgroup::"
+          done
+
+      - name: Check both sides declared a contract version
+        run: |
+          set -e
+          SBX_VER="apps/workers/sandbox_layer/contract/CONTRACT_VERSION"
+          LLM_VER="apps/workers/llm_layer/contract/CONTRACT_VERSION"
+          if [ ! -f "$SBX_VER" ] || [ ! -f "$LLM_VER" ]; then
+            echo "::warning::CONTRACT_VERSION missing on one or both sides"
+            exit 0
+          fi
+          a=$(cat "$SBX_VER" | tr -d '[:space:]')
+          b=$(cat "$LLM_VER" | tr -d '[:space:]')
+          if [ "$a" != "$b" ]; then
+            echo "::error::Contract version mismatch — sandbox=$a llm=$b"
+            exit 1
+          fi
+          echo "Contract version aligned: $a"

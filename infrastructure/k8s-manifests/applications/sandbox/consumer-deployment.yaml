@@ -1,0 +1,86 @@
+# Consumer Kafka — dispatcher de Jobs d'analyse.
+# Ne fait PAS d'analyse en local: il consomme file.requested et crée 1 Job
+# par sample. Léger: 100m CPU, 128Mi RAM. Scalé par KEDA sur le lag Kafka.
+#
+# Endpoints : env vars de base définissent les fallbacks. L'overlay dev
+# (overlays/dev/consumer-env-patch.yaml) injecte les DNS in-cluster :
+#   - kafka.kafka.svc.cluster.local:9092
+#   - minio.minio.svc.cluster.local:9000
+#   - kubernetes.default.svc:443 (API K8s pour création de Jobs)
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sandbox-consumer
+  namespace: sandbox
+  labels:
+    app.kubernetes.io/name: sandbox-consumer
+    app.kubernetes.io/part-of: charon
+spec:
+  replicas: 1            # KEDA prend la main via ScaledObject (1..6)
+  selector:
+    matchLabels:
+      app: sandbox-consumer
+  template:
+    metadata:
+      labels:
+        app: sandbox-consumer
+    spec:
+      serviceAccountName: sandbox-consumer
+      containers:
+        - name: consumer
+          image: ghcr.io/kayodevv/charon-sandbox-consumer:latest  # bumped par CI
+          imagePullPolicy: IfNotPresent
+          env:
+            # IP du node où tourne ce pod — injectée dynamiquement par K8s.
+            # Doit être en première position pour que les autres env vars
+            # puissent l'utiliser via $(NODE_IP).
+            - name: NODE_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.hostIP
+            - name: K8S_API_SERVER
+              value: "https://$(NODE_IP):6443"
+            # Endpoints des services tournant sur le host (docker-compose dev).
+            # Override en prod via overlays/prod/consumer-prod-env-patch.yaml.
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              value: "$(NODE_IP):9093"
+            - name: AGENT_KAFKA_BOOTSTRAP_SERVERS
+              value: "$(NODE_IP):9093"
+            - name: MINIO_ENDPOINT
+              value: "$(NODE_IP):9000"
+            - name: AGENT_MINIO_ENDPOINT
+              value: "$(NODE_IP):9000"
+            # Constantes — pas dépendantes de l'IP host.
+            - name: KAFKA_TOPIC_IN
+              value: "file.requested"
+            - name: KAFKA_TOPIC_OUT
+              value: "sandbox_layer.result"
+            - name: KAFKA_GROUP_ID
+              value: "charon-sandbox-v1"
+            - name: K8S_NAMESPACE
+              value: "sandbox"
+            - name: SANDBOX_JOB_IMAGE
+              value: "ghcr.io/kayodevv/ubuntu-sandbox:v1"
+            - name: SANDBOX_PDF_JOB_IMAGE
+              value: "ghcr.io/kayodevv/ubuntu-pdf-sandbox:v1"
+            - name: SANDBOX_TIMEOUT_S
+              value: "180"
+          resources:
+            requests: {cpu: "100m", memory: "128Mi"}
+            limits: {cpu: "500m", memory: "256Mi"}
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 10001
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
+            readOnlyRootFilesystem: true
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}

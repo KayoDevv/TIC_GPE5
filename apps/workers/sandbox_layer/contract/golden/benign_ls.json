@@ -1,0 +1,17 @@
+{
+  "job_id": "550e8400-e29b-41d4-a716-446655440002",
+  "iocs": [],
+  "behavior_summary": "Sample listed /tmp and exited cleanly. No filesystem mutations, no outbound connections, no RWX memory regions, no persistence mechanism. Verdict: benign (anomaly_score=0.00).",
+  "email_context": {
+    "sender": "bob@example.com",
+    "subject": "Re: vacation pictures",
+    "body_text": "Here are the photos from last week."
+  },
+  "timeout_triggered": false,
+  "timestamp": "2026-04-26T10:16:00Z",
+  "_meta": {
+    "anomaly_score": 0.0,
+    "duration_s": 0.0,
+    "error": null
+  }
+}

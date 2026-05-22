@@ -40,12 +40,40 @@ jobs:
 
       - name: Validate K8s manifests
         run: |
-          FILES=$(find infrastructure \( -name '*.yaml' -o -name '*.yml' \) | grep -v 'terraform/' | grep -v 'scripts/' || true)
+          # Validation directe des manifests autonomes (base/applications).
+          # Les overlays/ contiennent des strategic merge patches kustomize qui
+          # ne sont pas des manifests valides individuellement — on les exclut
+          # ici et on les valide via kustomize build à l'étape suivante.
+          FILES=$(find infrastructure \( -name '*.yaml' -o -name '*.yml' \) \
+            | grep -v 'terraform/' \
+            | grep -v 'scripts/' \
+            | grep -v 'overlays/' \
+            | grep -v 'kustomization.yaml' \
+            | grep -v 'values.yaml' \
+            || true)
           if [ -z "$FILES" ]; then
             echo "No K8s manifests found, skipping validation"
             exit 0
           fi
-          echo "$FILES" | xargs kubeconform -strict -verbose -summary
+          echo "$FILES" | xargs kubeconform \
+            -strict -verbose -summary \
+            -schema-location default \
+            -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json'
+
+      - name: Validate kustomize overlays render correctly
+        run: |
+          # Vérifie que les overlays produisent des manifests valides après
+          # rendu kustomize. C'est ce qui est réellement appliqué via kubectl
+          # apply -k. Aucun patch kustomize n'est validé en standalone.
+          for overlay in infrastructure/k8s-manifests/overlays/*/; do
+            if [ -f "$overlay/kustomization.yaml" ]; then
+              echo "Rendering and validating: $overlay"
+              kubectl kustomize "$overlay" | kubeconform \
+                -strict -verbose -summary \
+                -schema-location default \
+                -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json'
+            fi
+          done
 
   dockerfile-lint:
     name: Dockerfile Lint
@@ -104,7 +132,20 @@ jobs:
         run: terraform -chdir=infrastructure/terraform fmt -check -recursive
 
       - name: Initialize Terraform
-        run: terraform -chdir=infrastructure/terraform init -backend=false
+        run: |
+          init_succeeded=false
+          for i in 1 2 3; do
+            if terraform -chdir=infrastructure/terraform init -backend=false; then
+              init_succeeded=true
+              break
+            fi
+            echo "Attempt $i failed, retrying in 15s..."
+            sleep 15
+          done
+          if [ "$init_succeeded" != "true" ]; then
+            echo "Terraform initialization failed after 3 attempts."
+            exit 1
+          fi
 
       - name: Validate Terraform
         run: terraform -chdir=infrastructure/terraform validate
