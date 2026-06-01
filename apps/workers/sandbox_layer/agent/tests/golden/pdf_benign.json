@@ -1,0 +1,5 @@
+{
+  "anomaly_score": 0.0,
+  "verdict": "benign",
+  "narrative": "Verdict sandbox : BENIGN (score 0.00). Aucun indicateur structurel, comportemental ou d'URI suspect détecté (12.3s)."
+}

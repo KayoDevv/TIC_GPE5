@@ -1,15 +1,15 @@
-# Kustomization namespace Kafka in-cluster (pivot Bitnami).
+# Kustomization for the in-cluster Kafka namespace (Bitnami pivot).
 #
-# Kafka lui-même est déployé via Helm (chart bitnami/kafka, cf. values.yaml
-# et Makefile cible `setup-kafka`). Cette kustomization ne gère plus que le
-# namespace : le provisioning des topics est inclus dans le chart Bitnami.
+# Kafka itself is deployed via Helm (bitnami/kafka chart, see values.yaml and
+# the `setup-kafka` Makefile target). This kustomization now only manages the
+# namespace: topic provisioning is included in the Bitnami chart.
 #
-# NB : Schema Registry + schema-init ont été retirés (non utilisés en v1 —
-# aucune validation de schéma au runtime, cf. consumer.py). Les schémas JSON
-# restent dans packages/kafka-schemas/ comme contrat inter-équipes LLM/ML.
+# NB: Schema Registry + schema-init were removed (unused in v1 — no runtime
+# schema validation, see consumer.py). The JSON schemas remain in
+# packages/kafka-schemas/ as the LLM/ML cross-team contract.
 #
-# Deploy : `kubectl apply -k infrastructure/k8s-manifests/applications/kafka/`
-#          (lance après le helm install Kafka — voir `make setup-kafka`)
+# Deploy: `kubectl apply -k infrastructure/k8s-manifests/applications/kafka/`
+#         (run after the Kafka helm install — see `make setup-kafka`)
 ---
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization

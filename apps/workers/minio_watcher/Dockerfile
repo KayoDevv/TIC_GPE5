@@ -1,9 +1,9 @@
-# Image du minio-watcher — transformateur S3 events → FileRequestedEvent.
-# Léger, sans accès API K8s, hardenisé.
+# minio-watcher image — S3 events → FileRequestedEvent transformer.
+# Lightweight, no K8s API access, hardened.
 #
-# Build : docker build -t ghcr.io/kayodevv/charon-minio-watcher:latest \
-#                      -f apps/workers/minio_watcher/Dockerfile .
-# (à lancer depuis la racine du monorepo GPE-ETNA)
+# Build: docker build -t ghcr.io/kayodevv/charon-minio-watcher:latest \
+#                     -f apps/workers/minio_watcher/Dockerfile .
+# (run from the root of the GPE-ETNA monorepo)
 
 FROM python:3.12-slim
 
@@ -18,7 +18,7 @@ RUN pip install --no-cache-dir \
 
 COPY apps/workers/minio_watcher/watcher.py ./watcher.py
 
-# UID matching le runAsUser du Deployment (10002).
+# UID matching the Deployment's runAsUser (10002).
 RUN useradd -u 10002 -m -s /bin/false watcher
 USER 10002
 

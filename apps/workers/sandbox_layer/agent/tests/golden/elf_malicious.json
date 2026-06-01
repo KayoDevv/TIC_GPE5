@@ -1,0 +1,4 @@
+{
+  "anomaly_score": 1.0,
+  "behavior_summary": "Sample ran for 12.3s. Detected signals: persistence_detected, c2_communication, code_injection, lolbins_abuse, file_encryption, evasion_attempted, propagation. anomaly_score=1.00"
+}

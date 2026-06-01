@@ -9,11 +9,11 @@
         },
         "is_malicious": {
             "type": "boolean",
-            "description": "Décision binaire Malveillant/Sain"
+            "description": "Binary decision Malicious/Clean"
         },
         "explanation_text": {
             "type": "string",
-            "description": "Explication en langage naturel pour l'UI Frontend"
+            "description": "Natural-language explanation for the Frontend UI"
         },
         "confidence_score": {
             "type": "integer",

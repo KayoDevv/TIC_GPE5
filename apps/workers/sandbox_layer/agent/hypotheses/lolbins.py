@@ -6,13 +6,13 @@ Detects execution of system binaries commonly abused for fileless/staging attack
 - Network backdoor utilities (/dev/tcp, nc, socat)
 - Encoding tools for payload decode (base64 -d, xxd)
 
-Source : signals.syscalls_summary — execve syscall sample_args.
+Source: signals.syscalls_summary — execve syscall sample_args.
          Data is AGGREGATED by strace_collector (not per-call) — parent process
          context is not available. Detection relies on argument pattern matching.
 
 RAM cost: ~0 (re-analysis of already-collected strace aggregates).
 
-MITRE : T1059 — Command and Scripting Interpreter
+MITRE: T1059 — Command and Scripting Interpreter
         T1105 — Ingress Tool Transfer (curl/wget with URLs)
 
 Pure function, no I/O. Phase 4.
@@ -127,12 +127,12 @@ def evaluate(
         return HypothesisResult(value=False, score=0.0, evidence=[])
 
     for args_raw in execve_summary.sample_args:
-        # Ignorer l'exécution du HARNAIS lui-même : l'agent lance
-        # `node /opt/agent/pdf_runner.js` et `python3 /opt/agent/...`. node/python
-        # sont des LOLBins → sans ce filtre, le sandbox se détecte lui-même
-        # (plancher de bruit 0.10 sur chaque sample). Filtre par PATH exact du
-        # harnais (pas par nom de binaire) : un malware qui lance `node -e <payload>`
-        # avec d'autres args reste scoré.
+        # Ignore the HARNESS's own execution: the agent runs
+        # `node /opt/agent/pdf_runner.js` and `python3 /opt/agent/...`. node/python
+        # are LOLBins → without this filter, the sandbox detects itself
+        # (a 0.10 noise floor on every sample). Filter by the harness's exact PATH
+        # (not by binary name): malware that runs `node -e <payload>` with other
+        # args is still scored.
         if "/opt/agent" in args_raw:
             continue
 

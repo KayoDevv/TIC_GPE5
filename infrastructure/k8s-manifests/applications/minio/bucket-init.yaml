@@ -1,9 +1,9 @@
-# Job d'initialisation du bucket sandbox-reports + notification Kafka.
-# Idempotent : peut être ré-appliqué sans casser un bucket existant.
+# Initialization Job for the sandbox-reports bucket + Kafka notification.
+# Idempotent: can be re-applied without breaking an existing bucket.
 #
-# Crée :
+# Creates:
 #   - Bucket `sandbox-reports`
-#   - Notification ARN charon → topic Kafka minio.events sur événements PUT
+#   - charon ARN notification → Kafka topic minio.events on PUT events
 ---
 apiVersion: batch/v1
 kind: Job
@@ -33,8 +33,8 @@ spec:
             limits: {cpu: 100m, memory: 64Mi}
       containers:
         - name: init-bucket
-          # Match la release MinIO 2023-01 utilisée par le StatefulSet (CPU v1 compat).
-          # mc post 2023-03 = GOAMD64=v2 → crash sur CPU baseline.
+          # Matches the MinIO 2023-01 release used by the StatefulSet (x86-64-v1 compat).
+          # mc after 2023-03 = GOAMD64=v2 → crashes on the baseline CPU.
           image: quay.io/minio/mc:RELEASE.2023-01-28T20-29-38Z
           command:
             - sh
@@ -43,17 +43,17 @@ spec:
               set -e
               mc alias set local http://minio.minio.svc.cluster.local:9000 minioadmin minioadmin
 
-              # Création bucket (no-op si déjà présent)
+              # Create bucket (no-op if already present)
               mc mb -p local/sandbox-reports || true
 
-              # Notification Kafka (no-op si ARN déjà configuré)
+              # Kafka notification (no-op if the ARN is already configured)
               mc event add local/sandbox-reports arn:minio:sqs::charon:kafka \
                 --event put --suffix .pdf,.exe,.elf 2>&1 | grep -v "already exists" || true
 
-              # Liste finale pour log
+              # Final listing for the log
               echo "=== Buckets ==="
               mc ls local
-              echo "=== Events sur sandbox-reports ==="
+              echo "=== Events on sandbox-reports ==="
               mc event list local/sandbox-reports
           resources:
             requests: {cpu: 50m, memory: 64Mi}

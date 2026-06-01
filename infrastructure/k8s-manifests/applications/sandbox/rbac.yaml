@@ -5,8 +5,8 @@ metadata:
   name: sandbox-consumer
   namespace: sandbox
 ---
-# Le consumer crée des Jobs (un par sample). Pas de delete: l'ownerReference
-# du Job se charge du GC via TTLAfterFinished.
+# The consumer creates Jobs (one per sample). No delete: the Job's
+# ownerReference handles GC via TTLAfterFinished.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -34,7 +34,7 @@ roleRef:
   name: sandbox-job-dispatcher
   apiGroup: rbac.authorization.k8s.io
 ---
-# ServiceAccount séparé pour les Jobs d'analyse — aucun droit API K8s.
+# Separate ServiceAccount for the analysis Jobs — no K8s API rights.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -42,9 +42,9 @@ metadata:
   namespace: sandbox
 automountServiceAccountToken: false
 ---
-# ServiceAccount pour minio-watcher — aucun droit API K8s.
-# Le watcher ne fait que lire/écrire des messages Kafka et calculer des
-# checksums depuis MinIO. Si compromis, il ne peut pas créer de Jobs.
+# ServiceAccount for minio-watcher — no K8s API rights.
+# The watcher only reads/writes Kafka messages and computes checksums
+# from MinIO. If compromised, it cannot create Jobs.
 apiVersion: v1
 kind: ServiceAccount
 metadata:

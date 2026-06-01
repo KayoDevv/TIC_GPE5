@@ -1,38 +1,37 @@
-# Bitnami Kafka Helm chart values — pivot Bitnami du 2026-05-13.
+# Bitnami Kafka Helm chart values — Bitnami pivot of 2026-05-13.
 #
-# Pourquoi Bitnami plutôt que Strimzi :
-#   - Strimzi 0.40/0.46 crashent en init sur K3s v1.35 (Vert.x event loop
-#     bloqué > 9s lors de la découverte des APIs K8s 1.35 absentes de leur
-#     matrice de compat).
-#   - Bitnami chart = StatefulSet + Service standard, pas d'operator, pas
-#     d'API discovery exotique → compat universelle.
+# Why Bitnami instead of Strimzi:
+#   - Strimzi 0.40/0.46 crash on init on K3s v1.35 (Vert.x event loop blocked
+#     > 9s while discovering K8s 1.35 APIs missing from their compat matrix).
+#   - Bitnami chart = standard StatefulSet + Service, no operator, no exotic
+#     API discovery → universal compatibility.
 #
-# Mode KRaft combined (le pod controller-0 fait controller ET broker).
-# Pas de Zookeeper → moins de RAM, moins de pods, démarrage plus rapide.
+# KRaft combined mode (the controller-0 pod is BOTH controller AND broker).
+# No Zookeeper → less RAM, fewer pods, faster startup.
 #
-# Chart version : 31.0.0 (Kafka 3.7.1, voir Makefile KAFKA_CHART_VERSION)
-# Usage :
+# Chart version: 31.0.0 (Kafka 3.7.1, see Makefile KAFKA_CHART_VERSION)
+# Usage:
 #   helm upgrade --install kafka bitnami/kafka -n kafka --version 31.0.0 \
 #     -f infrastructure/k8s-manifests/applications/kafka/values.yaml
 
 # ─────────────────────────────────────────────────────────────────────
-# Image : bitnamilegacy/kafka (registry gratuit avec tous les tags)
-# Bitnami a restreint docker.io/bitnami/kafka aux tags `latest` + majeurs
-# (Bitnami Secure Images, août 2024). Les versions épinglées (3.9.0, etc.)
-# nécessitent un abonnement payant OU le mirror legacy `bitnamilegacy/*`.
+# Image: bitnamilegacy/kafka (free registry with all tags)
+# Bitnami restricted docker.io/bitnami/kafka to the `latest` + major tags
+# (Bitnami Secure Images, Aug 2024). Pinned versions (3.9.0, etc.) require a
+# paid subscription OR the legacy mirror `bitnamilegacy/*`.
 # ─────────────────────────────────────────────────────────────────────
 image:
   registry: docker.io
   repository: bitnamilegacy/kafka
   pullPolicy: IfNotPresent
 
-# Mêmes overrides pour les sous-images du chart
+# Same overrides for the chart sub-images
 kraft:
   enabled: true
 
 controller:
   replicaCount: 1
-  # Note: en mode combined, controller-0 joue aussi le rôle de broker.
+  # Note: in combined mode, controller-0 also acts as the broker.
   resources:
     requests:
       cpu: "250m"
@@ -43,15 +42,15 @@ controller:
   persistence:
     enabled: true
     size: 5Gi
-    # storageClass laissé vide → utilise la StorageClass par défaut de K3s (local-path)
+    # storageClass left empty → uses the K3s default StorageClass (local-path)
   logPersistence:
-    enabled: false   # logs Kafka dans le PV de persistence, pas séparés
+    enabled: false   # Kafka logs in the persistence PV, not separated
 
 broker:
-  replicaCount: 0   # pas de brokers séparés en combined mode
+  replicaCount: 0   # no separate brokers in combined mode
 
 # ─────────────────────────────────────────────────────────────────────
-# Auth & TLS — PLAINTEXT pour dev/RNCP (durcissement Phase 9)
+# Auth & TLS — PLAINTEXT for dev/RNCP (hardening in Phase 9)
 # ─────────────────────────────────────────────────────────────────────
 listeners:
   client:
@@ -63,7 +62,7 @@ listeners:
   external:
     protocol: PLAINTEXT
 
-# Auth client : sans SASL, sans TLS
+# Client auth: no SASL, no TLS
 sasl:
   enabledMechanisms: ""
   interBrokerMechanism: ""
@@ -75,10 +74,10 @@ tls:
     enabled: false
 
 # ─────────────────────────────────────────────────────────────────────
-# Service externe — NodePort 32092 pour le validator sur le host
-# IMPORTANT : domain forcé sur l'IP LAN du node (172.16.249.133), sinon
-# Kafka advertise l'ExternalIP détectée par K3s (peut être une IP publique
-# non joignable depuis le host).
+# External service — NodePort 32092 for the validator running on the host.
+# IMPORTANT: domain forced to the node's LAN IP (172.16.249.133), otherwise
+# Kafka advertises the ExternalIP detected by K3s (which may be a public IP
+# unreachable from the host).
 # ─────────────────────────────────────────────────────────────────────
 externalAccess:
   enabled: true
@@ -92,12 +91,12 @@ externalAccess:
         external: 9094
       nodePorts:
         - 32092
-      # IP LAN du node K3s — forcée pour que Kafka advertise la bonne
-      # adresse au client (validator/feeder qui tournent sur le host).
+      # K3s node LAN IP — forced so Kafka advertises the right address to the
+      # client (validator/feeder running on the host).
       domain: 172.16.249.133
 
 # ─────────────────────────────────────────────────────────────────────
-# Configuration broker — réplication 1 partout (dev mono-node)
+# Broker configuration — replication factor 1 everywhere (single-node dev)
 # ─────────────────────────────────────────────────────────────────────
 extraConfig: |
   default.replication.factor=1
@@ -109,15 +108,15 @@ extraConfig: |
   log.retention.hours=1
 
 # ─────────────────────────────────────────────────────────────────────
-# Provisioning automatique des 6 topics (remplace scripts/kafka-init.sh)
-# Reprend exactement la config de scripts/kafka-init.sh : 3 partitions,
-# retention 3600000ms (1h). Exception : minio.events = 1 partition.
+# Automatic provisioning of the 6 topics (replaces scripts/kafka-init.sh).
+# Mirrors the scripts/kafka-init.sh config exactly: 3 partitions, retention
+# 3600000ms (1h). Exception: minio.events = 1 partition.
 # ─────────────────────────────────────────────────────────────────────
 provisioning:
   enabled: true
   replicationFactor: 1
   numPartitions: 3
-  # Override image legacy aussi pour le Job provisioning
+  # Legacy image override for the provisioning Job too
   image:
     registry: docker.io
     repository: bitnamilegacy/kafka
@@ -161,9 +160,9 @@ provisioning:
         retention.ms: "3600000"
 
 # ─────────────────────────────────────────────────────────────────────
-# Service interne — nom `kafka` (DNS kafka.kafka.svc.cluster.local:9092)
-# Aligné avec overlays/prod, KEDA scaledobject, analysis-job-template,
-# CLAUDE.md — pas d'alias service nécessaire (le chart utilise ce nom natif).
+# Internal service — name `kafka` (DNS kafka.kafka.svc.cluster.local:9092).
+# Aligned with overlays/prod, the KEDA ScaledObject, analysis-job-template,
+# and CLAUDE.md — no service alias needed (the chart uses this name natively).
 # ─────────────────────────────────────────────────────────────────────
 service:
   type: ClusterIP
@@ -171,14 +170,14 @@ service:
     client: 9092
 
 # ─────────────────────────────────────────────────────────────────────
-# Désactive les composants optionnels (réduit l'empreinte mémoire ~200Mi)
+# Disable optional components (cuts the memory footprint by ~200Mi)
 # ─────────────────────────────────────────────────────────────────────
 kafkaExporter:
-  enabled: false   # Prometheus metrics — activer Phase 9
+  enabled: false   # Prometheus metrics — enable in Phase 9
 metrics:
   jmx:
     enabled: false
   kafka:
     enabled: false
 networkPolicy:
-  enabled: false   # géré par les NetworkPolicies du namespace sandbox
+  enabled: false   # handled by the sandbox namespace NetworkPolicies

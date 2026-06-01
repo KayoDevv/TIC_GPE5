@@ -19,7 +19,7 @@ Core Backend (FastAPI)
     ├──────────────────────────────────────────────────┐
     ▼                                                  ▼
 ML Layer                                        Sandbox Layer
-Static analysis (ONNX)                          Behavioral detonation (Firecracker)
+Static analysis (ONNX)                          Behavioral detonation (K8s Job · runc)
 SLA < 500 ms                                    SLA < 120 s
     │ ml_layer.result                                  │ sandbox_layer.result
     │                                                  ├──────────────────────┐
@@ -45,7 +45,7 @@ SLA < 500 ms                                    SLA < 120 s
 | **Frontend** | Vue 3, WXT, TypeScript, Tailwind | Chrome/Edge extension (Manifest V3). Intercepts downloads, shows verdict UI | — |
 | **Core Backend** | Python, FastAPI | Entry point: validates (≤ 35 MB), uploads to S3/MinIO, emits Kafka event, pushes verdict via WebSocket | — |
 | **ML Layer** | Python, LightGBM/ONNX Runtime | Static analysis: entropy, PE sections, imports/exports → risk score 0–100 | < 500 ms |
-| **Sandbox Layer** | Python, Firecracker MicroVMs | Behavioral detonation in isolated VMs, ETW/eBPF capture → IOC list (MITRE ATT&CK) | < 120 s |
+| **Sandbox Layer** | Python, K8s `batch/v1 Job` (hardened `runc` + seccomp, gVisor optional) | Behavioral detonation in isolated containers, `strace` + state-diff + `/proc` forensics → IOC list (MITRE ATT&CK) | < 120 s |
 | **LLM Layer** | Python, vLLM, Llama-3-8B | Correlates email context + sandbox IOCs → binary decision + human-readable explanation | 3–5 s |
 | **Verdict Layer** | Python, Redis | Saga aggregator: collects async results, applies decision matrix, emits final verdict | — |
 
@@ -93,7 +93,7 @@ apps/
 ├── core-backend/           # FastAPI gateway
 └── workers/
     ├── ml_layer/           # Static ML analysis
-    ├── sandbox_layer/      # Firecracker behavioral sandbox
+    ├── sandbox_layer/      # K8s Job behavioral sandbox (strace + /proc)
     ├── llm_layer/          # LLM semantic analysis
     └── verdict_layer/      # Saga aggregator
 
@@ -168,5 +168,5 @@ terraform -chdir=infrastructure/terraform fmt -recursive
 - **Python workers and backend:** TDD with `pytest-asyncio` (`asyncio_mode = "auto"`), 100% test coverage enforced
 - **Linting:** Ruff (line length 100, rules E/F/B/I) + MyPy strict
 - **Frontend:** Manifest V3, Shadow DOM for CSS isolation, Playwright for E2E tests
-- **Sandbox:** Firecracker MicroVMs only — Docker containers are forbidden for payload execution
+- **Sandbox:** payloads run in ephemeral, hardened K8s Jobs (`runc` + seccomp whitelist + `cap-drop ALL` + non-root UID 10001 + NetworkPolicy deny-all); gVisor (`runsc`) enableable via `SANDBOX_RUNTIME_CLASS=gvisor`. Each Job is destroyed after execution.
 - **LLM:** temperature 0.1–0.3 (no hallucinations on security decisions)

@@ -6,24 +6,24 @@
     "job_id": {
       "type": "string",
       "format": "uuid",
-      "description": "ID unique de la requête d'analyse"
+      "description": "Unique ID of the analysis request"
     },
     "s3_url": {
       "type": "string",
       "format": "uri",
-      "description": "URL S3 pré-signée ou chemin du fichier à analyser dans le bucket"
+      "description": "Presigned S3 URL or path of the file to analyze in the bucket"
     },
     "sha256": {
       "type": "string",
       "pattern": "^[A-Fa-f0-9]{64}$",
-      "description": "Empreinte SHA-256 du fichier"
+      "description": "SHA-256 fingerprint of the file"
     },
     "email_context": {
       "type": "object",
       "properties": {
         "sender": {"type": "string", "format": "email"},
         "subject": {"type": "string"},
-        "body_text": {"type": "string", "description": "Contenu du corps de l'email pour le LLM"}
+        "body_text": {"type": "string", "description": "Email body content for the LLM"}
       },
       "required": ["sender", "subject", "body_text"]
     },

@@ -1,38 +1,38 @@
 #!/usr/bin/env node
 /**
- * pdf_runner.js — couche dynamique JS PDF (PDF.js + Node vm sandbox)
+ * pdf_runner.js — dynamic PDF JS layer (PDF.js + Node vm sandbox)
  *
- * Mission : exécuter le JavaScript embarqué dans un PDF dans un environnement
- * où strace peut observer les syscalls qui en résultent.
+ * Mission: execute the JavaScript embedded in a PDF in an environment where
+ * strace can observe the resulting syscalls.
  *
- * Stratégie :
- *   1. Charger le PDF avec pdfjs-dist (parser Mozilla — robuste sur PDFs malformés)
- *   2. Extraire TOUS les blocs JS :
- *        - /OpenAction et /AA au niveau document
- *        - /AA par page
- *        - /A et /AA dans les annotations (form fields, links, etc.)
- *        - /JavaScript dans les noms (/Names tree)
- *   3. Exécuter chaque bloc dans un Node vm sandboxé avec un contexte
- *      Adobe-like stubbé. Les API stubbées qui font de la network/disk I/O
- *      déclenchent de VRAIS syscalls visibles par strace.
+ * Strategy:
+ *   1. Load the PDF with pdfjs-dist (Mozilla parser — robust on malformed PDFs)
+ *   2. Extract ALL the JS blocks:
+ *        - /OpenAction and /AA at the document level
+ *        - /AA per page
+ *        - /A and /AA in the annotations (form fields, links, etc.)
+ *        - /JavaScript in the names (/Names tree)
+ *   3. Execute each block in a sandboxed Node vm with a stubbed Adobe-like
+ *      context. The stubbed APIs that do network/disk I/O trigger REAL syscalls
+ *      visible to strace.
  *
- * Pourquoi vm + stubs plutôt que PDF.js sandbox natif ?
- *   - PDF.js sandbox utilise QuickJS via WebAssembly → syscalls noyés dans wasm
- *   - vm Node est V8 direct → syscalls clairs et attribuables
- *   - On contrôle quelles API déclenchent quoi (granularité fine pour la détection)
+ * Why vm + stubs rather than PDF.js's native sandbox?
+ *   - PDF.js sandbox uses QuickJS via WebAssembly → syscalls buried in wasm
+ *   - Node vm is direct V8 → clear, attributable syscalls
+ *   - We control which APIs trigger what (fine granularity for detection)
  *
- * Sortie : stdout = events JSON (one per line) pour debug.
- *          stderr = traces d'exécution.
- *          Tous les comportements suspects passent par des syscalls réels
- *          que strace -f intercepte en amont.
+ * Output: stdout = JSON events (one per line) for debug.
+ *         stderr = execution traces.
+ *         All suspicious behaviour goes through real syscalls that strace -f
+ *         intercepts upstream.
  *
- * Usage : node pdf_runner.js <path-to-pdf>
+ * Usage: node pdf_runner.js <path-to-pdf>
  *
- * Exit codes :
- *   0  — PDF chargé, JS extrait et tenté (succès partiel ou total)
- *   1  — argv manquant
- *   2  — PDF illisible (parser error)
- *   3  — exception fatale (signal lui-même — un PDF qui crashe le parser est suspect)
+ * Exit codes:
+ *   0  — PDF loaded, JS extracted and attempted (partial or full success)
+ *   1  — missing argv
+ *   2  — unreadable PDF (parser error)
+ *   3  — fatal exception (signal itself — a PDF that crashes the parser is suspicious)
  */
 
 const fs = require('fs');
@@ -43,15 +43,15 @@ const http = require('http');
 const https = require('https');
 
 // ─────────────────────────────────────────────────────────────────────
-// Contexte PDF JS stubbé — mime l'API Adobe Acrobat
+// Stubbed PDF JS context — mimics the Adobe Acrobat API
 // ─────────────────────────────────────────────────────────────────────
 //
-// Quand le JS PDF appelle app.launchURL("evil.com"), notre stub fait
-// un VRAI dns.lookup + net.connect → strace catch le syscall connect()
-// → hypothèse c2_communication détecte → score remonte.
+// When the PDF JS calls app.launchURL("evil.com"), our stub makes a REAL
+// dns.lookup + net.connect → strace catches the connect() syscall
+// → the c2_communication hypothesis detects it → the score rises.
 //
-// On NE BLOQUE PAS — on laisse passer pour observer. La sandbox K8s
-// (NetworkPolicy + namespace isolé) borde le blast radius.
+// We DO NOT BLOCK — we let it through to observe. The K8s sandbox
+// (NetworkPolicy + isolated namespace) bounds the blast radius.
 
 function createAdobeContext() {
     const log = (sig, data) => {
@@ -60,11 +60,11 @@ function createAdobeContext() {
         } catch (_) {}
     };
 
-    // Helper — déclenche un connect() réel sans bloquer
+    // Helper — triggers a real connect() without blocking
     function realConnect(host, port) {
         try {
-            dns.lookup(host, () => {});                          // syscall : sendto (DNS)
-            const sock = net.connect({host, port: port || 80});  // syscall : connect
+            dns.lookup(host, () => {});                          // syscall: sendto (DNS)
+            const sock = net.connect({host, port: port || 80});  // syscall: connect
             sock.on('connect', () => sock.end());
             sock.on('error', () => {});
             sock.setTimeout(1500, () => sock.destroy());
@@ -95,7 +95,7 @@ function createAdobeContext() {
         language:      'ENU',
     };
 
-    // PDF "this" — un Document
+    // PDF "this" — a Document
     const thisDoc = {
         getField:    (name) => ({
             value: '', name, type: 'text',
@@ -123,7 +123,7 @@ function createAdobeContext() {
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// Extraction JS depuis le PDF
+// JS extraction from the PDF
 // ─────────────────────────────────────────────────────────────────────
 
 async function extractAllJs(doc) {
@@ -207,7 +207,7 @@ async function main() {
     try {
         doc = await pdfjs.getDocument({
             data,
-            isEvalSupported: false,    // on gère eval nous-mêmes via vm
+            isEvalSupported: false,    // we handle eval ourselves via vm
             disableFontFace: true,
             useSystemFonts: false,
             verbosity: 0,
@@ -222,7 +222,7 @@ async function main() {
     const scripts = await extractAllJs(doc);
     process.stdout.write(JSON.stringify({sig: 'js_extracted', data: {count: scripts.length}}) + '\n');
 
-    // Exécution : un seul contexte partagé (les scripts PDF se voient entre eux)
+    // Execution: a single shared context (PDF scripts can see each other)
     const ctx = createAdobeContext();
     vm.createContext(ctx);
 
@@ -235,7 +235,7 @@ async function main() {
         }
     }
 
-    // Laisse 1s aux opérations async (connect, dns) pour produire des syscalls
+    // Give async operations (connect, dns) 1s to produce syscalls
     await new Promise(r => setTimeout(r, 1000));
 
     await doc.destroy();

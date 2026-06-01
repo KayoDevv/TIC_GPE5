@@ -1,9 +1,9 @@
-# Isolation réseau du namespace sandbox (enforcement par kube-router).
+# Network isolation of the sandbox namespace (enforced by Calico).
 #
-# Règles namespaceSelector + DNS pures (tout in-cluster) :
-# - Consumer : peut sortir vers Kafka, MinIO, API K8s.
-# - Watcher  : Kafka + MinIO uniquement (PAS d'API K8s — moindre privilège).
-# - Jobs d'analyse : Kafka (résultats) + MinIO (download sample).
+# Pure namespaceSelector + DNS rules (everything in-cluster):
+# - Consumer: can egress to Kafka, MinIO, K8s API.
+# - Watcher : Kafka + MinIO only (NO K8s API — least privilege).
+# - Analysis Jobs: Kafka (results) + MinIO (sample download).
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -25,27 +25,24 @@ spec:
       app: sandbox-consumer
   policyTypes: [Egress]
   egress:
-    # Kafka in-cluster (service prod). Schema Registry retiré → plus de 8081.
+    # Kafka in-cluster (prod service). Schema Registry removed → no more 8081.
     - to:
         - namespaceSelector:
             matchLabels: {kubernetes.io/metadata.name: kafka}
       ports:
         - {protocol: TCP, port: 9092}
-    # MinIO dans K8s (service in-cluster, prod)
+    # MinIO in K8s (in-cluster service, prod)
     - to:
         - namespaceSelector:
             matchLabels: {kubernetes.io/metadata.name: minio}
       ports:
         - {protocol: TCP, port: 9000}
-    # API K8s — via namespaceSelector au lieu d'ipBlock car kube-router
-    # n'enforce pas correctement les rules ipBlock sur K3s 1.35.
-    # Le service `kubernetes` vit dans `default` ns (créé par K8s auto).
-    - to:
-        - namespaceSelector:
-            matchLabels: {kubernetes.io/metadata.name: default}
-      ports:
-        - {protocol: TCP, port: 443}
-        - {protocol: TCP, port: 6443}
+    # K8s API — handled by a SEPARATE, generated policy (`consumer-apiserver-egress`).
+    # The kube-apiserver is host-networked, so a `namespaceSelector` on the
+    # `default` ns never matches it (it is NOT a pod). Calico enforces `ipBlock`
+    # correctly, but the node IP is host-specific, so it is injected at deploy
+    # time from the auto-discovered NODE_IP via `make netpol-apiserver`
+    # (template: consumer-apiserver-egress.yaml.tmpl). No hardcoded IP in git.
     # DNS
     - to:
         - namespaceSelector: {}
@@ -53,9 +50,9 @@ spec:
         - {protocol: UDP, port: 53}
         - {protocol: TCP, port: 53}
 ---
-# Watcher : Kafka (lecture minio.events + publication file.requested) + MinIO
-# (calcul SHA-256 + presigned URLs). Aucun accès API K8s — si compromis,
-# ne peut pas créer de Jobs.
+# Watcher: Kafka (read minio.events + publish file.requested) + MinIO
+# (SHA-256 computation + presigned URLs). No K8s API access — if compromised,
+# it cannot create Jobs.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:

@@ -1,6 +1,6 @@
-# Dev cache locale uniquement.
-# Kafka et MinIO ont été migrés in-cluster (Bitnami Kafka chart + MinIO StatefulSet).
-# Voir : infrastructure/k8s-manifests/applications/{kafka,minio}/
+# Local dev cache only.
+# Kafka and MinIO have been migrated in-cluster (Bitnami Kafka chart + MinIO StatefulSet).
+# See: infrastructure/k8s-manifests/applications/{kafka,minio}/
 
 services:
   redis:

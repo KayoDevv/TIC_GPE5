@@ -1,6 +1,6 @@
-# Autoscaling du consumer sur le lag Kafka — ne dépasse pas le nombre de
-# partitions de file.requested (3, provisionnées par Helm Bitnami
-# kafka/values.yaml). Au-delà = consumers inactifs (un consumer par partition max).
+# Consumer autoscaling on Kafka lag — never exceeds the number of
+# file.requested partitions (3, provisioned by Helm Bitnami kafka/values.yaml).
+# Beyond that = idle consumers (one consumer per partition max).
 ---
 apiVersion: keda.sh/v1alpha1
 kind: ScaledObject
@@ -11,20 +11,20 @@ spec:
   scaleTargetRef:
     name: sandbox-consumer
   minReplicaCount: 1
-  maxReplicaCount: 3                # = partitions de file.requested
+  maxReplicaCount: 3                # = file.requested partitions
   pollingInterval: 15               # s
-  cooldownPeriod: 120               # s — laisse un Job d'analyse finir avant scale-down
+  cooldownPeriod: 120               # s — lets an analysis Job finish before scale-down
   triggers:
     - type: kafka
       metadata:
         bootstrapServers: kafka.kafka.svc.cluster.local:9092
         consumerGroup: charon-sandbox-v1
         topic: file.requested
-        lagThreshold: "5"           # 1 réplica supplémentaire par 5 messages en retard
+        lagThreshold: "5"           # +1 replica per 5 lagging messages
         offsetResetPolicy: earliest
 ---
-# Garde-fou : le namespace ne peut JAMAIS faire tourner plus de 6 analyses
-# simultanées même si KEDA délire. Protège le cluster contre une rafale.
+# Guard: the namespace can NEVER run more than ~6 analyses simultaneously
+# even if KEDA goes haywire. Protects the cluster against a burst.
 apiVersion: v1
 kind: ResourceQuota
 metadata:
@@ -32,7 +32,7 @@ metadata:
   namespace: sandbox
 spec:
   hard:
-    pods: "12"                      # jusqu'à 3 consumers + jobs d'analyse
+    pods: "12"                      # up to 3 consumers + analysis jobs
     requests.cpu: "10"
     requests.memory: "16Gi"
     limits.cpu: "20"

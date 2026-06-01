@@ -1,10 +1,10 @@
-"""sandbox-consumer — dispatcher Kafka → K8s Job.
+"""sandbox-consumer — Kafka → K8s Job dispatcher.
 
-Consomme file.requested, valide le payload, crée 1 batch/v1 Job par sample.
-L'analyse réelle (strace + snapshots + hypothèses + publish) se fait dans
-le pod Job (ubuntu-sandbox:v1 / agent/run_analysis.py).
+Consumes file.requested, validates the payload, creates 1 batch/v1 Job per sample.
+The actual analysis (strace + snapshots + hypotheses + publish) happens in the
+Job pod (ubuntu-sandbox:v1 / agent/run_analysis.py).
 
-Variables d'environnement (injectées par consumer-deployment.yaml) :
+Environment variables (injected by consumer-deployment.yaml):
     KAFKA_BOOTSTRAP_SERVERS   default: kafka.kafka.svc.cluster.local:9092
     KAFKA_TOPIC_IN            default: file.requested
     KAFKA_GROUP_ID            default: charon-sandbox-v1
@@ -83,9 +83,9 @@ SINKHOLE_DNS_IP = os.getenv("SANDBOX_DNS_IP", "").strip() or None
 SECCOMP_TYPE    = os.getenv("SANDBOX_SECCOMP_TYPE", "RuntimeDefault").strip()
 SECCOMP_PROFILE = os.getenv("SANDBOX_SECCOMP_PROFILE", "charon-seccomp.json").strip()
 
-# Endpoints injectés dans les pods d'analyse (peuvent différer du consumer
-# quand le consumer tourne en dehors du cluster, ex. dev local hors K3s).
-# Par défaut = mêmes valeurs que le consumer lui-même.
+# Endpoints injected into the analysis pods (may differ from the consumer's
+# when the consumer runs outside the cluster, e.g. local dev outside K3s).
+# Default = same values as the consumer itself.
 AGENT_KAFKA_BOOTSTRAP = os.getenv("AGENT_KAFKA_BOOTSTRAP_SERVERS", KAFKA_BOOTSTRAP)
 AGENT_MINIO_ENDPOINT  = os.getenv("AGENT_MINIO_ENDPOINT", MINIO_ENDPOINT)
 
@@ -94,10 +94,10 @@ AGENT_MINIO_ENDPOINT  = os.getenv("AGENT_MINIO_ENDPOINT", MINIO_ENDPOINT)
 # ---------------------------------------------------------------------------
 
 def _detect_file_type(s3_url: str) -> str:
-    """Détecte le type de fichier via magic bytes (HTTP Range request bytes=0-7).
+    """Detect the file type via magic bytes (HTTP Range request bytes=0-7).
 
-    Retourne "elf", "pdf", ou "unknown".
-    Timeout 10 s — ne bloque pas le dispatch si MinIO est lent.
+    Returns "elf", "pdf", or "unknown".
+    Timeout 10s — does not block the dispatch if MinIO is slow.
     """
     try:
         req = urllib.request.Request(s3_url, headers={"Range": "bytes=0-7"})
@@ -119,17 +119,17 @@ def _detect_file_type(s3_url: str) -> str:
 # ---------------------------------------------------------------------------
 
 def _load_k8s() -> k8s_client.BatchV1Api:
-    """Charge la config K8s.
+    """Load the K8s config.
 
-    Ordre de résolution :
-    1. K8S_API_SERVER défini → token + CA standard, host overridé (override
-       via overlay : ex. https://kubernetes.default.svc:443).
-    2. Variables d'environnement standard in-cluster (cluster K8s "normal").
-    3. Kubeconfig local (dev hors cluster, ex. make run-consumer).
+    Resolution order:
+    1. K8S_API_SERVER defined → standard token + CA, host overridden (override
+       via overlay: e.g. https://kubernetes.default.svc:443).
+    2. Standard in-cluster environment variables ("normal" K8s cluster).
+    3. Local kubeconfig (dev outside the cluster, e.g. make run-consumer).
     """
     api_server = os.getenv("K8S_API_SERVER")
     if api_server:
-        # Chemin in-cluster avec host custom (override depuis overlay).
+        # In-cluster path with custom host (override from overlay).
         from kubernetes.config.incluster_config import (
             SERVICE_CERT_FILENAME,
             SERVICE_TOKEN_FILENAME,
@@ -144,7 +144,7 @@ def _load_k8s() -> k8s_client.BatchV1Api:
             configuration.api_key = {"authorization": "Bearer " + token}
             configuration.api_key_prefix = {"authorization": ""}
         except FileNotFoundError:
-            # Pas de token in-cluster → kubeconfig
+            # No in-cluster token → kubeconfig
             k8s_config.load_kube_config()
             log.info("k8s config: kubeconfig (K8S_API_SERVER set but no token)")
             return k8s_client.BatchV1Api()
@@ -168,25 +168,25 @@ def _create_analysis_job(
     email_context: dict,
     file_type: str = "unknown",
 ) -> str:
-    """Crée un batch/v1 Job K8s pour analyser un sample.
+    """Create a batch/v1 K8s Job to analyze a sample.
 
-    Sélectionne automatiquement l'image et l'agent selon le type de fichier :
+    Automatically selects the image and agent by file type:
       "elf"      → ubuntu-sandbox:v1      + run_analysis.py
       "pdf" / *  → ubuntu-pdf-sandbox:v1  + run_pdf_analysis.py
 
-    Le pipeline PDF est le DÉFAUT — y compris pour les magic "unknown". Sa
-    couche statique (missing_pdf_magic, embedded_magic, entropy) est un
-    analyseur d'octets format-agnostique qui flague les fichiers déguisés
-    (ex. HTML/script maquillé en .pdf = évasion). L'agent ELF reste réservé
-    aux vrais binaires ELF (\\x7fELF), qu'il est seul à savoir exécuter.
+    The PDF pipeline is the DEFAULT — including for "unknown" magic. Its static
+    layer (missing_pdf_magic, embedded_magic, entropy) is a format-agnostic byte
+    analyzer that flags disguised files (e.g. HTML/script dressed up as .pdf =
+    evasion). The ELF agent stays reserved for real ELF binaries (\\x7fELF),
+    which it alone knows how to execute.
 
-    Retourne le nom du Job créé.
+    Returns the name of the created Job.
     """
     short_id = job_id.replace("-", "")[:12]
     job_name = f"charon-{short_id}"
 
-    # ELF → agent ELF ; PDF ET unknown/déguisé → agent PDF (couche statique
-    # généraliste qui détecte les fichiers mentant sur leur format).
+    # ELF → ELF agent ; PDF AND unknown/disguised → PDF agent (general-purpose
+    # static layer that detects files lying about their format).
     if file_type == "elf":
         job_image   = JOB_IMAGE
         agent_cmd   = ["python3", "/opt/agent/run_analysis.py"]
@@ -232,7 +232,7 @@ def _create_analysis_job(
                     ),
                     # Hardening Tranche B — V3 (audit 2026-04-30):
                     # RuntimeClass = gvisor en prod (userspace kernel sandbox).
-                    # None = falls back to runc (default actuel).
+                    # None = falls back to runc (current default).
                     runtime_class_name=RUNTIME_CLASS,
                     # Hardening Tranche B — V7: sinkhole DNS. dnsPolicy=None
                     # detaches the pod from the cluster's default DNS, dnsConfig
@@ -331,10 +331,10 @@ def _create_analysis_job(
                                     name="scratch",
                                     mount_path="/out",
                                 ),
-                                # Hardening Tranche A — V6 :
-                                # rootfs read-only → /tmp doit rester writable pour
-                                # Python tempfile, gcc temp, pip cache, etc. tmpfs en
-                                # mémoire (256Mi) compté dans le memory limit du pod.
+                                # Hardening Tranche A — V6:
+                                # read-only rootfs → /tmp must stay writable for
+                                # Python tempfile, gcc temp, pip cache, etc. tmpfs in
+                                # memory (256Mi) counted in the pod's memory limit.
                                 k8s_client.V1VolumeMount(
                                     name="tmp",
                                     mount_path="/tmp",
@@ -381,11 +381,11 @@ def _create_analysis_job(
 # Message handler
 # ---------------------------------------------------------------------------
 
-_QUOTA_RETRY_DELAYS = [10, 20, 40]  # secondes entre chaque tentative (3 essais)
+_QUOTA_RETRY_DELAYS = [10, 20, 40]  # seconds between attempts (3 tries)
 
 
 def _is_quota_exceeded(exc: Exception) -> bool:
-    """Retourne True si l'exception K8s est un 403 quota exceeded."""
+    """Return True if the K8s exception is a 403 quota exceeded."""
     from kubernetes.client.exceptions import ApiException
     return (
         isinstance(exc, ApiException)
@@ -409,7 +409,7 @@ async def _handle(
         log.error("Missing s3_url — skipping", job_id=job_id)
         return
 
-    # Détection du type de fichier avant de créer le Job
+    # File type detection before creating the Job
     file_type = _detect_file_type(s3_url)
     log.info("File type detected", job_id=job_id, file_type=file_type)
 
@@ -430,13 +430,13 @@ async def _handle(
         except Exception as exc:
             last_exc = exc
             if _is_quota_exceeded(exc):
-                continue  # réessayer
-            # Erreur non-quota → pas la peine de réessayer
+                continue  # retry
+            # Non-quota error → no point retrying
             log.exception("Failed to create K8s Job", job_id=job_id, error=str(exc))
             break
 
-    # Toutes les tentatives épuisées → publier un résultat d'erreur pour ne pas
-    # perdre le job silencieusement (le validator le comptera dans les erreurs).
+    # All attempts exhausted → publish an error result so the job is not lost
+    # silently (the validator will count it in the errors).
     log.error(
         "K8s Job creation failed after retries — publishing error result",
         job_id=job_id,

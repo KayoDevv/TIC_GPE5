@@ -1,0 +1,5 @@
+{
+  "anomaly_score": 0.045,
+  "verdict": "needs_more_context",
+  "narrative": "Verdict sandbox : NEEDS_MORE_CONTEXT (score 0.04). Signaux faibles/ambigus, insuffisants pour trancher seuls. Indicateurs : Lien externe vers un domaine non catégorisé : http://acme-portal.example/login. À corréler avec le contexte de l'email (expéditeur, objet, corps) : un lien vers un domaine d'apparence légitime ou une structure atypique peut être du phishing par usurpation. Le sandbox ne dispose pas du contexte d'envoi."
+}

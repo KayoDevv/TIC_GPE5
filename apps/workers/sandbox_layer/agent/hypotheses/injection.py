@@ -2,7 +2,7 @@
 
 Detects:
 - LD_PRELOAD set on any spawned process (classic library injection)
-- RWX memory regions found via /proc/[pid]/maps (Couche 3)
+- RWX memory regions found via /proc/[pid]/maps (Layer 3)
 - mprotect() calls switching pages to PROT_EXEC (shellcode unpacking)
 - ptrace() calls outside of strace itself (PTRACE_ATTACH on another process)
 
@@ -46,7 +46,7 @@ def evaluate(
             value=p.ld_preload[:256],
         ))
 
-    # RWX regions from /proc/[pid]/maps (Couche 3)
+    # RWX regions from /proc/[pid]/maps (Layer 3)
     rwx_regions = [r for r in memory.suspicious_regions if "rwx" in r.permissions]
     if rwx_regions:
         score += 0.40

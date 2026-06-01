@@ -27,7 +27,7 @@
                     },
                     "mitre_tactic": {
                         "type": "string",
-                        "description": "Tactic MITRE ATT&CK (ex: TA0011, TA0002)"
+                        "description": "MITRE ATT&CK tactic (e.g. TA0011, TA0002)"
                     },
                     "description": {
                         "type": "string"
@@ -38,15 +38,15 @@
                     "value"
                 ]
             },
-            "description": "Liste des Indicateurs de Compromission"
+            "description": "List of Indicators of Compromise"
         },
         "behavior_summary": {
             "type": "string",
-            "description": "Résumé brut du comportement pour ingestion par le LLM"
+            "description": "Raw behavior summary for ingestion by the LLM"
         },
         "email_context": {
             "type": "object",
-            "description": "Pass-through du contexte de l'email depuis request pour le LLM Layer"
+            "description": "Pass-through of the email context from the request for the LLM Layer"
         },
         "timeout_triggered": {
             "type": "boolean",

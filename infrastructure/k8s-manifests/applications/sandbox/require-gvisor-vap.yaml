@@ -1,0 +1,41 @@
+# NATIVE ValidatingAdmissionPolicy (K8s >= 1.30, GA) — no component to install
+# (unlike Kyverno/Gatekeeper). Makes gVisor MANDATORY for detonation: any pod
+# labelled charon.io/role=analysis in the sandbox namespace is REJECTED if it
+# does not run under runtimeClassName=gvisor. Prevents a silent fallback to runc
+# (debug, misconfigured env) that would reopen the container -> host escape.
+#
+# Cluster-scoped → applied via `make enforce-gvisor` (not via the namespaced
+# kustomization). failurePolicy: Fail = fail-closed (no detonation without gVisor).
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: charon-require-gvisor-detonation
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE"]
+        resources: ["pods"]
+  validations:
+    - expression: "has(object.spec.runtimeClassName) && object.spec.runtimeClassName == 'gvisor'"
+      message: "Detonation pod (charon.io/role=analysis) rejected: runtimeClassName=gvisor required (kernel isolation). See SANDBOX_RUNTIME_CLASS."
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: charon-require-gvisor-detonation-binding
+spec:
+  policyName: charon-require-gvisor-detonation
+  validationActions: [Deny]
+  matchResources:
+    # Restricted to the sandbox namespace AND to detonation pods only.
+    # The consumer/watcher (app=sandbox-consumer / minio-watcher) do NOT carry
+    # this label → not affected (they run under runc, which is intended).
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: sandbox
+    objectSelector:
+      matchLabels:
+        charon.io/role: analysis

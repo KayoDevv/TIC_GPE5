@@ -1,6 +1,6 @@
-"""Types contractuels partagés par les 6 modules d'hypothèse.
+"""Contract types shared by the hypothesis modules.
 
-Chaque hypothèse expose exactement une fonction :
+Each hypothesis exposes exactly one function:
 
     def evaluate(
         diff: SnapshotDiff,
@@ -8,12 +8,12 @@ Chaque hypothèse expose exactement une fonction :
         memory: MemoryObservables,
     ) -> HypothesisResult
 
-Règles :
-    - Pas d'I/O réseau dans les modules hypothèses (purs, testables).
-    - Pas d'accès disque direct (toutes les données viennent des modèles).
-    - HypothesisResult.evidence doit pointer vers des faits précis dans les inputs
-      (via field_path traçable) — jamais de string vague comme "le fichier est suspect".
-    - score en [0.0, 1.0] — la pondération finale est dans pipeline.py (anomaly_score).
+Rules:
+    - No network I/O in the hypothesis modules (pure, testable).
+    - No direct disk access (all data comes from the models).
+    - HypothesisResult.evidence must point to precise facts in the inputs
+      (via a traceable field_path) — never a vague string like "the file is suspicious".
+    - score in [0.0, 1.0] — the final weighting is in pipeline.py (anomaly_score).
 """
 
 from __future__ import annotations
@@ -30,14 +30,14 @@ from models import (
 
 
 # ---------------------------------------------------------------------------
-# Evidence — traçabilité vers un observable précis
+# Evidence — traceability to a precise observable
 # ---------------------------------------------------------------------------
 
 
 class Evidence(BaseModel):
-    """Référence traçable vers un observable précis dans les inputs.
+    """Traceable reference to a precise observable in the inputs.
 
-    Exemples :
+    Examples:
         Evidence(
             source="snapshot_diff",
             field_path="persistence_changes[0].path",
@@ -58,26 +58,26 @@ class Evidence(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     source: Literal["snapshot_diff", "runtime_signals", "memory"]
-    field_path: str  # chemin JSONPath-like vers le champ observé
-    value: Annotated[str, Field(max_length=256)]  # valeur observée, tronquée
+    field_path: str  # JSONPath-like path to the observed field
+    value: Annotated[str, Field(max_length=256)]  # observed value, truncated
 
 
 # ---------------------------------------------------------------------------
-# HypothesisResult — sortie d'une hypothèse
+# HypothesisResult — output of a hypothesis
 # ---------------------------------------------------------------------------
 
 
 class HypothesisResult(BaseModel):
-    """Résultat d'une hypothèse Couche 2.
+    """Result of a Layer 2 hypothesis.
 
-    value  : True si le signal est positif (comportement détecté).
-    score  : confiance dans la détection [0.0 = rien, 1.0 = certitude].
-    evidence : liste d'observables précis qui justifient le score.
-               Doit être non vide si value=True.
+    value  : True if the signal is positive (behaviour detected).
+    score  : confidence in the detection [0.0 = nothing, 1.0 = certainty].
+    evidence : list of precise observables that justify the score.
+               Must be non-empty if value=True.
 
-    Le score N'EST PAS un verdict — c'est un signal brut.
-    La pondération et l'agrégation en anomaly_score global se font
-    dans orchestrator/pipeline.py.
+    The score is NOT a verdict — it's a raw signal.
+    The weighting and aggregation into the global anomaly_score happen
+    in orchestrator/pipeline.py.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -88,7 +88,7 @@ class HypothesisResult(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# AnomalyScore — agrégation des 6 hypothèses
+# AnomalyScore — aggregation of the hypotheses
 # ---------------------------------------------------------------------------
 
 
@@ -117,10 +117,10 @@ class AllHypothesesResults(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Protocol / signature contractuelle des 6 modules
+# Protocol / contractual signature of the modules
 # ---------------------------------------------------------------------------
 
-# Chaque module hypotheses/*.py doit exposer cette fonction :
+# Each hypotheses/*.py module must expose this function:
 #
 #   def evaluate(
 #       diff: SnapshotDiff,
@@ -129,8 +129,8 @@ class AllHypothesesResults(BaseModel):
 #   ) -> HypothesisResult:
 #       ...
 #
-# Pas de classe, pas d'état global — fonction pure.
-# Testable via fixtures mockées dans tests/unit/fixtures/.
+# No class, no global state — pure function.
+# Testable via mocked fixtures in tests/unit/fixtures/.
 
 __all__ = [
     "Evidence",

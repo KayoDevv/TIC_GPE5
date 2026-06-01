@@ -1,0 +1,14 @@
+[
+  {
+    "type": "syscall",
+    "value": "c2.evil.test",
+    "mitre_tactic": "TA0011",
+    "description": "c2_communication: network.dns_queries[0].query"
+  },
+  {
+    "type": "syscall",
+    "value": "mmap(RWX) pid=42 0x7f00-0x7f10",
+    "mitre_tactic": "TA0005",
+    "description": "RWX memory region: rwx 4096B"
+  }
+]

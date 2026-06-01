@@ -36,7 +36,7 @@ ARG MUPDF_SHA256=skip
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# pipefail : un pipe (curl | ...) doit échouer si la 1re commande échoue (DL4006)
+# pipefail: a pipe (curl | ...) must fail if the first command fails (DL4006)
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 # hadolint ignore=DL3008
@@ -80,7 +80,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
     NODE_PATH=/opt/pdfjs/node_modules
 
-# pipefail : un pipe (curl | bash) doit échouer si la 1re commande échoue (DL4006)
+# pipefail: a pipe (curl | bash) must fail if the first command fails (DL4006)
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 # Runtime deps only — no build toolchain, no mupdf-tools (we use the built one)
@@ -107,14 +107,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     zlib1g \
     && rm -rf /var/lib/apt/lists/*
 
-# Node 20 LTS (pour couche dynamique PDF.js — exécution du JS PDF)
+# Node 20 LTS (for the dynamic PDF.js layer — running the PDF's JS)
 # hadolint ignore=DL3008
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
     apt-get install -y --no-install-recommends nodejs && \
     rm -rf /var/lib/apt/lists/* && \
     node --version && npm --version
 
-# pdfjs-dist (Mozilla PDF.js) — pin v3.x pour le build legacy CommonJS sans DOM polyfill
+# pdfjs-dist (Mozilla PDF.js) — pin v3.x for the legacy CommonJS build without DOM polyfill
 WORKDIR /opt/pdfjs
 RUN npm init -y --silent && \
     npm install --omit=dev --no-audit --no-fund pdfjs-dist@3.11.174 && \

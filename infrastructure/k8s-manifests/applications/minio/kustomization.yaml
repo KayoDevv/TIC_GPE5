@@ -1,12 +1,14 @@
-# Kustomization namespace MinIO in-cluster :
+# Kustomization for the in-cluster MinIO namespace:
 #   - namespace `minio`
-#   - Tenant CR (MinIO Operator) + Service `minio` (DNS minio.minio.svc.cluster.local:9000)
-#   - Secret credentials
-#   - Job bucket-init (création bucket + notification Kafka)
+#   - standalone StatefulSet + Service `minio` (DNS minio.minio.svc.cluster.local:9000)
+#     defined in tenant.yaml (pivoted away from the MinIO Operator Tenant CR —
+#     see tenant.yaml header for the x86-64-v1 CPU rationale)
+#   - credentials Secret
+#   - bucket-init Job (bucket creation + Kafka notification)
 #
-# Prérequis : MinIO Operator installé (cible Makefile : make setup-minio-operator).
+# Prerequisite: none (no MinIO Operator — plain StatefulSet).
 #
-# Deploy : kubectl apply -k infrastructure/k8s-manifests/applications/minio/
+# Deploy: kubectl apply -k infrastructure/k8s-manifests/applications/minio/
 ---
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization

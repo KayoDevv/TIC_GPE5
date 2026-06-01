@@ -1,5 +1,5 @@
-"""Memory forensics via /proc — tourne DANS le container (pas docker exec).
-Adapté de GPE-Charon/sandbox/memory/procfs_memory.py.
+"""Memory forensics via /proc — runs INSIDE the container (not docker exec).
+Adapted from GPE-Charon/sandbox/memory/procfs_memory.py.
 """
 
 from __future__ import annotations
@@ -70,7 +70,7 @@ def _read_region(pid: int, start: int, size: int) -> bytes:
 
 
 def _find_sample_pid(sample_path: str) -> int | None:
-    """Trouve le PID dont l'exe est sample_path."""
+    """Find the PID whose exe is sample_path."""
     for d in os.listdir("/proc"):
         if not d.isdigit():
             continue
@@ -88,7 +88,7 @@ def collect_memory_observables(
     max_snapshots: int = 5,
     interval_s: float = 0.5,
 ) -> MemoryObservables:
-    """Collecte les observables mémoire en lisant /proc directement."""
+    """Collect memory observables by reading /proc directly."""
     import time
 
     suspicious_by_addr: dict[tuple[int, str], MemoryRegion] = {}

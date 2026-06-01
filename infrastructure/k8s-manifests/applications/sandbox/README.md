@@ -1,23 +1,30 @@
-# Sandbox Layer — Manifests K8s
+# Sandbox Layer — K8s manifests
 
-Pattern : **Job-per-analysis**.
+Pattern: **Job-per-analysis**.
 
-Le `sandbox-consumer` est un **dispatcher** Kafka : il consomme `file.requested`
-et crée 1 `batch/v1 Job` par sample. L'analyse réelle (Docker durci + strace
-+ /proc forensics) tourne dans le pod du Job, isolé par seccomp / capabilities
-réduites / NetworkPolicy deny-egress.
+The `sandbox-consumer` is a Kafka **dispatcher**: it consumes `file.requested`
+and creates 1 `batch/v1 Job` per sample. The actual analysis (hardened container
++ strace + /proc forensics) runs in the Job's pod, isolated by seccomp / reduced
+capabilities / deny-egress NetworkPolicy.
 
-## Composants
+## Components
 
-| Fichier | Rôle |
+| File | Role |
 |---|---|
-| `namespace.yaml` | Namespace `sandbox` + Pod Security `restricted` |
-| `rbac.yaml` | SA consumer (peut créer Jobs) + SA analysis (zéro droit) |
-| `seccomp-distributor.yaml` | DaemonSet qui copie le profil sur chaque nœud |
-| `consumer-deployment.yaml` | Dispatcher Kafka, léger, scalé par KEDA |
-| `analysis-job-template.yaml` | Template du Job d'analyse — instancié par le consumer |
-| `keda-scaledobject.yaml` | Scale 1→3 sur `kafka_consumergroup_lag` + ResourceQuota |
-| `networkpolicy.yaml` | Consumer = egress contrôlé. Analyse = deny-all egress. |
+| `namespace.yaml` | `sandbox` namespace + Pod Security `privileged` (intentional — see note) |
+| `rbac.yaml` | consumer SA (can create Jobs) + analysis SA (zero rights) |
+| `seccomp-distributor.yaml` | DaemonSet that copies the profile onto each node |
+| `consumer-deployment.yaml` | Kafka dispatcher, lightweight, scaled by KEDA |
+| `analysis-job-template.yaml` | Analysis Job template — instantiated by the consumer |
+| `keda-scaledobject.yaml` | Scale 1→3 on `kafka_consumergroup_lag` + ResourceQuota |
+| `networkpolicy.yaml` | Consumer = controlled egress. Analysis = deny-all egress. |
+
+> **Note on Pod Security = `privileged`**: it is intentional. The analysis Jobs add
+> `CAP_SYS_PTRACE` (required by `strace -f`), and `SYS_PTRACE` is **not** in the
+> `baseline`/`restricted` capability allow-list, so those levels would reject the Jobs at
+> admission. The real hardening lives in the Jobs' `securityContext` (runAsNonRoot,
+> allowPrivilegeEscalation=false, readOnlyRootFilesystem, cap-drop ALL + add SYS_PTRACE,
+> seccomp). See `namespace.yaml` for the full rationale.
 
 ## Apply
 
@@ -25,23 +32,23 @@ réduites / NetworkPolicy deny-egress.
 kubectl apply -k infrastructure/k8s-manifests/applications/sandbox/
 ```
 
-## Pourquoi ce pattern
+## Why this pattern
 
-1. **Isolation forte** : un sample malveillant ne peut pas escape le Job.
-   La `NetworkPolicy analysis-deny-egress` coupe toute sortie réseau.
-2. **Scaling natif** : KEDA scale les *consumers* (1→3 = nb partitions
-   `file.requested`). Chaque consumer dispatche en parallèle. Le K8s scheduler
-   gère la file des Jobs si les nœuds saturent — backpressure naturelle.
-3. **Lifecycle propre** : `ttlSecondsAfterFinished: 120` GC les Jobs auto.
-   `activeDeadlineSeconds: 180` enforce le SLA 120s + marge.
-4. **Observability gratuite** : `kubectl get jobs -n sandbox`,
-   `kubectl logs job/charon-analysis-<id>`, métriques Prometheus.
+1. **Strong isolation**: a malicious sample cannot escape the Job. The
+   `analysis-deny-egress` NetworkPolicy cuts off all outbound network.
+2. **Native scaling**: KEDA scales the *consumers* (1→3 = number of
+   `file.requested` partitions). Each consumer dispatches in parallel. The K8s
+   scheduler queues the Jobs if nodes saturate — natural backpressure.
+3. **Clean lifecycle**: `ttlSecondsAfterFinished: 120` GCs the Jobs automatically.
+   `activeDeadlineSeconds: 180` enforces the 120s SLA + margin.
+4. **Free observability**: `kubectl get jobs -n sandbox`,
+   `kubectl logs job/charon-analysis-<id>`, Prometheus metrics.
 
-## Goulots à surveiller
+## Bottlenecks to watch
 
-| Goulot | Mitigation |
+| Bottleneck | Mitigation |
 |---|---|
-| Bande passante MinIO (uploads PCAP/dumps simultanés) | MinIO sur même rack que les nœuds analyse — voir `infrastructure/terraform/network/` |
-| Image pull storm sur scale-up | Pre-pull `ubuntu-sandbox:v1` via DaemonSet pause, ou registry mirror |
-| Lag Kafka > 5 min | Augmenter le nb de partitions `file.requested` ET `maxReplicaCount` KEDA de concert (actuellement 3 = 3 partitions ; au-delà = consumers idle) |
-| Exhaustion CPU nœud | `nodeSelector` + taint `charon.io/sandbox` sur un pool dédié |
+| MinIO bandwidth (concurrent PCAP/dump uploads) | Keep MinIO on the same rack as the analysis nodes |
+| Image pull storm on scale-up | Pre-pull `ubuntu-sandbox:v1` via a pause DaemonSet, or a registry mirror |
+| Kafka lag > 5 min | Increase the number of `file.requested` partitions AND KEDA `maxReplicaCount` together (currently 3 = 3 partitions; beyond that = idle consumers) |
+| Node CPU exhaustion | `nodeSelector` + `charon.io/sandbox` taint on a dedicated pool |

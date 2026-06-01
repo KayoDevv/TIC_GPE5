@@ -1,44 +1,43 @@
-"""Agent d'analyse PDF — tourne dans le pod K8s ubuntu-pdf-sandbox:v1.
+"""PDF analysis agent — runs inside the ubuntu-pdf-sandbox:v1 K8s pod.
 
-Reçoit --job-id et --s3-url en arguments CLI.
-Variables d'environnement : KAFKA_BOOTSTRAP_SERVERS, KAFKA_TOPIC_OUT,
-                            MINIO_ENDPOINT, EMAIL_CONTEXT_JSON.
+Receives --job-id and --s3-url as CLI arguments.
+Environment variables: KAFKA_BOOTSTRAP_SERVERS, KAFKA_TOPIC_OUT,
+                       MINIO_ENDPOINT, EMAIL_CONTEXT_JSON.
 
-Pipeline multi-couches (defense-in-depth) :
+Multi-layer pipeline (defense-in-depth):
 
-    1. Télécharge le sample depuis MinIO (URL presigned)
+    1. Download the sample from MinIO (presigned URL)
 
-    2. COUCHE STATIQUE — sondes orthogonales sur les octets bruts :
-         a) pdfid (Didier Stevens) — règles combinatoires sur structure PDF
-         b) stream_entropy v2 — pic d'entropie localisé (payload caché)
-         c) embedded_magic — ELF/PE/ZIP/etc. embarqués à offset > 0
-       Agrégation MAX → pdf_static_indicators (poids 0.30)
+    2. STATIC LAYER — orthogonal probes over the raw bytes:
+         a) pdfid (Didier Stevens) — combinatorial rules on PDF structure
+         b) stream_entropy v2 — localized entropy peak (hidden payload)
+         c) embedded_magic — ELF/PE/ZIP/etc. embedded at offset > 0
+       MAX aggregation → pdf_static_indicators (weight 0.30)
 
-    3. Snapshot AVANT
+    3. Snapshot BEFORE
 
-    4. COUCHE DYNAMIQUE A — `strace -f mutool draw /sample.pdf`
-         Rend les pages, déclenche bugs de parseur, exerce zlib/JPEG/JBIG2.
-         Catch les CVEs mupdf, malicious qui exploitent le rendu.
+    4. DYNAMIC LAYER A — `strace -f mutool draw /sample.pdf`
+         Renders the pages, triggers parser bugs, exercises zlib/JPEG/JBIG2.
+         Catches mupdf CVEs, malicious files that exploit rendering.
 
-    4-bis. COUCHE DYNAMIQUE B — `strace -f node /opt/agent/pdf_runner.js`
-         Extrait le JS du PDF via PDF.js, l'exécute dans Node vm avec
-         contexte Adobe stubbé. Les appels app.launchURL / this.submitForm
-         déclenchent de VRAIS syscalls réseau visibles par strace.
-         Catch les polymorphes JS-based invisibles aux couches statique
-         et mutool.
+    4-bis. DYNAMIC LAYER B — `strace -f node /opt/agent/pdf_runner.js`
+         Extracts the PDF's JS via PDF.js, runs it in a Node vm with a stubbed
+         Adobe context. The app.launchURL / this.submitForm calls trigger REAL
+         network syscalls visible to strace.
+         Catches JS-based polymorphs invisible to the static and mutool layers.
 
-    5. Snapshot APRÈS
+    5. Snapshot AFTER
 
-    6. Parse strace — UNION des deux traces (A ∪ B) pour que les 7 hypothèses
-       comportementales voient n'importe quel signal, peu importe la couche
-       d'origine. Aucune couche supprimée, perception élargie.
+    6. Parse strace — UNION of the two traces (A ∪ B) so the 7 behavioural
+       hypotheses see any signal, regardless of the originating layer. No layer
+       removed, broadened perception.
 
-    7. 7 hypothèses comportementales (persistence, c2, injection, encryption,
+    7. 7 behavioural hypotheses (persistence, c2, injection, encryption,
        evasion, propagation, lolbins) + pdf_static_indicators → anomaly_score
 
-    8. Construit SandboxLayerResultEvent + IOCs
+    8. Build SandboxLayerResultEvent + IOCs
 
-    9. Publie sur sandbox_layer.result
+    9. Publish to sandbox_layer.result
 """
 
 from __future__ import annotations
@@ -65,6 +64,8 @@ from models import MemoryObservables, NetworkObservables, RuntimeSignals
 from snapshot import compute_diff, take_snapshot
 from strace_collector import extract_sleep_cumulated, parse_strace_log
 from memory import collect_memory_observables
+from core.report import build_pdf_narrative, build_iocs, build_result_event
+from core.scoring import compute_anomaly_score
 import hypotheses.persistence as h_persistence
 import hypotheses.c2 as h_c2
 import hypotheses.injection as h_injection
@@ -97,8 +98,8 @@ TIMEOUT_S       = int(os.getenv("SANDBOX_TIMEOUT_S", "120"))
 
 # SSRF protection — restrict sample download to known MinIO endpoints.
 # Override via env var ALLOWED_DOWNLOAD_HOSTS="host1,host2,...".
-# Post-Option-B (Kafka/MinIO in-cluster) : seul l'endpoint K8s service est légitime.
-# L'IP host 172.16.249.133 a été retirée — plus de bridge docker-compose host.
+# Post-Option-B (Kafka/MinIO in-cluster): only the K8s service endpoint is legit.
+# The host IP 172.16.249.133 has been removed — no more docker-compose host bridge.
 _DEFAULT_ALLOWED_HOSTS = "minio.minio.svc.cluster.local"
 ALLOWED_DOWNLOAD_HOSTS = frozenset(
     h.strip() for h in os.getenv("ALLOWED_DOWNLOAD_HOSTS", _DEFAULT_ALLOWED_HOSTS).split(",")
@@ -106,14 +107,14 @@ ALLOWED_DOWNLOAD_HOSTS = frozenset(
 )
 
 # ---------------------------------------------------------------------------
-# Poids PDF — rééquilibrés pour intégrer pdf_static (poids 0.15)
-# Les comportements runtime restent présents mais le signal statique est fort
-# pour les PDFs évasifs qui ne déclenchent pas de syscalls suspects.
+# PDF weights — rebalanced to include pdf_static_indicators (weight 0.30)
+# The runtime behaviours stay present but the static signal is strong for
+# evasive PDFs that trigger no suspicious syscalls.
 # ---------------------------------------------------------------------------
 
 PDF_WEIGHTS: dict[str, float] = {
-    # Comportemental — 7 hypothèses = 0.70 total
-    # Identiques quelle que soit la source du fichier (ELF embarqué, JS, etc.)
+    # Behavioural — 7 hypotheses = 0.70 total
+    # Identical regardless of the file's source (embedded ELF, JS, etc.)
     "persistence_detected":  0.12,
     "c2_communication":      0.12,
     "code_injection":        0.10,
@@ -121,7 +122,7 @@ PDF_WEIGHTS: dict[str, float] = {
     "file_encryption":       0.08,
     "evasion_attempted":     0.08,
     "propagation":           0.10,
-    # Statique format-spécifique — signal complémentaire, jamais dominant
+    # Format-specific static — complementary signal, never dominant
     # Remplacer par docx_static, lnk_static, etc. selon le format entrant
     "pdf_static_indicators": 0.30,
 }
@@ -135,6 +136,24 @@ _BEHAVIORAL_PIPELINE: list[tuple[str, object]] = [
     ("persistence_detected", h_persistence),
     ("code_injection",       h_injection),
 ]
+
+
+# MITRE ATT&CK tactic per hypothesis (config — consumed by build_iocs).
+_HYP_TO_MITRE: dict[str, str] = {
+    "persistence_detected":  "TA0003",
+    "c2_communication":      "TA0011",
+    "code_injection":        "TA0005",
+    "file_encryption":       "TA0040",
+    "evasion_attempted":     "TA0005",
+    "propagation":           "TA0008",
+    "lolbins_abuse":         "T1059",
+    "pdf_static_indicators": "T1027",
+}
+
+
+def _ioc_type(hyp_name: str, ev) -> str:
+    """PDF IOC typing: pdf_indicator for the static probe, syscall otherwise."""
+    return "pdf_indicator" if hyp_name == "pdf_static_indicators" else "syscall"
 
 
 # ---------------------------------------------------------------------------
@@ -168,116 +187,19 @@ def _download_sample(s3_url: str, dest: Path) -> None:
 
 
 def _compute_anomaly_score(hyp_results: dict) -> float:
-    score = sum(
-        PDF_WEIGHTS.get(k, 0.0) * r.score
-        for k, r in hyp_results.items()
-    )
-    return round(min(score, 1.0), 3)
+    """PDF weighted sum → anomaly_score. Delegates to the pure core (core/scoring)."""
+    return compute_anomaly_score(hyp_results, PDF_WEIGHTS)
 
 
-# Bandes de verdict. Le sandbox est un tie-breaker : il ne tranche "malicious"
-# qu'avec un signal fort, "benign" qu'en l'absence totale de signal, et renvoie
-# tout l'entre-deux ambigu au LLM (qui, lui, a l'email_context) via
-# "needs_more_context".
+# Seuils de verdict PDF — config. La logique des 3 bandes vit dans core/scoring.
 _VERDICT_MALICIOUS = 0.15
 _VERDICT_SUSPICIOUS = 0.04
 
 
-def _verdict_band(anomaly_score: float) -> str:
-    if anomaly_score >= _VERDICT_MALICIOUS:
-        return "malicious"
-    if anomaly_score >= _VERDICT_SUSPICIOUS:
-        return "needs_more_context"
-    return "benign"
-
-
-# Traduction clé-de-règle → explication en langage clair (pour le LLM et l'UI).
-# La clé est le dernier segment du field_path d'evidence.
-_SIGNAL_EXPLAIN: dict[str, str] = {
-    # Déguisement / structure
-    "missing_pdf_magic":        "Le fichier prétend être un PDF mais son entête est d'un autre type (HTML/script) — déguisement caractéristique d'évasion",
-    "no_eof_marker":            "Structure PDF malformée (marqueur de fin %%EOF absent)",
-    "qpdf_check_failed":        "Échec de la validation structurelle stricte (xref/streams réparés à la volée)",
-    "qpdf_linearization_warn":  "Avertissement de linéarisation (PDF web-optimisé) — bénin, fréquent en légitime",
-    "stream_endstream_mismatch":"Incohérence stream/endstream dans la structure PDF",
-    "obj_endobj_mismatch":      "Incohérence obj/endobj dans la structure PDF",
-    "obj_ratio_extreme":        "Ratio objets/pages extrême (>100:1) — pattern d'empaquetage de payload",
-    "obj_ratio_high":           "Ratio objets/pages élevé",
-    "encrypted":                "PDF chiffré (rare en document légitime)",
-    "many_objstm":              "Nombreux object streams (obfuscation possible)",
-    # Exécution / contenu actif
-    "js_auto_triggered":        "JavaScript exécuté automatiquement à l'ouverture (/OpenAction) — sans interaction utilisateur",
-    "js_embedded":              "JavaScript embarqué (passif)",
-    "dropper_with_payload":     "Fichier embarqué couplé à un déclencheur d'exécution (pattern dropper)",
-    "dropper_auto_exec":        "Fichier embarqué exécuté automatiquement à l'ouverture (pattern dropper)",
-    "embedded_file_alone":      "Fichier embarqué dans le PDF",
-    "launch_action":            "Action /Launch (exécution d'un programme externe) — quasi toujours malveillant",
-    "jbig2_colors_overflow":    "Pattern d'exploit JBIG2 (CVE-2009-0658)",
-    "rich_media":               "Contenu RichMedia/Flash embarqué",
-    "xfa_form":                 "Formulaire XFA (vecteur d'exécution)",
-    # URI / réseau
-    "exec_extension":           "Lien pointant vers un exécutable (.exe/.scr/.ps1/...)",
-    "bare_ip":                  "Lien vers une adresse IP nue (contournement DNS/réputation)",
-    "fileshare":                "Lien vers un service de partage de fichiers fréquemment abusé",
-    "free_hosting":             "Lien vers de l'hébergement gratuit/jetable (pattern phishing)",
-    "obfuscated_b64_param":     "URL avec paramètres base64 obfusqués",
-    "shortener":                "Lien raccourci masquant la destination réelle",
-    "suspicious_tld":           "Domaine sur un TLD fréquemment abusé pour le phishing",
-    "raw_hoster":               "Lien vers un hébergeur de contenu brut",
-    "external_url":             "Lien externe vers un domaine non catégorisé",
-    # Génériques
-    "local_peak":               "Pic d'entropie localisé (contenu compressé/chiffré)",
-}
-
-
-def _explain_signal(field_path: str) -> str | None:
-    """field_path → explication en clair, ou None si non mappé."""
-    key = field_path.split("[")[-1].rstrip("]").split(".")[-1]
-    return _SIGNAL_EXPLAIN.get(key)
-
-
 def _build_narrative(hyp_results: dict, anomaly_score: float, duration_s: float) -> tuple[str, str]:
-    """Construit (verdict, narrative) lisible par le LLM et l'UI.
-
-    Le narratif mène par la bande de verdict, traduit les signaux en langage
-    clair (avec la valeur concrète : URL, déguisement), et donne au LLM une
-    consigne de corrélation pour la bande ambiguë.
-    """
-    verdict = _verdict_band(anomaly_score)
-
-    # Signaux uniques en clair (dédupliqués par explication), avec leur valeur.
-    signals: list[str] = []
-    seen: set[str] = set()
-    for r in hyp_results.values():
-        for ev in r.evidence:
-            expl = _explain_signal(ev.field_path)
-            if not expl or expl in seen:
-                continue
-            seen.add(expl)
-            # Pour les URI, on joint la valeur observée (utile au LLM).
-            if ev.field_path.startswith("pdf_uri."):
-                signals.append(f"{expl} : {ev.value[:160]}")
-            else:
-                signals.append(expl)
-
-    if verdict == "malicious":
-        head = f"Verdict sandbox : MALICIOUS (score {anomaly_score:.2f}). PDF analysé via mutool + PDF.js en {duration_s:.1f}s."
-        body = " Indicateurs : " + " ; ".join(signals) + "." if signals else ""
-        return verdict, head + body
-
-    if verdict == "needs_more_context":
-        head = f"Verdict sandbox : NEEDS_MORE_CONTEXT (score {anomaly_score:.2f}). Signaux faibles/ambigus, insuffisants pour trancher seuls."
-        body = " Indicateurs : " + " ; ".join(signals) + "." if signals else ""
-        guide = (
-            " À corréler avec le contexte de l'email (expéditeur, objet, corps) : "
-            "un lien vers un domaine d'apparence légitime ou une structure atypique "
-            "peut être du phishing par usurpation. Le sandbox ne dispose pas du contexte d'envoi."
-        )
-        return verdict, head + body + guide
-
-    return verdict, (
-        f"Verdict sandbox : BENIGN (score {anomaly_score:.2f}). "
-        f"Aucun indicateur structurel, comportemental ou d'URI suspect détecté ({duration_s:.1f}s)."
+    """(verdict, narrative) PDF. Delegates to the pure core (core/report)."""
+    return build_pdf_narrative(
+        hyp_results, anomaly_score, duration_s, _VERDICT_MALICIOUS, _VERDICT_SUSPICIOUS
     )
 
 
@@ -319,14 +241,14 @@ def run_pdf_analysis(job_id: str, s3_url: str) -> None:
         # 1. Download
         _download_sample(s3_url, sample_path)
 
-        # 2. Layer statique multi-sondes (avant exécution — aucune déclenche rien)
-        #    Cinq sondes indépendantes regardent des aspects différents du fichier :
-        #      a) pdfid          → règles combinatoires sur structure PDF
-        #      b) stream_entropy → payload chiffré/obfusqué local (générique)
-        #      c) embedded_magic → executables embarqués (générique)
-        #      d) pdf_uri        → actions URI vers fileshare/exe/IP nue (phishing)
-        #      e) pdf_anomaly    → anomalies structurelles (xref cassée, ratio obj/pages)
-        #    Le score retenu est le MAX — un seul signal positif suffit à alerter.
+        # 2. Multi-probe static layer (before execution — none triggers anything)
+        #    Five independent probes look at different aspects of the file:
+        #      a) pdfid          → combinatorial rules on PDF structure
+        #      b) stream_entropy → local encrypted/obfuscated payload (generic)
+        #      c) embedded_magic → embedded executables (generic)
+        #      d) pdf_uri        → URI actions to fileshare/exe/bare IP (phishing)
+        #      e) pdf_anomaly    → structural anomalies (broken xref, obj/page ratio)
+        #    The retained score is the MAX — a single positive signal is enough to alert.
         log.info("Running multi-probe static analysis")
         t_static = time.monotonic()
         pdfid_result    = pdf_static_evaluate(sample_path)
@@ -335,7 +257,7 @@ def run_pdf_analysis(job_id: str, s3_url: str) -> None:
         uri_result      = uri_evaluate(sample_path)
         anomaly_result  = anomaly_evaluate(sample_path)
 
-        # Agrégation : on prend le score max + on fusionne les evidences
+        # Aggregation: take the max score + merge the evidence
         all_evidence = (
             list(pdfid_result.evidence)
             + list(entropy_result.evidence)
@@ -367,14 +289,14 @@ def run_pdf_analysis(job_id: str, s3_url: str) -> None:
             uri_result.score, anomaly_result.score, pdf_static_result.score, len(all_evidence),
         )
 
-        # 3. Snapshot AVANT
+        # 3. Snapshot BEFORE
         log.info("Taking snapshot BEFORE")
         snapshot_before = take_snapshot(relative_ts_s=0.0)
 
-        # 4. COUCHE DYNAMIQUE A — mutool draw straced
-        # Rend les pages du PDF, déclenche les bugs de parseur, exerce
-        # le code de décompression (zlib, JPEG, JBIG2) → catch les CVEs mupdf.
-        # Pas d'exécution de JS PDF (mutool draw ne le fait pas).
+        # 4. DYNAMIC LAYER A — mutool draw straced
+        # Renders the PDF pages, triggers parser bugs, exercises the
+        # decompression code (zlib, JPEG, JBIG2) → catches mupdf CVEs.
+        # No PDF JS execution (mutool draw does not do it).
         trace_mutool_path = work_dir / "trace_mutool.log"
         trace_pdfjs_path  = work_dir / "trace_pdfjs.log"
 
@@ -386,7 +308,7 @@ def run_pdf_analysis(job_id: str, s3_url: str) -> None:
         ]
         log.info("[layer A] strace + mutool draw (timeout=%ds)", per_step_timeout)
 
-        # Memory forensics en parallèle (mutool process)
+        # Memory forensics in parallel (mutool process)
         memory_result: list[MemoryObservables] = [MemoryObservables()]
         def _collect_memory():
             memory_result[0] = collect_memory_observables(
@@ -413,11 +335,11 @@ def run_pdf_analysis(job_id: str, s3_url: str) -> None:
         mem_thread.join(timeout=10)
         memory = memory_result[0]
 
-        # 4-bis. COUCHE DYNAMIQUE B — Node + PDF.js straced
-        # Exécute le JavaScript embarqué dans le PDF (extraction par PDF.js,
-        # exécution dans vm Node avec contexte Adobe stubbé).
-        # Catch les polymorphes JS-based qui sont invisibles au statique
-        # ET à mutool (qui ne lance pas le JS).
+        # 4-bis. DYNAMIC LAYER B — Node + PDF.js straced
+        # Executes the PDF's embedded JavaScript (extraction via PDF.js,
+        # execution in a Node vm with a stubbed Adobe context).
+        # Catches JS-based polymorphs invisible to the static layer
+        # AND to mutool (which does not run the JS).
         pdfjs_cmd = [
             "strace", "-f", "-tt", "-e", "trace=all", "-o", str(trace_pdfjs_path),
             "node", "/opt/agent/pdf_runner.js", str(sample_path),
@@ -439,8 +361,8 @@ def run_pdf_analysis(job_id: str, s3_url: str) -> None:
 
         execution_duration_s = time.time() - exec_start
 
-        # Exit code retenu pour le rapport : on prend mutool (couche A) en référence,
-        # le pdfjs.js exit étant souvent != 0 sur PDFs malformés (signal lui-même).
+        # Exit code retained for the report: we take mutool (layer A) as the
+        # reference; the pdfjs exit is often != 0 on malformed PDFs (a signal itself).
         exit_code = exit_code_mutool
         if exit_code is not None:
             (work_dir / "exit_code").write_text(str(exit_code))
@@ -449,13 +371,13 @@ def run_pdf_analysis(job_id: str, s3_url: str) -> None:
             exit_code_mutool, exit_code_pdfjs, execution_duration_s,
         )
 
-        # 5. Snapshot APRÈS
+        # 5. Snapshot AFTER
         log.info("Taking snapshot AFTER")
         snapshot_after = take_snapshot(relative_ts_s=execution_duration_s)
 
-        # 6. Parse strace — UNION des deux traces (couche A + couche B)
-        # Les 7 hypothèses comportementales voient l'union des syscalls,
-        # donc un signal capté par n'importe quelle couche fait fire l'hypothèse.
+        # 6. Parse strace — UNION of the two traces (layer A + layer B)
+        # The 7 behavioural hypotheses see the union of syscalls, so a signal
+        # caught by any layer makes the hypothesis fire.
         trace_mutool = trace_mutool_path.read_text(errors="replace") if trace_mutool_path.exists() else ""
         trace_pdfjs  = trace_pdfjs_path.read_text(errors="replace")  if trace_pdfjs_path.exists()  else ""
         trace_combined = trace_mutool + "\n" + trace_pdfjs
@@ -489,9 +411,9 @@ def run_pdf_analysis(job_id: str, s3_url: str) -> None:
             len(memory.suspicious_regions),
         )
 
-        # 8. Hypothèses comportementales (réutilisées telles quelles sur les
-        #    syscalls de mutool — si mutool est exploité, les signaux C2/injection
-        #    apparaissent exactement comme pour un ELF malicieux)
+        # 8. Behavioural hypotheses (reused as-is on mutool's syscalls — if
+        #    mutool is exploited, the C2/injection signals appear exactly like
+        #    for a malicious ELF)
         for name, module in _BEHAVIORAL_PIPELINE:
             t_hyp = time.monotonic()
             hyp_results[name] = module.evaluate(diff, signals, memory)
@@ -527,50 +449,24 @@ def run_pdf_analysis(job_id: str, s3_url: str) -> None:
     ended_at = _now_iso()
     duration_s = time.time() - t0
 
-    # IOCs depuis les hypothèses positives
-    iocs = []
-    hyp_to_mitre = {
-        "persistence_detected":  "TA0003",
-        "c2_communication":      "TA0011",
-        "code_injection":        "TA0005",
-        "file_encryption":       "TA0040",
-        "evasion_attempted":     "TA0005",
-        "propagation":           "TA0008",
-        "lolbins_abuse":         "T1059",
-        "pdf_static_indicators": "T1027",
-    }
-    for hyp_name, result in hyp_results.items():
-        if not result.value:
-            continue
-        mitre = hyp_to_mitre.get(hyp_name, "TA0000")
-        for ev in result.evidence:
-            iocs.append({
-                "type": "pdf_indicator" if hyp_name == "pdf_static_indicators" else "syscall",
-                "value": ev.value[:256],
-                "mitre_tactic": mitre,
-                "description": f"{hyp_name}: {ev.field_path}",
-            })
+    iocs = build_iocs(hyp_results, _HYP_TO_MITRE, _ioc_type)
 
-    event = {
-        "job_id": job_id,
-        "verdict": verdict,
-        "iocs": iocs,
-        "behavior_summary": behavior_summary,
-        "email_context": EMAIL_CONTEXT,
-        "timeout_triggered": timeout_triggered,
-        "timestamp": ended_at,
-        "_meta": {
-            "anomaly_score": anomaly_score,
-            "duration_s": round(duration_s, 2),
-            "error": error_msg,
-            "file_type": "pdf",
-            "pipeline_version": "v2-pdf",
-            "hypothesis_timings_ms": hypothesis_timings_ms,
-            "hypothesis_scores": {
-                k: round(r.score, 3) for k, r in hyp_results.items()
-            },
-        },
-    }
+    event = build_result_event(
+        job_id=job_id,
+        iocs=iocs,
+        behavior_summary=behavior_summary,
+        email_context=EMAIL_CONTEXT,
+        timeout_triggered=timeout_triggered,
+        timestamp=ended_at,
+        anomaly_score=anomaly_score,
+        duration_s=duration_s,
+        error=error_msg,
+        pipeline_version="v2-pdf",
+        hypothesis_timings_ms=hypothesis_timings_ms,
+        hyp_results=hyp_results,
+        verdict=verdict,
+        meta_extra={"file_type": "pdf"},
+    )
 
     asyncio.run(_publish(job_id, event))
 

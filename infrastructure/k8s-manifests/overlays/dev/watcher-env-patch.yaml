@@ -1,5 +1,5 @@
-# Patch dev — branche le minio-watcher sur Kafka + MinIO in-cluster.
-# Identique au patch prod.
+# Dev patch — wires the minio-watcher to in-cluster Kafka + MinIO.
+# Identical to the prod patch.
 apiVersion: apps/v1
 kind: Deployment
 metadata:

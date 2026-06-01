@@ -1,0 +1,14 @@
+[
+  {
+    "type": "pdf_indicator",
+    "value": "/Launch cmd.exe",
+    "mitre_tactic": "T1027",
+    "description": "pdf_static_indicators: pdf_static.launch_action"
+  },
+  {
+    "type": "syscall",
+    "value": "c2.evil.test",
+    "mitre_tactic": "TA0011",
+    "description": "c2_communication: network.dns_queries[0].query"
+  }
+]

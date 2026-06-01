@@ -26,6 +26,11 @@ build/
 .claude/
 *CLAUDE.md
 
+# Outils productivité locaux (non partagés)
+memory/
+TASKS.md
+dashboard.html
+
 # K8s manifests générés au déploiement (IP host dépendante du dev)
 infrastructure/k8s-manifests/overlays/dev/host-egress-patch.yaml
 

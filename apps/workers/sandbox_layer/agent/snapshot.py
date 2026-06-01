@@ -1,6 +1,6 @@
-"""State snapshot avant/après — adapté de GPE-Charon pour tourner DANS le container.
+"""Before/after state snapshot — adapted from GPE-Charon to run INSIDE the container.
 
-Différence clé vs Charon : on appelle subprocess directement (pas docker exec).
+Key difference vs Charon: we call subprocess directly (not docker exec).
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ from models import (
 
 
 def _run_cmd(args: list[str]) -> str:
-    """Exécute une commande sans shell (pas d'interpolation, pas d'injection)."""
+    """Run a command without a shell (no interpolation, no injection)."""
     try:
         result = subprocess.run(args, capture_output=True, text=True, timeout=30)
         return result.stdout or ""
@@ -32,8 +32,8 @@ def _run_cmd(args: list[str]) -> str:
 
 
 def _run_shell(cmd: str) -> str:
-    """Exécute un pipeline shell statique. N'appeler qu'avec des chaînes littérales —
-    jamais avec des données externes ou des chemins dynamiques non échappés."""
+    """Run a static shell pipeline. Call ONLY with literal strings —
+    never with external data or unescaped dynamic paths."""
     try:
         result = subprocess.run(["sh", "-c", cmd], capture_output=True, text=True, timeout=30)
         return result.stdout or ""
@@ -42,30 +42,30 @@ def _run_shell(cmd: str) -> str:
 
 
 def take_snapshot(relative_ts_s: float) -> SnapshotState:
-    """Capture l'état complet du système local à un instant T."""
+    """Capture the complete state of the local system at instant T."""
 
-    # Filesystem — hashing BATCHÉ (null-delimited).
-    # IMPORTANT : l'ancienne version lançait ~1 shell PAR fichier
-    # (`xargs -I{} sh -c '...'`) → ~2000 process. Sous la limite CPU du Job +
-    # jobs concurrents, ça dépassait par intermittence le timeout de 30s →
-    # before-snapshot vide → faux "created" massif → persistence/encryption
-    # firaient sur les fichiers système (cron.d, profile.d, terminfo/README).
-    # Ici : 2 passes batchées (sha256sum + stat) = ~3× plus rapide et fiable.
+    # Filesystem — BATCHED hashing (null-delimited).
+    # IMPORTANT: the old version spawned ~1 shell PER file
+    # (`xargs -I{} sh -c '...'`) → ~2000 processes. Under the Job's CPU limit +
+    # concurrent jobs, it intermittently exceeded the 30s timeout →
+    # empty before-snapshot → massive false "created" → persistence/encryption
+    # firing on system files (cron.d, profile.d, terminfo/README).
+    # Here: 2 batched passes (sha256sum + stat) = ~3× faster and reliable.
     paths_joined = " ".join(shlex.quote(p) for p in WATCHED_PATHS)
     file_list = f"find {paths_joined} -type f -print0 2>/dev/null | head -z -n 4000"
 
     hashes: dict[str, str] = {}
     hash_out = _run_shell(f"{file_list} | xargs -0 sha256sum 2>/dev/null")
     for line in hash_out.splitlines():
-        # format sha256sum : "<hash>  <path>" (deux espaces)
+        # sha256sum format: "<hash>  <path>" (two spaces)
         h, sep, path = line.partition("  ")
         if sep and path:
             hashes[path] = h
 
     filesystem: list[FileEntry] = []
-    # %A = permissions symboliques (ex: -rwxr-xr-x), pour matcher le format
-    # documenté de FileEntry.permissions (models.py). %a sortait de l'octal (644)
-    # qui ne correspondait pas au contrat du modèle.
+    # %A = symbolic permissions (e.g. -rwxr-xr-x), to match the documented
+    # format of FileEntry.permissions (models.py). %a produced octal (644)
+    # which did not match the model's contract.
     stat_out = _run_shell(f"{file_list} | xargs -0 stat -c '%s|%A|%U|%n' 2>/dev/null")
     for line in stat_out.splitlines():
         parts = line.split("|", 3)
@@ -85,21 +85,21 @@ def take_snapshot(relative_ts_s: float) -> SnapshotState:
         ))
 
     # Process tree
-    # args en dernière colonne → contient des espaces, donc split(None, 5) le
-    # garde entier. Avant ce fix, le format s'arrêtait à `stat` et cmdline était
-    # rempli avec la valeur STAT (Ss, R+, …) au lieu de la vraie ligne de commande.
+    # args is the last column → contains spaces, so split(None, 5) keeps it
+    # whole. Before this fix, the format stopped at `stat` and cmdline was
+    # filled with the STAT value (Ss, R+, …) instead of the real command line.
     ps_out = _run_cmd(["ps", "axo", "pid,ppid,user,comm,stat,args", "--no-headers"])
     process_tree: list[ProcessNode] = []
     for line in ps_out.splitlines():
         parts = line.split(None, 5)
-        if len(parts) < 5:           # pid ppid user comm stat = minimum requis
+        if len(parts) < 5:           # pid ppid user comm stat = minimum required
             continue
         try:
             entry = ProcessEntry(
                 pid=int(parts[0]), ppid=int(parts[1]),
                 user=parts[2], comm=parts[3][:15],
                 stat=parts[4],
-                # args vide pour les threads noyau / zombies → cmdline ""
+                # empty args for kernel threads / zombies → cmdline ""
                 cmdline=(parts[5][:512] if len(parts) == 6 else ""),
             )
             process_tree.append(ProcessNode(entry=entry))
@@ -126,17 +126,17 @@ def take_snapshot(relative_ts_s: float) -> SnapshotState:
             except (ValueError, IndexError):
                 continue
 
-    # Crontab — deux appels séparés sans shell pour éviter l'injection
+    # Crontab — two separate shell-less calls to avoid injection
     crontab_out = _run_cmd(["crontab", "-l"]) + _run_shell("cat /etc/cron* 2>/dev/null")
     crontab_lines = [l for l in crontab_out.splitlines() if l.strip() and not l.startswith("#")]
 
-    # Systemd — pipeline statique, _run_shell acceptable ici
+    # Systemd — static pipeline, _run_shell acceptable here
     systemd_out = _run_shell(
         "systemctl list-units --state=active --no-legend --no-pager 2>/dev/null | awk '{print $1}'"
     )
     systemd_units = [l.strip() for l in systemd_out.splitlines() if l.strip()]
 
-    # Persistance — shlex.quote sur chaque chemin pour éviter l'injection
+    # Persistence — shlex.quote on each path to avoid injection
     persist_cmd = "; ".join(f"sha256sum {shlex.quote(p)} 2>/dev/null" for p in PERSISTENCE_PATHS)
     persistence_entries: list[PersistenceEntry] = []
     for line in _run_shell(persist_cmd).splitlines():
@@ -164,15 +164,15 @@ def compute_diff(
     before_fs = {f.path: f for f in before.filesystem}
     after_fs  = {f.path: f for f in after.filesystem}
 
-    # Garde-fou : si le before-snapshot est vide mais l'after est substantiel,
-    # le snapshot d'avant a échoué (timeout/erreur) — NE PAS conclure que tout a
-    # été "créé" (sinon faux persistence/encryption massifs). On neutralise alors
-    # le diff fichiers (les autres signaux — réseau, process — restent valides).
+    # Guard: if the before-snapshot is empty but the after is substantial, the
+    # before snapshot failed (timeout/error) — do NOT conclude that everything was
+    # "created" (otherwise massive false persistence/encryption). We then neutralize
+    # the file diff (the other signals — network, processes — stay valid).
     _fs_unreliable = (not before_fs) and (len(after_fs) > 20)
 
     file_diffs: list[FileDiff] = []
     if _fs_unreliable:
-        before_fs = after_fs  # diff fichiers neutralisé : aucun "created/modified/deleted"
+        before_fs = after_fs  # file diff neutralized: no "created/modified/deleted"
     for path, f in after_fs.items():
         if path not in before_fs:
             file_diffs.append(FileDiff(path=path, kind="created",

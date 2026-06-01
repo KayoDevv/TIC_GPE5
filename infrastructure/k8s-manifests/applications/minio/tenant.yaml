@@ -1,18 +1,18 @@
-# MinIO standalone StatefulSet — pivot depuis MinIO Operator Tenant (2026-05-13).
+# MinIO standalone StatefulSet — pivot away from the MinIO Operator Tenant (2026-05-13).
 #
-# Pourquoi le pivot :
-#   - La VM GPE-NYX a un CPU x86-64-v1 (baseline, sans SSE4.2)
-#   - MinIO post 2023-03 est compilé avec GOAMD64=v2 → crash "Fatal glibc error: CPU does not support x86-64-v2"
-#   - On doit pin MinIO RELEASE.2023-01-25 (dernière build v1-compatible)
-#   - Mais MinIO Operator v5 ne supporte plus cette image (matrice de compat)
+# Why the pivot:
+#   - The GPE-NYX VM has an x86-64-v1 CPU (baseline, no SSE4.2)
+#   - MinIO after 2023-03 is built with GOAMD64=v2 → crashes "Fatal glibc error: CPU does not support x86-64-v2"
+#   - We must pin MinIO RELEASE.2023-01-25 (last v1-compatible build)
+#   - But MinIO Operator v5 no longer supports that image (compat matrix)
 #
-# Solution : StatefulSet standard avec MinIO standalone. Plus simple, pas d'Operator.
-# Même comportement que docker-compose mais in-cluster.
+# Solution: a plain StatefulSet with standalone MinIO. Simpler, no Operator.
+# Same behavior as docker-compose but in-cluster.
 #
-# Durcissement Phase 9 : reconfigurer la VM en CPU host-passthrough pour exposer
-# SSE4.2+ et migrer vers MinIO Operator + MinIO récent.
+# Phase 9 hardening: reconfigure the VM with host-passthrough CPU to expose
+# SSE4.2+ and migrate to the MinIO Operator + a recent MinIO.
 ---
-# Secret credentials (durcissement Phase 9 : External Secrets Operator + Vault)
+# Credentials Secret (Phase 9 hardening: External Secrets Operator + Vault)
 apiVersion: v1
 kind: Secret
 metadata:
@@ -43,8 +43,8 @@ spec:
     spec:
       containers:
         - name: minio
-          # Dernière release MinIO compilée pour x86-64-v1 (janvier 2023).
-          # Les versions ultérieures requièrent v2 (SSE4.2/POPCNT).
+          # Last MinIO release built for x86-64-v1 (January 2023).
+          # Later versions require v2 (SSE4.2/POPCNT).
           image: quay.io/minio/minio:RELEASE.2023-01-25T00-19-54Z
           imagePullPolicy: IfNotPresent
           args:
@@ -63,8 +63,8 @@ spec:
             - secretRef:
                 name: minio-creds
           env:
-            # Notification target Kafka — active dès le démarrage MinIO,
-            # poussée sur le topic minio.events (consumé par minio-watcher).
+            # Kafka notification target — active from MinIO startup,
+            # pushed to the minio.events topic (consumed by minio-watcher).
             - name: MINIO_NOTIFY_KAFKA_ENABLE_charon
               value: "on"
             - name: MINIO_NOTIFY_KAFKA_BROKERS_charon
@@ -102,13 +102,13 @@ spec:
         name: data
       spec:
         accessModes: [ReadWriteOnce]
-        # storageClassName laissé vide → utilise local-path (K3s par défaut)
+        # storageClassName left empty → uses local-path (K3s default)
         resources:
           requests:
             storage: 5Gi
 ---
-# Service `minio` ClusterIP — DNS minio.minio.svc.cluster.local:9000
-# (raccourci aligné avec overlays prod, consumer/watcher env vars, CLAUDE.md).
+# `minio` ClusterIP Service — DNS minio.minio.svc.cluster.local:9000
+# (shorthand aligned with overlays/prod, consumer/watcher env vars, CLAUDE.md).
 apiVersion: v1
 kind: Service
 metadata:
@@ -130,7 +130,7 @@ spec:
       targetPort: 9001
       protocol: TCP
 ---
-# Service headless requis par le StatefulSet (DNS stable per-pod).
+# Headless Service required by the StatefulSet (stable per-pod DNS).
 apiVersion: v1
 kind: Service
 metadata:

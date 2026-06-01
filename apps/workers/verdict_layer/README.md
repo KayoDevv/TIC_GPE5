@@ -1,25 +1,25 @@
-# Verdict Layer : Verdict (Le Moteur d'Agrégation)
+# Verdict Layer: Verdict (The Aggregation Engine)
 
-**Tech :** Python, Redis (pour l'état).
+**Tech:** Python, Redis (for state).
 
-**Code Guidelines :** TDD (pytest-asyncio). Implémentation du pattern Saga.
+**Code Guidelines:** TDD (pytest-asyncio). Saga pattern implementation.
 
-**Contexte Métier :** "Le Moteur d'Agrégation". Consolide les réponses asynchrones et applique la matrice de décision.
+**Business Context:** "The Aggregation Engine". Consolidates the asynchronous responses and applies the decision matrix.
 
-**Responsabilité :** Gérer les timeouts globaux. Si le Sandbox Layer ne répond pas au bout de 125s, émettre un statut "Suspect par défaut".
+**Responsibility:** Handle global timeouts. If the Sandbox Layer does not respond within 125s, emit a "Suspect by default" status.
 
-**Événements Kafka (Consommés/Produits) :**
-- **Consomme :** `ml_layer.result`, `sandbox_layer.result`, `llm_layer.result`.
-- **Produit :** Événement métier de verdict final `verdict.result` à destination du Backend/WebSockets.
+**Kafka Events (Consumed/Produced):**
+- **Consumes:** `ml_layer.result`, `sandbox_layer.result`, `llm_layer.result`.
+- **Produces:** the final-verdict business event `verdict.result` for the Backend/WebSockets.
 
-## Specifications Techniques
-- **Gestion de l'État (State Management) :** Utilisation de Redis en mode clé-valeur avec Time-To-Live (TTL) pour stocker temporairement les retours asynchrones de chaque Layer via la clé commune `job_id`.
-- **Pattern Saga & Orchestration :** 
-  1. Dès réception d'un événement intermédiaire (`ml_layer.result`, etc.), le microservice met à jour l'état partiel dans Redis.
-  2. Implémentation d'une fonction de vérification (Polling asynchrone ou Pub/Sub) pour déterminer si l'intégralité du cycle de vie du job est achevée.
-  3. Gestion stricte du **Timeout Sandbox (125s)** : Si le Sandbox ne répond pas dans ce délai, le Verdict Engine doit forcer l'état et clôre le dossier.
-- **Matrice de Décision :**
-  - Si `ml_layer` attribue un score > 90 -> Verdict `blocked` immédiat (le reste est ignoré ou traité en mode "background" pour logs).
-  - Si `llm_layer` conclut à une anomalie (`is_malicious: true`) -> Verdict `blocked`.
-  - Si timeout Sandbox -> Statut `warning` ou `blocked` par défaut, selon la configuration de tolérance au risque du tenant.
-- **Sortie :** Formatage et émission du document consolidé vers le topic `verdict.result` pour consommation Frontend.
+## Technical Specifications
+- **State Management:** Uses Redis in key-value mode with Time-To-Live (TTL) to temporarily store each Layer's asynchronous returns via the common `job_id` key.
+- **Saga Pattern & Orchestration:**
+  1. As soon as an intermediate event arrives (`ml_layer.result`, etc.), the microservice updates the partial state in Redis.
+  2. Implements a check function (async polling or Pub/Sub) to determine whether the job's full lifecycle is complete.
+  3. Strict handling of the **Sandbox Timeout (125s)**: if the Sandbox does not respond within this delay, the Verdict Engine must force the state and close the case.
+- **Decision Matrix:**
+  - If `ml_layer` assigns a score > 90 -> immediate `blocked` verdict (the rest is ignored or handled in "background" mode for logs).
+  - If `llm_layer` concludes an anomaly (`is_malicious: true`) -> `blocked` verdict.
+  - On Sandbox timeout -> `warning` or `blocked` status by default, depending on the tenant's risk-tolerance configuration.
+- **Output:** Formats and emits the consolidated document to the `verdict.result` topic for Frontend consumption.

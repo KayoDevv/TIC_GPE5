@@ -40,10 +40,10 @@ jobs:
 
       - name: Validate K8s manifests
         run: |
-          # Validation directe des manifests autonomes (base/applications).
-          # Les overlays/ contiennent des strategic merge patches kustomize qui
-          # ne sont pas des manifests valides individuellement — on les exclut
-          # ici et on les valide via kustomize build à l'étape suivante.
+          # Direct validation of the standalone manifests (base/applications).
+          # overlays/ contain kustomize strategic merge patches that are not
+          # valid manifests on their own — we exclude them here and validate
+          # them via kustomize build in the next step.
           FILES=$(find infrastructure \( -name '*.yaml' -o -name '*.yml' \) \
             | grep -v 'terraform/' \
             | grep -v 'scripts/' \
@@ -62,9 +62,9 @@ jobs:
 
       - name: Validate kustomize overlays render correctly
         run: |
-          # Vérifie que les overlays produisent des manifests valides après
-          # rendu kustomize. C'est ce qui est réellement appliqué via kubectl
-          # apply -k. Aucun patch kustomize n'est validé en standalone.
+          # Checks that the overlays produce valid manifests after the kustomize
+          # render. This is what is actually applied via kubectl apply -k. No
+          # kustomize patch is validated standalone.
           for overlay in infrastructure/k8s-manifests/overlays/*/; do
             if [ -f "$overlay/kustomization.yaml" ]; then
               echo "Rendering and validating: $overlay"

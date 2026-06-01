@@ -1,0 +1,21 @@
+# Normalisation des fins de ligne — cible Debian/Linux.
+# Tout le texte est stocké et checkout en LF (Makefile, scripts shell,
+# Dockerfiles cassent en CRLF). text=auto détecte le binaire automatiquement.
+* text=auto eol=lf
+
+# Scripts/manifests explicitement LF (sécurité)
+*.sh   text eol=lf
+*.py   text eol=lf
+*.yaml text eol=lf
+*.yml  text eol=lf
+*.json text eol=lf
+*.tf   text eol=lf
+Makefile text eol=lf
+Dockerfile* text eol=lf
+
+# Binaires éventuels (laisser git deviner, mais marquer les courants)
+*.png binary
+*.jpg binary
+*.gz  binary
+*.raw binary
+*.pcap binary

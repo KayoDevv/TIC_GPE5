@@ -1,11 +1,11 @@
-"""Schéma DuckDB + helpers pour le pipeline de validation.
+"""DuckDB schema + helpers for the validation pipeline.
 
-Deux fichiers DB séparés pour éviter le conflit de lock DuckDB (1 writer par fichier) :
-  - feeder_state.duckdb  → état d'envoi (corpus + jobs envoyés)   écrit par feeder seul
-  - results.duckdb       → résultats reçus depuis Kafka           écrit par validator seul
-  - report.py charge les deux en lecture et les joint en mémoire
+Two separate DB files to avoid the DuckDB lock conflict (1 writer per file):
+  - feeder_state.duckdb  → send state (corpus + sent jobs)   written by feeder only
+  - results.duckdb       → results received from Kafka        written by validator only
+  - report.py opens both read-only and joins them in memory
 
-Toutes les écritures sont idempotentes (INSERT OR IGNORE sur clés naturelles).
+All writes are idempotent (INSERT OR IGNORE on natural keys).
 """
 
 from __future__ import annotations
@@ -18,18 +18,18 @@ import duckdb
 
 _WRITE_LOCK = threading.Lock()
 
-# Noms de fichiers par défaut (dans le dossier validation/)
+# Default file names (inside the validation/ directory)
 FEEDER_DB_NAME   = "feeder_state.duckdb"
 RESULTS_DB_NAME  = "results.duckdb"
 
 
 # ---------------------------------------------------------------------------
-# Schémas
+# Schemas
 # ---------------------------------------------------------------------------
 
 _FEEDER_SCHEMA = """
--- Catalogue des fichiers du corpus, dédupliqué par sha256.
--- label : 'benign' | 'malicious' | 'unknown' — déduit du dossier source.
+-- Catalog of the corpus files, deduplicated by sha256.
+-- label: 'benign' | 'malicious' | 'unknown' — inferred from the source folder.
 CREATE TABLE IF NOT EXISTS corpus (
     sha256        VARCHAR PRIMARY KEY,
     label         VARCHAR NOT NULL,
@@ -38,8 +38,8 @@ CREATE TABLE IF NOT EXISTS corpus (
     registered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Un job par (run_id, sha256, repetition_idx).
--- job_id = UUID Kafka publié sur file.requested.
+-- One job per (run_id, sha256, repetition_idx).
+-- job_id = Kafka UUID published on file.requested.
 CREATE TABLE IF NOT EXISTS sent_jobs (
     job_id         VARCHAR PRIMARY KEY,
     run_id         VARCHAR NOT NULL,
@@ -54,8 +54,8 @@ CREATE INDEX IF NOT EXISTS idx_sent_sha  ON sent_jobs(sha256);
 """
 
 _RESULTS_SCHEMA = """
--- Résultats reçus depuis sandbox_layer.result.
--- job_id = clé de jointure avec feeder_state.sent_jobs.
+-- Results received from sandbox_layer.result.
+-- job_id = join key with feeder_state.sent_jobs.
 CREATE TABLE IF NOT EXISTS results (
     job_id            VARCHAR PRIMARY KEY,
     received_ts       TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -72,11 +72,11 @@ CREATE INDEX IF NOT EXISTS idx_res_received ON results(received_ts);
 
 
 # ---------------------------------------------------------------------------
-# Connexions
+# Connections
 # ---------------------------------------------------------------------------
 
 def connect_feeder(db_dir: Path) -> duckdb.DuckDBPyConnection:
-    """Ouvre (ou crée) feeder_state.duckdb en écriture."""
+    """Open (or create) feeder_state.duckdb for writing."""
     db_dir.mkdir(parents=True, exist_ok=True)
     conn = duckdb.connect(str(db_dir / FEEDER_DB_NAME))
     conn.execute(_FEEDER_SCHEMA)
@@ -84,7 +84,7 @@ def connect_feeder(db_dir: Path) -> duckdb.DuckDBPyConnection:
 
 
 def connect_results(db_dir: Path) -> duckdb.DuckDBPyConnection:
-    """Ouvre (ou crée) results.duckdb en écriture."""
+    """Open (or create) results.duckdb for writing."""
     db_dir.mkdir(parents=True, exist_ok=True)
     conn = duckdb.connect(str(db_dir / RESULTS_DB_NAME))
     conn.execute(_RESULTS_SCHEMA)
@@ -92,7 +92,7 @@ def connect_results(db_dir: Path) -> duckdb.DuckDBPyConnection:
 
 
 def connect_readonly(db_path: Path) -> duckdb.DuckDBPyConnection:
-    """Ouvre une DB existante en lecture seule (pas de lock exclusif)."""
+    """Open an existing DB read-only (no exclusive lock)."""
     return duckdb.connect(str(db_path), read_only=True)
 
 
@@ -107,7 +107,7 @@ def register_sample(
     source_path: str,
     file_size: int,
 ) -> None:
-    """Enregistre un fichier dans corpus si absent (idempotent)."""
+    """Register a file in corpus if absent (idempotent)."""
     with _WRITE_LOCK:
         conn.execute(
             "INSERT OR IGNORE INTO corpus(sha256, label, source_path, file_size) "
@@ -136,7 +136,7 @@ def record_sent(
     sha256: str,
     repetition_idx: int,
 ) -> None:
-    """Insère le job AVANT publication Kafka — garantit l'idempotence en cas de crash."""
+    """Insert the job BEFORE the Kafka publish — guarantees idempotence on crash."""
     with _WRITE_LOCK:
         conn.execute(
             "INSERT OR IGNORE INTO sent_jobs(job_id, run_id, sha256, repetition_idx) "
@@ -146,7 +146,7 @@ def record_sent(
 
 
 def sent_count(conn_feeder: duckdb.DuckDBPyConnection, run_id: str) -> int:
-    """Nombre de jobs envoyés pour un run (depuis feeder_state uniquement)."""
+    """Number of jobs sent for a run (from feeder_state only)."""
     row = conn_feeder.execute(
         "SELECT COUNT(*) FROM sent_jobs WHERE run_id=?", [run_id]
     ).fetchone()
@@ -154,7 +154,7 @@ def sent_count(conn_feeder: duckdb.DuckDBPyConnection, run_id: str) -> int:
 
 
 def sent_count_readonly(db_dir: Path, run_id: str) -> int:
-    """Lit le nombre de jobs envoyés pour un run sans lock (feeder terminé)."""
+    """Read the number of jobs sent for a run without a lock (feeder finished)."""
     feeder_path = db_dir / FEEDER_DB_NAME
     if not feeder_path.exists():
         return 0
@@ -169,10 +169,10 @@ def sent_count_readonly(db_dir: Path, run_id: str) -> int:
 
 
 def sent_job_ids_readonly(db_dir: Path, run_id: str) -> set[str]:
-    """Retourne l'ensemble des job_ids attendus pour un run (lecture seule).
+    """Return the set of expected job_ids for a run (read-only).
 
-    Utilisé par le validator pour rejeter les messages Kafka d'autres runs
-    qui traîneraient dans le topic et provoqueraient des faux matched.
+    Used by the validator to reject Kafka messages from other runs that linger
+    in the topic and would otherwise cause false matches.
     """
     feeder_path = db_dir / FEEDER_DB_NAME
     if not feeder_path.exists():
@@ -201,16 +201,16 @@ def record_result(
     raw_result_json: str,
     error: str | None = None,
 ) -> bool:
-    """Insère le résultat si absent (idempotent).
+    """Insert the result if absent (idempotent).
 
-    Retourne True UNIQUEMENT si une nouvelle ligne a été insérée, False si le
-    job_id existait déjà. NB : on teste l'existence AVANT l'insert plutôt que de
-    relire received_ts après — sinon une ligne pré-existante (replay Kafka,
-    auto_offset_reset=earliest) renverrait True à tort et gonflerait `matched`
-    côté validator, provoquant un arrêt prématuré de la collecte.
+    Returns True ONLY if a new row was inserted, False if the job_id already
+    existed. NB: we test for existence BEFORE the insert rather than re-reading
+    received_ts afterwards — otherwise a pre-existing row (Kafka replay,
+    auto_offset_reset=earliest) would wrongly return True and inflate `matched`
+    on the validator side, causing collection to stop prematurely.
 
-    Le SELECT puis l'INSERT sont sérialisés par _WRITE_LOCK (1 writer/fichier),
-    donc pas de race entre les deux.
+    The SELECT then the INSERT are serialized by _WRITE_LOCK (1 writer/file),
+    so there is no race between them.
     """
     with _WRITE_LOCK:
         exists = conn.execute(
@@ -230,26 +230,26 @@ def record_result(
 
 
 # ---------------------------------------------------------------------------
-# Reporting helpers — lit les deux DB en read-only et joint en mémoire
+# Reporting helpers — open both DBs read-only and join in memory
 # ---------------------------------------------------------------------------
 
 def fetch_run_results(
     db_dir: Path,
     run_id: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Joint feeder_state + results. Retourne les résultats reçus avec leur label."""
+    """Join feeder_state + results. Return the received results with their label."""
     feeder_path  = db_dir / FEEDER_DB_NAME
     results_path = db_dir / RESULTS_DB_NAME
 
     if not feeder_path.exists():
-        raise SystemExit(f"feeder_state.duckdb introuvable dans {db_dir}. Lance d'abord le feeder.")
+        raise SystemExit(f"feeder_state.duckdb not found in {db_dir}. Run the feeder first.")
     if not results_path.exists():
-        raise SystemExit(f"results.duckdb introuvable dans {db_dir}. Lance d'abord le validator.")
+        raise SystemExit(f"results.duckdb not found in {db_dir}. Run the validator first.")
 
     cf = connect_readonly(feeder_path)
     cr = connect_readonly(results_path)
 
-    # Charger en mémoire puis joindre (les deux DB sont dans des fichiers séparés)
+    # Load into memory then join (the two DBs live in separate files)
     sent_rows = cf.execute(
         "SELECT job_id, run_id, sha256, repetition_idx FROM sent_jobs"
         + (" WHERE run_id=?" if run_id else ""),
@@ -282,7 +282,7 @@ def fetch_run_results(
     for job_id, run_id_, sha256, rep_idx in sent_rows:
         res = res_map.get(job_id)
         if res is None:
-            continue  # pas encore reçu
+            continue  # not received yet
         label, _ = corpus_map.get(sha256, ("unknown", ""))
         out.append({
             "job_id":            job_id,
@@ -309,7 +309,7 @@ def list_run_ids(db_dir: Path) -> list[str]:
 
 
 def inflight_total(db_dir: Path) -> int:
-    """Nombre de jobs envoyés sans résultat reçu (tous runs confondus)."""
+    """Number of jobs sent without a received result (across all runs)."""
     feeder_path  = db_dir / FEEDER_DB_NAME
     results_path = db_dir / RESULTS_DB_NAME
     if not feeder_path.exists() or not results_path.exists():

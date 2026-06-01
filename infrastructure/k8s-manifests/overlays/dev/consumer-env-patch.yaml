@@ -1,7 +1,7 @@
-# Patch dev — branche le consumer sur Kafka (Bitnami) + MinIO (StatefulSet)
-# in-cluster via le DNS K8s. Override K8S_API_SERVER pour qu'il pointe sur
-# le service `kubernetes` au lieu de NODE_IP:6443 (le pod ne peut pas joindre
-# le port 6443 du host avec kube-router enforcé).
+# Dev patch — wires the consumer to Kafka (Bitnami) + MinIO (StatefulSet)
+# in-cluster via K8s DNS. Overrides K8S_API_SERVER so it points to the
+# `kubernetes` service instead of NODE_IP:6443 (the pod cannot reach the
+# host's port 6443 with the Calico NetworkPolicy enforced).
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -12,8 +12,8 @@ spec:
       containers:
         - name: consumer
           env:
-            # Override K8S_API_SERVER : la base utilise NODE_IP:6443 (fallback
-            # legacy). On force le service in-cluster pour passer NetworkPolicy.
+            # Override K8S_API_SERVER: the base uses NODE_IP:6443 (legacy
+            # fallback). We force the in-cluster service to pass NetworkPolicy.
             - name: K8S_API_SERVER
               value: "https://kubernetes.default.svc:443"
             - name: KAFKA_BOOTSTRAP_SERVERS
@@ -24,3 +24,8 @@ spec:
               value: "minio.minio.svc.cluster.local:9000"
             - name: AGENT_MINIO_ENDPOINT
               value: "minio.minio.svc.cluster.local:9000"
+            # Kernel isolation for detonation Jobs: gVisor (runsc) is mandatory.
+            # The consumer passes this runtimeClassName to every detonation Job.
+            # Validated on GPE-NYX (no KVM → Kata impossible; gVisor + strace OK).
+            - name: SANDBOX_RUNTIME_CLASS
+              value: "gvisor"

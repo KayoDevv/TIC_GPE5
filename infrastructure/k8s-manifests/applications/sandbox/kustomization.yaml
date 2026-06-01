@@ -8,5 +8,5 @@ resources:
   - consumer-deployment.yaml
   - watcher-deployment.yaml
   - keda-scaledobject.yaml
-  # analysis-job-template.yaml est appliqué dynamiquement par le consumer,
-  # pas via kustomize. Présent dans le repo comme source de vérité.
+  # analysis-job-template.yaml is applied dynamically by the consumer,
+  # not via kustomize. Kept in the repo as the source of truth.

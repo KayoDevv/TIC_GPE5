@@ -1,11 +1,11 @@
 # Frontend
 
-**Tech :** Vue 3 + WXT (TypeScript, Tailwind). Playwright pour les tests E2E.
+**Tech:** Vue 3 + WXT (TypeScript, Tailwind). Playwright for E2E tests.
 
-**Code Guidelines :** Extension pour Google Chrome et Microsoft Edge respectant le Manifest V3. Utilisation du "Shadow DOM" pour isoler les styles CSS. Les tests E2E automatisés via Playwright (situés dans le sous-dossier e2e-tests) doivent simuler le parcours utilisateur téléchargeant différents fichiers sur le webmail.
+**Code Guidelines:** Extension for Google Chrome and Microsoft Edge complying with Manifest V3. Uses the Shadow DOM to isolate CSS styles. The automated E2E tests run via Playwright (located in the e2e-tests sub-folder) must simulate the user journey of downloading various files from the webmail.
 
-**Contexte Métier :** Interface de l'utilisateur final. Doit gérer les états visuels : Vert (Autorisé), Rouge (Bloqué), Orange (Avertissement avec panneau latéral).
+**Business Context:** The end-user interface. Must handle the visual states: Green (Allowed), Red (Blocked), Orange (Warning with a side panel).
 
-**Responsabilité :** Intercepter automatiquement le clic de téléchargement via les content scripts.
+**Responsibility:** Automatically intercept the download click via the content scripts.
 
-**Événements Kafka (Consommés/Produits) :** N/A (Communique via API REST/WebSockets avec le Backend).
+**Kafka Events (Consumed/Produced):** N/A (communicates with the Backend via REST API / WebSockets).

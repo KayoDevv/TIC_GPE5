@@ -1,0 +1,5 @@
+{
+  "anomaly_score": 0.324,
+  "verdict": "malicious",
+  "narrative": "Verdict sandbox : MALICIOUS (score 0.32). PDF analysé via mutool + PDF.js en 12.3s. Indicateurs : JavaScript exécuté automatiquement à l'ouverture (/OpenAction) — sans interaction utilisateur ; Action /Launch (exécution d'un programme externe) — quasi toujours malveillant ; Lien pointant vers un exécutable (.exe/.scr/.ps1/...) : http://evil.test/p.exe."
+}

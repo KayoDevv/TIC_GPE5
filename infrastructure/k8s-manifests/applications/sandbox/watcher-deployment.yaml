@@ -1,12 +1,12 @@
-# minio-watcher — transformateur MinIO events → FileRequestedEvent.
-# Écoute le topic minio.events (notifications S3 natives MinIO),
-# génère un FileRequestedEvent et publie sur file.requested.
+# minio-watcher — MinIO events → FileRequestedEvent transformer.
+# Listens on the minio.events topic (native MinIO S3 notifications),
+# generates a FileRequestedEvent and publishes to file.requested.
 #
-# Sécurité — moindre privilège :
-#   - ServiceAccount sans aucun droit API K8s
+# Security — least privilege:
+#   - ServiceAccount with no K8s API rights
 #   - automountServiceAccountToken: false
 #   - runAsNonRoot, readOnlyRootFilesystem, drop ALL caps, seccomp RuntimeDefault
-#   - NetworkPolicy egress : Kafka + MinIO uniquement (pas d'API K8s)
+#   - NetworkPolicy egress: Kafka + MinIO only (no K8s API)
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -33,21 +33,21 @@ spec:
           image: ghcr.io/kayodevv/charon-minio-watcher:latest
           imagePullPolicy: IfNotPresent
           env:
-            # IP du node K8s où tourne ce pod (injectée par DownwardAPI).
+            # IP of the K8s node where this pod runs (injected via DownwardAPI).
             - name: NODE_IP
               valueFrom:
                 fieldRef:
                   fieldPath: status.hostIP
-            # Endpoints fallback ($(NODE_IP) résolu à l'IP du node).
-            # Override par overlays/dev/watcher-env-patch.yaml pour pointer
-            # sur les DNS K8s in-cluster.
+            # Fallback endpoints ($(NODE_IP) resolved to the node IP).
+            # Overridden by overlays/dev/watcher-env-patch.yaml to point
+            # to the in-cluster K8s DNS.
             - name: KAFKA_BOOTSTRAP
               value: "$(NODE_IP):9093"
             - name: MINIO_ENDPOINT
               value: "$(NODE_IP):9000"
             - name: MINIO_PRESIGN_ENDPOINT
               value: "$(NODE_IP):9000"
-            # Constantes.
+            # Constants.
             - name: MINIO_TOPIC_IN
               value: "minio.events"
             - name: KAFKA_TOPIC_OUT

@@ -1,9 +1,9 @@
-# Template du Job d'analyse — UN par sample.
-# Le consumer instancie ce Job dynamiquement (substitution job_id + sample_id)
-# via l'API K8s. Garde ce manifeste comme source de vérité du contrat
-# d'isolation (seccomp, capabilities, ressources, deadline).
+# Analysis Job template — ONE per sample.
+# The consumer instantiates this Job dynamically (job_id + sample_id substitution)
+# via the K8s API. Kept as the source of truth for the isolation contract
+# (seccomp, capabilities, resources, deadline).
 #
-# Substitutions runtime côté consumer:
+# Runtime substitutions on the consumer side:
 #   - metadata.name              <- charon-{job_id_short}
 #   - spec.template.spec.containers[0].args
 #       <- ["--job-id", "<uuid>", "--s3-url", "<presigned>"]
@@ -18,9 +18,9 @@ metadata:
     app.kubernetes.io/part-of: charon
     charon.io/role: analysis
 spec:
-  backoffLimit: 0                 # pas de retry — un sample = une chance
-  ttlSecondsAfterFinished: 120    # GC auto 2min — aligné sur le runtime (consumer.py) et le cahier
-  activeDeadlineSeconds: 180      # kill dur si > 3min (sandbox SLA = 120s)
+  backoffLimit: 0                 # no retry — one sample = one chance
+  ttlSecondsAfterFinished: 120    # auto GC 2min — aligned with the runtime (consumer.py) and the spec
+  activeDeadlineSeconds: 180      # hard kill if > 3min (sandbox SLA = 120s)
   template:
     metadata:
       labels:
@@ -32,7 +32,11 @@ spec:
       hostNetwork: false
       hostPID: false
       hostIPC: false
-      # Hardening Tranche B — V3: gVisor (uncomment to activate; runc otherwise)
+      # Hardening Tranche B — V3: gVisor is now MANDATORY. The consumer injects
+      # runtimeClassName=gvisor at runtime (SANDBOX_RUNTIME_CLASS env) and the
+      # ValidatingAdmissionPolicy `charon-require-gvisor-detonation` rejects any
+      # analysis pod without it. This template line stays commented because the
+      # value is set at runtime, not baked in here.
       # runtimeClassName: gvisor
       # Hardening Tranche B — V7: sinkhole DNS (replace with actual ClusterIP)
       # dnsPolicy: None
@@ -44,7 +48,7 @@ spec:
       #     - cluster.local
       #   options:
       #     - {name: ndots, value: "2"}
-      # Optionnel mais conseillé : pool de nœuds dédié bursty.
+      # Optional but recommended: dedicated bursty node pool.
       # nodeSelector:
       #   charon.io/workload: sandbox-analysis
       # tolerations:
@@ -72,7 +76,7 @@ spec:
             readOnlyRootFilesystem: true
             capabilities:
               drop: ["ALL"]
-              add: ["SYS_PTRACE"]    # strict minimum pour strace
+              add: ["SYS_PTRACE"]    # strict minimum for strace
             # Hardening Tranche A — V2 : RuntimeDefault (containerd/Docker default).
             # Tranche B (target) : Localhost + charon-seccomp.json (Charon-strict).
             # Once seccomp-distributor.yaml has populated the profile on every
@@ -89,8 +93,8 @@ spec:
           volumeMounts:
             - name: scratch
               mountPath: /out
-            # Hardening Tranche A — V6 : avec rootfs read-only, /tmp et /var/tmp
-            # doivent être writable pour Python tempfile, gcc, pip, etc.
+            # Hardening Tranche A — V6: with a read-only rootfs, /tmp and /var/tmp
+            # must be writable for Python tempfile, gcc, pip, etc.
             - name: tmp
               mountPath: /tmp
             - name: var-tmp
@@ -99,10 +103,10 @@ spec:
         - name: scratch
           emptyDir:
             sizeLimit: 1Gi
-            medium: ""              # disque, pas tmpfs (PCAP peut être gros)
+            medium: ""              # disk, not tmpfs (PCAP can be large)
         - name: tmp
           emptyDir:
-            medium: Memory          # tmpfs RAM, compté dans memory limit du pod
+            medium: Memory          # tmpfs RAM, counted in the pod's memory limit
             sizeLimit: 256Mi
         - name: var-tmp
           emptyDir:

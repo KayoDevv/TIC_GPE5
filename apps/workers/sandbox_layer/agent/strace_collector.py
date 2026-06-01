@@ -1,6 +1,6 @@
-"""Parse la sortie strace -f -tt -e trace=all.
-Adapté de GPE-Charon/sandbox/backends/linux_docker/strace_collector.py
-Seule modification : import depuis models (pas backends.linux_docker.models).
+"""Parse the output of strace -f -tt -e trace=all.
+Adapted from GPE-Charon/sandbox/backends/linux_docker/strace_collector.py
+Only change: import from models (not backends.linux_docker.models).
 """
 
 from __future__ import annotations
@@ -35,8 +35,8 @@ SYSCALLS_OF_INTEREST = frozenset({
     "prctl",
 })
 
-# Syscalls trop communs pour apporter un signal (libc/ld overhead).
-# On conserve le call_count mais on vide sample_args pour éviter le bruit.
+# Syscalls too common to carry signal (libc/ld overhead).
+# We keep call_count but clear sample_args to avoid noise.
 _NOISE_SYSCALLS: frozenset[str] = frozenset({
     "brk", "mmap", "munmap", "mprotect", "madvise",
     "fstat", "stat", "lstat", "newfstatat",
@@ -52,13 +52,13 @@ _NOISE_SYSCALLS: frozenset[str] = frozenset({
     "access", "faccessat",
 })
 
-# Préfixes de chemins à exclure des sample_args (libc/ld lookups systématiques).
+# Path prefixes to exclude from sample_args (systematic libc/ld lookups).
 _NOISE_PATH_PREFIXES: tuple[str, ...] = (
     "/lib/", "/lib64/", "/usr/lib/",
     "/etc/ld.so", "/proc/self/", "/sys/kernel/",
 )
 
-# Sockets UNIX systématiques (nscd, dbus, journald).
+# Systematic UNIX sockets (nscd, dbus, journald).
 _NOISE_UNIX_PATHS: frozenset[str] = frozenset({
     "/var/run/nscd/socket",
     "/run/nscd/socket",

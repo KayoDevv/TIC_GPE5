@@ -1,18 +1,18 @@
-"""Agent d'analyse — tourne dans le pod K8s ubuntu-sandbox:v1.
+"""Analysis agent — runs inside the ubuntu-sandbox:v1 K8s pod.
 
-Reçoit --job-id et --s3-url en arguments CLI.
-Variables d'environnement : KAFKA_BOOTSTRAP_SERVERS, KAFKA_TOPIC_OUT,
-                            MINIO_ENDPOINT, EMAIL_CONTEXT_JSON.
+Receives --job-id and --s3-url as CLI arguments.
+Environment variables: KAFKA_BOOTSTRAP_SERVERS, KAFKA_TOPIC_OUT,
+                       MINIO_ENDPOINT, EMAIL_CONTEXT_JSON.
 
-Pipeline :
-    1. Télécharge le sample depuis MinIO (URL presigned)
-    2. Snapshot AVANT
-    3. Lance strace + sample (subprocess, on est dans le container)
-    4. Memory forensics /proc en parallèle (thread)
-    5. Snapshot APRÈS
-    6. 6 hypothèses → anomaly_score
-    7. Construit SandboxLayerResultEvent
-    8. Publie sur sandbox_layer.result
+Pipeline:
+    1. Download the sample from MinIO (presigned URL)
+    2. Snapshot BEFORE
+    3. Run strace + sample (subprocess, we are inside the container)
+    4. /proc memory forensics in parallel (thread)
+    5. Snapshot AFTER
+    6. 7 hypotheses → anomaly_score
+    7. Build SandboxLayerResultEvent
+    8. Publish to sandbox_layer.result
 """
 
 from __future__ import annotations
@@ -35,13 +35,15 @@ import urllib.request
 from aiokafka import AIOKafkaProducer
 import asyncio
 
-# Ajout du répertoire courant au path pour les imports locaux
+# Add the current directory to the path for local imports
 sys.path.insert(0, str(Path(__file__).parent))
 
 from models import MemoryObservables, NetworkObservables, RuntimeSignals
 from snapshot import compute_diff, take_snapshot
 from strace_collector import extract_sleep_cumulated, parse_strace_log
 from memory import collect_memory_observables
+from core.report import build_elf_summary, build_iocs, build_result_event
+from core.scoring import compute_anomaly_score
 import hypotheses.persistence as h_persistence
 import hypotheses.c2 as h_c2
 import hypotheses.injection as h_injection
@@ -151,11 +153,8 @@ def _download_sample(s3_url: str, dest: Path) -> None:
 
 
 def _compute_anomaly_score(hyp_results: dict) -> float:
-    score = sum(
-        WEIGHTS.get(k, 0.0) * r.score
-        for k, r in hyp_results.items()
-    )
-    return round(min(score, 1.0), 3)
+    """ELF weighted sum → anomaly_score. Delegates to the pure core (core/scoring)."""
+    return compute_anomaly_score(hyp_results, WEIGHTS)
 
 
 def _run_hypotheses_ordered(
@@ -213,57 +212,34 @@ def _run_hypotheses_ordered(
     return hyp_results, early_exit, timings_ms
 
 
+# MITRE ATT&CK tactic per hypothesis (config — consumed by build_iocs).
+_HYP_TO_MITRE: dict[str, str] = {
+    "persistence_detected": "TA0003",
+    "c2_communication":     "TA0011",
+    "code_injection":       "TA0005",
+    "file_encryption":      "TA0040",
+    "evasion_attempted":    "TA0005",
+    "propagation":          "TA0008",
+    "lolbins_abuse":        "T1059",   # Command and Scripting Interpreter
+}
+
+
+def _ioc_type(hyp_name: str, ev) -> str:
+    """ELF IOC typing: syscall if runtime_signals, file_hash otherwise."""
+    return "syscall" if ev.source == "runtime_signals" else "file_hash"
+
+
 def _iocs_from_hypotheses(hyp_results: dict, memory: MemoryObservables) -> list[dict]:
-    """Construit la liste d'IOCs au format SandboxLayerResultEvent."""
-    iocs = []
-
-    # IOCs depuis les hypothèses
-    hyp_to_mitre = {
-        "persistence_detected": "TA0003",
-        "c2_communication":     "TA0011",
-        "code_injection":       "TA0005",
-        "file_encryption":      "TA0040",
-        "evasion_attempted":    "TA0005",
-        "propagation":          "TA0008",
-        "lolbins_abuse":        "T1059",   # Command and Scripting Interpreter
-    }
-    for hyp_name, result in hyp_results.items():
-        if not result.value:
-            continue
-        mitre = hyp_to_mitre.get(hyp_name, "TA0000")
-        for ev in result.evidence:
-            iocs.append({
-                "type": "syscall" if ev.source == "runtime_signals" else "file_hash",
-                "value": ev.value[:256],
-                "mitre_tactic": mitre,
-                "description": f"{hyp_name}: {ev.field_path}",
-            })
-
-    # Régions RWX depuis mémoire
-    for region in memory.suspicious_regions:
-        iocs.append({
-            "type": "syscall",
-            "value": f"mmap(RWX) pid={region.pid} {region.start_addr}-{region.end_addr}",
-            "mitre_tactic": "TA0005",
-            "description": f"RWX memory region: {region.permissions} {region.size_bytes}B",
-        })
-
-    return iocs
+    """Build the IOC list (delegates to the pure core, core/report.build_iocs)."""
+    return build_iocs(
+        hyp_results, _HYP_TO_MITRE, _ioc_type,
+        memory_regions=memory.suspicious_regions,
+    )
 
 
 def _behavior_summary(hyp_results: dict, anomaly_score: float, duration_s: float) -> str:
-    positives = [k for k, r in hyp_results.items() if r.value]
-    if not positives:
-        return (
-            f"Sample ran for {duration_s:.1f}s and exited cleanly. "
-            "No filesystem mutations, no outbound connections, no RWX memory regions, "
-            f"no persistence mechanism. anomaly_score={anomaly_score:.2f}"
-        )
-    return (
-        f"Sample ran for {duration_s:.1f}s. "
-        f"Detected signals: {', '.join(positives)}. "
-        f"anomaly_score={anomaly_score:.2f}"
-    )
+    """ELF behavioural summary. Delegates to the pure core (core/report)."""
+    return build_elf_summary(hyp_results, anomaly_score, duration_s)
 
 
 # ---------------------------------------------------------------------------
@@ -287,7 +263,7 @@ def run_analysis(job_id: str, s3_url: str) -> None:
     started_at = _now_iso()
     t0 = time.time()
 
-    # Répertoire de travail dans /out (volume emptyDir)
+    # Working directory in /out (emptyDir volume)
     work_dir = Path("/out") / job_id[:8]
     work_dir.mkdir(parents=True, exist_ok=True)
     sample_path = work_dir / "sample.elf"
@@ -302,11 +278,11 @@ def run_analysis(job_id: str, s3_url: str) -> None:
         # 1. Download
         _download_sample(s3_url, sample_path)
 
-        # 2. Snapshot AVANT
+        # 2. Snapshot BEFORE
         log.info("Taking snapshot BEFORE")
         snapshot_before = take_snapshot(relative_ts_s=0.0)
 
-        # 3. Lance strace + sample + memory forensics en parallèle
+        # 3. Launch strace + sample + memory forensics in parallel
         trace_log_path = work_dir / "trace.log"
         strace_cmd = (
             f"strace -f -tt -e trace=all -o {trace_log_path} "
@@ -315,7 +291,7 @@ def run_analysis(job_id: str, s3_url: str) -> None:
         )
         log.info("Running strace + sample (timeout=%ds)", TIMEOUT_S)
 
-        # Thread pour memory forensics pendant l'exécution
+        # Thread for memory forensics during execution
         memory_result: list[MemoryObservables] = [MemoryObservables()]
         def _collect_memory():
             memory_result[0] = collect_memory_observables(
@@ -344,7 +320,7 @@ def run_analysis(job_id: str, s3_url: str) -> None:
         mem_thread.join(timeout=10)
         memory = memory_result[0]
 
-        # Lire exit code
+        # Read exit code
         exit_code = None
         ec_path = work_dir / "exit_code"
         if ec_path.exists():
@@ -353,7 +329,7 @@ def run_analysis(job_id: str, s3_url: str) -> None:
             except ValueError:
                 pass
 
-        # 4. Snapshot APRÈS
+        # 4. Snapshot AFTER
         log.info("Taking snapshot AFTER")
         snapshot_after = take_snapshot(relative_ts_s=execution_duration_s)
 
@@ -418,28 +394,22 @@ def run_analysis(job_id: str, s3_url: str) -> None:
     ended_at = _now_iso()
     duration_s = time.time() - t0
 
-    # 8. Construit SandboxLayerResultEvent (contrat GPE-ETNA)
-    event = {
-        "job_id": job_id,
-        "iocs": iocs,
-        "behavior_summary": behavior_summary,
-        "email_context": EMAIL_CONTEXT,
-        "timeout_triggered": timeout_triggered,
-        "timestamp": ended_at,
-        # Champs étendus pour debug (optionnels, ignorés par le schéma strict)
-        "_meta": {
-            "anomaly_score": anomaly_score,
-            "duration_s": round(duration_s, 2),
-            "error": error_msg,
-            # Pipeline v2 — traceability fields (consumed by calibrate_weights.py)
-            "pipeline_version": "v2",
-            "early_exit": early_exit,
-            "hypothesis_timings_ms": hypothesis_timings_ms,
-            "hypothesis_scores": {
-                k: round(r.score, 3) for k, r in hyp_results.items()
-            },
-        },
-    }
+    # 8. Build SandboxLayerResultEvent (GPE-ETNA contract)
+    event = build_result_event(
+        job_id=job_id,
+        iocs=iocs,
+        behavior_summary=behavior_summary,
+        email_context=EMAIL_CONTEXT,
+        timeout_triggered=timeout_triggered,
+        timestamp=ended_at,
+        anomaly_score=anomaly_score,
+        duration_s=duration_s,
+        error=error_msg,
+        pipeline_version="v2",
+        hypothesis_timings_ms=hypothesis_timings_ms,
+        hyp_results=hyp_results,
+        meta_extra={"early_exit": early_exit},
+    )
 
     asyncio.run(_publish(job_id, event))
 

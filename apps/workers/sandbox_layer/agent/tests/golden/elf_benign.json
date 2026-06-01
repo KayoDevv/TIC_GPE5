@@ -1,0 +1,4 @@
+{
+  "anomaly_score": 0.0,
+  "behavior_summary": "Sample ran for 12.3s and exited cleanly. No filesystem mutations, no outbound connections, no RWX memory regions, no persistence mechanism. anomaly_score=0.00"
+}

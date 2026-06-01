@@ -1,25 +1,25 @@
-"""Sonde générique — détection de payload caché via analyse d'entropie locale.
+"""Generic probe — hidden-payload detection via local entropy analysis.
 
-Format-agnostique. Marche sur n'importe quel fichier (PDF, ELF, DOCX, LNK...).
+Format-agnostic. Works on any file (PDF, ELF, DOCX, LNK...).
 
-Principe v2 : un PDF normal compressé a une entropie *uniformément* élevée
-(zlib/Flate sur tous les streams → ~7.9 partout). Un fichier avec un payload
-chiffré/obfusqué caché montre une *anomalie locale* — un pic d'entropie au-dessus
-d'un contenu plus bas.
+v2 principle: a normally-compressed PDF has *uniformly* high entropy
+(zlib/Flate on every stream → ~7.9 everywhere). A file with a hidden
+encrypted/obfuscated payload shows a *local anomaly* — an entropy peak above
+lower-entropy content.
 
-La v1 ne regardait que `max_chunk_entropy` → fire sur PDFs compressés légitimes
-(98% FP sur le corpus benign RFC/arXiv). La v2 regarde l'écart entre le max
-et la médiane des chunks pour distinguer "uniformément compressé" (normal)
-de "pic localisé" (suspect).
+v1 only looked at `max_chunk_entropy` → fired on legitimate compressed PDFs
+(98% FP on the benign RFC/arXiv corpus). v2 looks at the gap between the max
+and the median of the chunks to distinguish "uniformly compressed" (normal)
+from "localized peak" (suspicious).
 
-Heuristique v2 :
-  - high_ratio > 0.7  (>70% des chunks à entropie élevée) → compression uniforme légit, score 0
-  - peak_gap > 1.5    (pic dépassant la médiane de >1.5 bits) ET max > 7.8 → payload caché, score 0.8
-  - peak_gap > 1.0    → suspect modéré, score 0.5
-  - peak_gap > 0.5 ET max > 7.5 → faible signal, score 0.2
-  - sinon → 0
+v2 heuristic (scores kept in the "suspicious" band — see the calibration note below):
+  - high_ratio > 0.7  (>70% of chunks at high entropy) → uniform legit compression, score 0
+  - peak_gap > 1.5 AND max > 7.8 → score 0.20
+  - peak_gap > 1.0 AND max > 7.5 → score 0.15
+  - peak_gap > 0.5 AND max > 7.5 → score 0.10
+  - otherwise → 0
 
-Signature: (Path) → HypothesisResult — identique à pdf_static.evaluate_static
+Signature: (Path) → HypothesisResult — same as pdf_static.evaluate_static
 """
 
 from __future__ import annotations
@@ -31,13 +31,13 @@ from pathlib import Path
 
 from hypotheses._types import Evidence, HypothesisResult
 
-_CHUNK_SIZE = 4096      # fenêtre glissante
-_MIN_FILE_SIZE = 1024   # ignore fichiers triviaux
-_HIGH_ENTROPY_THRESHOLD = 7.5  # bits/byte au-dessus duquel un chunk est "haut"
+_CHUNK_SIZE = 4096      # sliding window
+_MIN_FILE_SIZE = 1024   # ignore trivial files
+_HIGH_ENTROPY_THRESHOLD = 7.5  # bits/byte above which a chunk is "high"
 
 
 def _shannon_entropy(data: bytes) -> float:
-    """Entropie de Shannon sur des octets bruts, en bits/byte (0..8)."""
+    """Shannon entropy over raw bytes, in bits/byte (0..8)."""
     if not data:
         return 0.0
     counts = Counter(data)
@@ -49,9 +49,9 @@ def _shannon_entropy(data: bytes) -> float:
 
 
 def evaluate_static(file_path: Path) -> HypothesisResult:
-    """Analyse l'entropie par fenêtres et retourne un score discriminant.
+    """Analyze entropy by windows and return a discriminating score.
 
-    Distingue compression uniforme (légit) de pic localisé (suspect).
+    Distinguishes uniform compression (legit) from a localized peak (suspicious).
     """
     try:
         data = file_path.read_bytes()
@@ -61,7 +61,7 @@ def evaluate_static(file_path: Path) -> HypothesisResult:
     if len(data) < _MIN_FILE_SIZE:
         return HypothesisResult(value=False, score=0.0, evidence=[])
 
-    # Entropie par fenêtre
+    # Entropy per window
     chunk_entropies: list[float] = []
     max_entropy = 0.0
     max_offset = 0
@@ -73,23 +73,23 @@ def evaluate_static(file_path: Path) -> HypothesisResult:
             max_offset = offset
 
     if len(chunk_entropies) < 4:
-        # Trop peu de chunks pour calculer une médiane fiable.
+        # Too few chunks to compute a reliable median.
         return HypothesisResult(value=False, score=0.0, evidence=[])
 
-    # Stats discriminantes
+    # Discriminating stats
     median_entropy = statistics.median(chunk_entropies)
     high_chunks = sum(1 for e in chunk_entropies if e > _HIGH_ENTROPY_THRESHOLD)
     high_ratio = high_chunks / len(chunk_entropies)
     peak_gap = max_entropy - median_entropy
 
-    # Heuristique v2 : la signature d'un payload caché c'est un PIC localisé,
-    # pas une entropie uniformément élevée.
-    # CALIBRÉ (corpus mixte) : même la v2 (pic localisé) fire sur 5/7 benigns —
-    # un RFC/papier a un objet compressé (image, source embarquée) qui forme un
-    # pic au-dessus du texte, identique à un payload caché. high_ratio bas + gap
-    # élevé ne distingue PAS benign de malicious sur PDF (tally : 5 benign / 5
-    # malic). On garde l'entropie comme signal FAIBLE (bande suspicious) : utile
-    # comme evidence pour le LLM, mais ne classe jamais seul en malicious.
+    # v2 heuristic: the signature of a hidden payload is a LOCALIZED peak,
+    # not uniformly high entropy.
+    # CALIBRATED (mixed corpus): even v2 (localized peak) fires on 5/7 benigns —
+    # an RFC/paper has a compressed object (image, embedded source) that forms a
+    # peak above the text, identical to a hidden payload. Low high_ratio + high
+    # gap does NOT distinguish benign from malicious on PDF (tally: 5 benign / 5
+    # malic). We keep entropy as a WEAK signal (suspicious band): useful as
+    # evidence for the LLM, but never classifies as malicious on its own.
     if high_ratio > 0.7:
         # Compression uniforme (PDF zlib, archive, etc.) — pas d'anomalie locale.
         score = 0.0

@@ -55,7 +55,7 @@
 
 ### Architecture (Event-Driven Microservices)
 - **Type :** Microservices orientés événements avec pattern Scatter-Gather.
-- **Orchestration :** Kubernetes **K3s** (mono-nœud, Debian natif), réseau **flannel** (routage) + **kube-router** (enforcement des NetworkPolicies, `--run-router=false`), autoscaling **KEDA** sur le lag Kafka.
+- **Orchestration :** Kubernetes **K3s** (mono-nœud, Debian natif), réseau **flannel** (routage) + **Calico** (enforcement des NetworkPolicies, namespace `calico-system`), autoscaling **KEDA** sur le lag Kafka.
 - **Bus de messages :** Apache Kafka — chart **Bitnami** (mode KRaft, mono-broker, in-cluster), topics provisionnés par le chart.
 - **Frontend :** Vue 3 + WXT (TypeScript, Tailwind).
 - **Backend Gateway :** Python (FastAPI) — émet l'événement `file.requested` sur Kafka après upload MinIO.
@@ -85,7 +85,7 @@ Chaque Layer est un microservice Python indépendant consommant les événements
 - **Orchestration :** K3s mono-nœud (Debian natif). Le consumer Kafka crée un Job `batch/v1` par sample, **routé par magic bytes** :
     - `\x7fELF` → image `ubuntu-sandbox:v1` + `run_analysis.py`
     - `%PDF` / inconnu/déguisé → image `ubuntu-pdf-sandbox:v1` (mupdf 1.24.10 + Node/PDF.js + pdfid + qpdf) + `run_pdf_analysis.py`
-- **Isolation & durcissement :** runtime `runc` durci — seccomp, `cap-drop ALL` (sauf `SYS_PTRACE` pour strace), utilisateur non-root (UID 10001), NetworkPolicy deny-all (enforcement kube-router), namespace dédié. **RuntimeClass gVisor (runsc) activable** via `SANDBOX_RUNTIME_CLASS=gvisor` (isolation kernel user-space, recommandée en prod ; non activée par défaut en dev par contrainte d'installation du runtime). Leurres anti-sandbox dans l'image (faux fichiers utilisateur, faux historique bash).
+- **Isolation & durcissement :** runtime `runc` durci — seccomp, `cap-drop ALL` (sauf `SYS_PTRACE` pour strace), utilisateur non-root (UID 10001), NetworkPolicy deny-all (enforcement Calico), namespace dédié. **RuntimeClass gVisor (runsc) activable** via `SANDBOX_RUNTIME_CLASS=gvisor` (isolation kernel user-space, recommandée en prod ; non activée par défaut en dev par contrainte d'installation du runtime). Leurres anti-sandbox dans l'image (faux fichiers utilisateur, faux historique bash).
 - **Collecte comportementale :**
     - **State-diff :** snapshot avant/après (FS hashé SHA-256 sur `/etc /home /tmp /var /opt /root`, process, sockets, crontab, systemd, chemins de persistance), diff des changements significatifs, **baseline du harnais soustraite** (les fichiers système et l'outillage de l'agent ne comptent pas comme signal).
     - **Syscalls via `strace -f`** sur les processus de détonation (`mutool draw`, `node pdf_runner.js`) — capture `execve`/`connect`/`openat`/`mprotect`/`ptrace`. *(eBPF/bpftrace envisagé en V2 ; strace retenu pour la portabilité.)*
@@ -128,7 +128,7 @@ Chaque Layer est un microservice Python indépendant consommant les événements
 
 ## 9. Sécurité
 - **Protection en transit :** TLS 1.3 obligatoire. WebSockets sécurisées (WSS).
-- **Isolation stricte :** containers durcis sur K3s — `runc` + seccomp + `cap-drop ALL` + utilisateur non-root (UID 10001) + NetworkPolicy deny-all (enforcement kube-router) + namespace dédié. **RuntimeClass gVisor (runsc) activable** (`SANDBOX_RUNTIME_CLASS=gvisor`) pour l'isolation kernel user-space — recommandée en production, activée selon la disponibilité du runtime sur le nœud. Chaque Job est détruit après exécution (`ttlSecondsAfterFinished: 120`).
+- **Isolation stricte :** containers durcis sur K3s — `runc` + seccomp + `cap-drop ALL` + utilisateur non-root (UID 10001) + NetworkPolicy deny-all (enforcement Calico) + namespace dédié. **RuntimeClass gVisor (runsc) activable** (`SANDBOX_RUNTIME_CLASS=gvisor`) pour l'isolation kernel user-space — recommandée en production, activée selon la disponibilité du runtime sur le nœud. Chaque Job est détruit après exécution (`ttlSecondsAfterFinished: 120`).
 - **Authentification :** JWT tokens émis via une politique Single Sign-On (SSO) d'entreprise.
 
 ## 10. Performance

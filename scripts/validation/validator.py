@@ -1,16 +1,16 @@
-"""Validator — consumer Kafka dédié qui matérialise sandbox_layer.result dans results.duckdb.
+"""Validator — dedicated Kafka consumer that materializes sandbox_layer.result into results.duckdb.
 
-N'ouvre feeder_state.duckdb qu'en lecture seule, et seulement après que le feeder
-a terminé (plus de lock exclusif). Chaque process a son propre fichier DuckDB.
+Opens feeder_state.duckdb read-only, and only after the feeder has finished
+(no more exclusive lock). Each process has its own DuckDB file.
 
-Modes d'arrêt (par priorité) :
-  - --run-id <id>    : s'arrête dès que matched = total envoyé par le feeder
-                       (matched compte chaque résultat persisté, erreurs incluses —
-                       errors est un sous-ensemble de matched, pas un terme à additionner)
-  - --until-drained  : s'arrête après --idle-timeout secondes sans nouveau résultat
-  - Ctrl-C           : arrêt immédiat (offset Kafka committé → reprise propre)
+Stop modes (by priority):
+  - --run-id <id>    : stops as soon as matched = total sent by the feeder
+                       (matched counts each persisted result, errors included —
+                       errors is a subset of matched, not a term to add)
+  - --until-drained  : stops after --idle-timeout seconds without a new result
+  - Ctrl-C           : immediate stop (Kafka offset committed → clean resume)
 
-Usage :
+Usage:
     python -m scripts.validation.validator
     python -m scripts.validation.validator --run-id pilot5
     python -m scripts.validation.validator --until-drained --idle-timeout 120
@@ -37,7 +37,7 @@ TOPIC_IN  = os.getenv("KAFKA_TOPIC_OUT", "sandbox_layer.result")
 GROUP_ID  = os.getenv("VALIDATOR_GROUP_ID", "charon-validation-collector")
 
 DEFAULT_DB_DIR       = Path("validation")
-DEFAULT_IDLE_TIMEOUT = 120   # secondes sans résultat → considéré drainé
+DEFAULT_IDLE_TIMEOUT = 120   # seconds without a result → considered drained
 
 _ANOMALY_RE = re.compile(r"anomaly_score\s*=\s*([0-9]*\.?[0-9]+)", re.IGNORECASE)
 
@@ -58,19 +58,19 @@ async def collect(
     idle_timeout_s: int,
     poll_ms: int = 5000,
 ) -> None:
-    # results.duckdb — lock exclusif pour ce process uniquement
+    # results.duckdb — exclusive lock for this process only
     conn_r = db.connect_results(db_dir)
 
-    # Nombre de résultats attendus — lu depuis feeder_state.duckdb (read-only,
-    # le feeder est terminé à ce stade donc plus de lock exclusif).
+    # Number of expected results — read from feeder_state.duckdb (read-only;
+    # the feeder is finished by this point so no more exclusive lock).
     expected: int | None = None
     if run_id:
         expected = db.sent_count_readonly(db_dir, run_id)
         if expected == 0:
-            print(f"[validator] ATTENTION: aucun job trouvé pour run_id={run_id} dans feeder_state.duckdb")
+            print(f"[validator] WARNING: no job found for run_id={run_id} in feeder_state.duckdb")
             expected = None
         else:
-            print(f"[validator] run_id={run_id}  attendu={expected} résultats")
+            print(f"[validator] run_id={run_id}  expected={expected} results")
 
     consumer = AIOKafkaConsumer(
         TOPIC_IN,
@@ -85,7 +85,7 @@ async def collect(
     stop = asyncio.Event()
 
     def _on_signal() -> None:
-        print("\n[validator] arrêt demandé (Ctrl-C).")
+        print("\n[validator] stop requested (Ctrl-C).")
         stop.set()
 
     loop = asyncio.get_running_loop()
@@ -100,18 +100,18 @@ async def collect(
     errors  = 0
     last_match_ts = time.monotonic()
 
-    # Ensemble des job_ids attendus pour ce run — sert à rejeter les messages
-    # d'autres runs qui traîneraient dans le topic Kafka.
+    # Set of job_ids expected for this run — used to reject messages from other
+    # runs that may linger in the Kafka topic.
     expected_job_ids: set[str] = set()
     if run_id:
         expected_job_ids = db.sent_job_ids_readonly(db_dir, run_id)
 
     if expected:
-        mode = f"run_id={run_id} ({expected} attendus)"
+        mode = f"run_id={run_id} ({expected} expected)"
     elif until_drained:
         mode = f"idle-timeout={idle_timeout_s}s"
     else:
-        mode = "continu (Ctrl-C)"
+        mode = "continuous (Ctrl-C)"
 
     print(f"[validator] topic={TOPIC_IN}  group={GROUP_ID}  mode={mode}")
     print(f"[validator] DB → {db_dir / db.RESULTS_DB_NAME}")
@@ -128,14 +128,14 @@ async def collect(
                     if not job_id:
                         continue
 
-                    # Rejeter les messages n'appartenant pas à ce run
+                    # Reject messages that do not belong to this run
                     if expected_job_ids and job_id not in expected_job_ids:
                         unknown += 1
                         continue
 
-                    # Score + erreur : lire les champs STRUCTURÉS de _meta en
-                    # priorité (robuste), fallback regex sur le texte pour les
-                    # anciens messages qui exposaient "anomaly_score=X" en clair.
+                    # Score + error: read the STRUCTURED _meta fields first
+                    # (robust), with a regex fallback on the text for older
+                    # messages that exposed "anomaly_score=X" in plain text.
                     meta = payload.get("_meta") or {}
                     score = meta.get("anomaly_score")
                     if score is None:
@@ -163,42 +163,42 @@ async def collect(
             if new_this_poll:
                 last_match_ts = time.monotonic()
                 received = matched
-                suffix = f"  erreurs={errors}" if errors else ""
+                suffix = f"  errors={errors}" if errors else ""
                 if expected:
                     pct = 100 * received / expected
-                    print(f"[validator] +{new_this_poll} résultats  "
+                    print(f"[validator] +{new_this_poll} results  "
                           f"total={received}/{expected} ({pct:.0f}%){suffix}")
                 else:
-                    print(f"[validator] +{new_this_poll} résultats  "
+                    print(f"[validator] +{new_this_poll} results  "
                           f"total matched={received}  unknown={unknown}{suffix}")
 
-            # Arrêt si tous les résultats attendus sont reçus
+            # Stop once all expected results are received
             if expected and matched >= expected:
-                print(f"[validator] ✓ tous les résultats reçus ({matched}/{expected}) — arrêt.")
+                print(f"[validator] ✓ all results received ({matched}/{expected}) — stopping.")
                 break
 
-            # Arrêt par idle-timeout (fallback si run_id non fourni)
+            # Stop on idle-timeout (fallback if run_id not provided)
             if until_drained or expected:
                 idle_s = time.monotonic() - last_match_ts
                 remaining = idle_timeout_s - int(idle_s)
                 if idle_s >= idle_timeout_s:
-                    print(f"[validator] idle depuis {int(idle_s)}s ≥ {idle_timeout_s}s — drain complet.")
+                    print(f"[validator] idle for {int(idle_s)}s ≥ {idle_timeout_s}s — fully drained.")
                     break
                 elif not new_this_poll:
                     if expected:
-                        print(f"[validator] en attente… {matched}/{expected}  "
-                              f"idle={int(idle_s)}s  timeout dans {remaining}s")
+                        print(f"[validator] waiting… {matched}/{expected}  "
+                              f"idle={int(idle_s)}s  timeout in {remaining}s")
                     else:
-                        print(f"[validator] en attente… idle={int(idle_s)}s  "
-                              f"timeout dans {remaining}s  matched={matched}")
+                        print(f"[validator] waiting… idle={int(idle_s)}s  "
+                              f"timeout in {remaining}s  matched={matched}")
 
     finally:
         await consumer.stop()
         conn_r.close()
 
-    print(f"\n[validator] terminé — matched={matched}  erreurs={errors}  unknown={unknown}")
+    print(f"\n[validator] done — matched={matched}  errors={errors}  unknown={unknown}")
     if matched > 0:
-        print(f"[validator] lance le rapport : make validate-report")
+        print(f"[validator] run the report: make validate-report")
 
 
 def main() -> None:
@@ -206,13 +206,13 @@ def main() -> None:
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     p.add_argument("--db-dir", type=Path, default=DEFAULT_DB_DIR,
-                   help="Dossier DB (défaut: validation/)")
+                   help="DB folder (default: validation/)")
     p.add_argument("--run-id", default=None,
-                   help="S'arrête dès que tous les jobs du run sont reçus")
+                   help="Stops as soon as all jobs of the run are received")
     p.add_argument("--until-drained", action="store_true",
-                   help="S'arrête après --idle-timeout secondes sans nouveau résultat")
+                   help="Stops after --idle-timeout seconds without a new result")
     p.add_argument("--idle-timeout", type=int, default=DEFAULT_IDLE_TIMEOUT,
-                   help=f"Secondes d'inactivité avant d'arrêter (défaut: {DEFAULT_IDLE_TIMEOUT})")
+                   help=f"Seconds of inactivity before stopping (default: {DEFAULT_IDLE_TIMEOUT})")
     args = p.parse_args()
 
     asyncio.run(collect(

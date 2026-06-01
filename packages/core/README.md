@@ -1,40 +1,40 @@
 # Shared Python Core (`zt_shared`)
 
-Ce package autonome contient les librairies fondamentales partagées par l'ensemble des microservices Python (Workers et API Gateway) du projet Zero-Trust.
+This standalone package contains the foundational libraries shared by all the Python microservices (Workers and API Gateway) of the Zero-Trust project.
 
-## Contenu
+## Contents
 
-- `zt_shared/models/` : Modèles de données Pydantic V2 stricts basés sur les JSON Schemas Kafka.
-- `zt_shared/kafka/` : Wrappers asynchrones robustes (`KafkaSubscriber`, `KafkaPublisher`) basés sur `aiokafka`.
+- `zt_shared/models/`: strict Pydantic V2 data models based on the Kafka JSON Schemas.
+- `zt_shared/kafka/`: robust async wrappers (`KafkaSubscriber`, `KafkaPublisher`) built on `aiokafka`.
 
-## Commandes Clés (Développement)
+## Key Commands (Development)
 
-Pour développer dans ce module partagé de manière locale (sans impacter le reste de MacOS), nous utilisons un environnement virtuel Python `venv` traditionnel. Voici les commandes essentielles à exécuter depuis le dossier `packages/core/` :
+To develop in this shared module locally (without impacting the rest of the system), we use a traditional Python `venv` virtual environment. Here are the essential commands to run from the `packages/core/` directory:
 
-### 1. Initialiser le projet (Première fois)
+### 1. Initialize the project (first time)
 ```bash
-# Créer l'environnement virtuel dans le dossier "venv"
+# Create the virtual environment in the "venv" folder
 python3 -m venv venv
 
-# Activer l'environnement
+# Activate the environment
 source venv/bin/activate
 
-# Installer le package en mode développement avec ses outils (pytest, etc.)
+# Install the package in development mode with its tools (pytest, etc.)
 pip install -e ".[dev]"
 ```
 
-### 2. Lancer la Suite de Tests
-L'erreur `command not found: pytest` survient si le `venv` n'est pas activé. Le package est configuré pour exiger une couverture de code de 100%.
+### 2. Run the test suite
+The `command not found: pytest` error occurs if the `venv` is not activated. The package is configured to require 100% code coverage.
 ```bash
-# Toujours s'assurer d'activer l'environnement d'abord
+# Always make sure to activate the environment first
 source venv/bin/activate
 
-# Exécuter pytest avec le rapport de couverture dans le terminal
+# Run pytest with the coverage report in the terminal
 pytest --cov=zt_shared --cov-report=term-missing
 ```
 
-### 3. Utilisation dans d'autres Workers
-Dans le code des workers (ex: `apps/workers/ml_layer`), ce package sera importé facilement grâce à sa structure :
+### 3. Usage in other Workers
+In the workers' code (e.g. `apps/workers/ml_layer`), this package is easily imported thanks to its structure:
 ```python
 from zt_shared.models.events import FileRequestedEvent
 from zt_shared.kafka import KafkaSubscriber

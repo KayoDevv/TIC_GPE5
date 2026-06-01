@@ -1,0 +1,23 @@
+# Template — NE PAS appliquer tel quel (contient __NODE_IP__).
+# Généré + appliqué par `make netpol-apiserver` (auto-substitue NODE_IP découvert).
+#
+# Pourquoi une policy séparée : le kube-apiserver K3s est host-networked, donc
+# non matchable par un namespaceSelector (ce n'est pas un pod). Calico applique
+# correctement ipBlock, mais l'IP du nœud est spécifique à l'hôte → injectée au
+# déploiement depuis NODE_IP (zéro IP figée dans git). Les NetworkPolicy sont
+# additives : cette règle s'ajoute à `consumer-egress` (Kafka/MinIO/DNS).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: consumer-apiserver-egress
+  namespace: sandbox
+spec:
+  podSelector:
+    matchLabels: {app: sandbox-consumer}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - ipBlock: {cidr: __NODE_IP__/32}
+      ports:
+        - {protocol: TCP, port: 6443}   # apiserver direct (post-DNAT)
+        - {protocol: TCP, port: 443}    # apiserver via ClusterIP DNAT

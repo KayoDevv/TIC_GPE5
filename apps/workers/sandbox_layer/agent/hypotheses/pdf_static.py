@@ -1,20 +1,20 @@
-"""Hypothèse PDF statique — analyse de structure via pdfid (Didier Stevens).
+"""Static PDF hypothesis — structure analysis via pdfid (Didier Stevens).
 
-Stratégie v3 : règles **combinatoires** au lieu de poids par keyword.
-Un keyword isolé est souvent trop ambigu :
-  - `/OpenAction` seul  → 99% des PDFs légitimes (auto-open page 1)
-  - `/AcroForm`  seul   → tout formulaire interactif
-  - `/JS`        seul   → présent dans CV PDF, factures, etc.
-  - `/Launch`    seul   → quasi toujours malveillant (rare en légit)
+v3 strategy: **combinatorial** rules instead of per-keyword weights.
+A single keyword is often too ambiguous:
+  - `/OpenAction` alone  → 99% of legitimate PDFs (auto-open page 1)
+  - `/AcroForm`  alone   → any interactive form
+  - `/JS`        alone   → present in PDF CVs, invoices, etc.
+  - `/Launch`    alone   → almost always malicious (rare in legit)
 
-Les combinaisons sont beaucoup plus discriminantes :
-  - `/JS` + `/OpenAction` → JS auto-exécuté au load = pattern malware classique
-  - `/EmbeddedFile` + `/JS` ou `/Launch` → dropper pattern
-  - `/JBIG2Decode` + `/Colors` → pattern CVE-2009-0658 (Acrobat integer overflow)
+Combinations are far more discriminating:
+  - `/JS` + `/OpenAction` → JS auto-executed on load = classic malware pattern
+  - `/EmbeddedFile` + `/JS` or `/Launch` → dropper pattern
+  - `/JBIG2Decode` + `/Colors` → CVE-2009-0658 pattern (Acrobat integer overflow)
 
-Signature: (Path) → HypothesisResult — identique aux autres sondes statiques.
+Signature: (Path) → HypothesisResult — same as the other static probes.
 
-Poids dans l'anomaly_score PDF : 0.30 (multi-probe MAX en amont).
+Weight in the PDF anomaly_score: 0.30 (multi-probe MAX upstream).
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ from hypotheses._types import Evidence, HypothesisResult
 
 log = logging.getLogger(__name__)
 
-# Keywords trackés par pdfid — utilisés dans les règles combinatoires ci-dessous.
+# Keywords tracked by pdfid — used in the combinatorial rules below.
 _TRACKED_KEYWORDS = (
     "/JS", "/JavaScript",
     "/Launch", "/AA", "/OpenAction",
@@ -43,7 +43,7 @@ _TRACKED_KEYWORDS = (
 # ---------------------------------------------------------------------------
 
 def _run_pdfid(pdf_path: Path) -> str:
-    """Lance pdfid et retourne sa sortie. '' si absent/timeout."""
+    """Run pdfid and return its output. '' if absent/timeout."""
     try:
         result = subprocess.run(
             ["pdfid", str(pdf_path)],
@@ -59,7 +59,7 @@ def _run_pdfid(pdf_path: Path) -> str:
 
 
 def _parse_pdfid_output(output: str) -> dict[str, int]:
-    """Extrait les compteurs keyword→count depuis la sortie de pdfid."""
+    """Extract the keyword→count counters from pdfid's output."""
     counts: dict[str, int] = {}
     for keyword in _TRACKED_KEYWORDS:
         pattern = re.compile(
@@ -72,14 +72,14 @@ def _parse_pdfid_output(output: str) -> dict[str, int]:
 
 
 # ---------------------------------------------------------------------------
-# Règles combinatoires
+# Combinatorial rules
 # ---------------------------------------------------------------------------
 
 def _apply_rules(counts: dict[str, int]) -> tuple[float, list[tuple[str, float, str]]]:
-    """Applique les règles combinatoires, retourne (max_score, [rules_fired]).
+    """Apply the combinatorial rules, return (max_score, [rules_fired]).
 
-    Chaque règle = (nom, score, technique_mitre). On garde le MAX des scores
-    (pas la somme) — un seul pattern fort suffit à classer malveillant.
+    Each rule = (name, score, mitre_technique). We keep the MAX of the scores
+    (not the sum) — a single strong pattern is enough to classify as malicious.
     """
     js          = counts.get("/JS", 0) > 0 or counts.get("/JavaScript", 0) > 0
     auto_action = counts.get("/OpenAction", 0) > 0 or counts.get("/AA", 0) > 0
@@ -92,7 +92,7 @@ def _apply_rules(counts: dict[str, int]) -> tuple[float, list[tuple[str, float, 
 
     rules: list[tuple[str, float, str]] = []
 
-    # --- Solos forts (rares en légit) ---
+    # --- Strong solos (rare in legit) ---
     if launch:
         rules.append(("launch_action", 0.70, "T1204.002"))
 
@@ -101,35 +101,35 @@ def _apply_rules(counts: dict[str, int]) -> tuple[float, list[tuple[str, float, 
 
     # --- Combinaisons JS ---
     if js and auto_action:
-        rules.append(("js_auto_triggered", 0.80, "T1059.007"))   # exécution sans interaction — discriminant (0 benign)
+        rules.append(("js_auto_triggered", 0.80, "T1059.007"))   # execution without interaction — discriminating (0 benign)
     elif js:
-        # Calibré : du JS PASSIF (sans /OpenAction) existe dans des docs légitimes
-        # (navigation, formulaires) → signal modéré, pas un verdict.
+        # Calibrated: PASSIVE JS (no /OpenAction) exists in legitimate docs
+        # (navigation, forms) → moderate signal, not a verdict.
         rules.append(("js_embedded", 0.25, "T1059.007"))
 
     # --- Dropper patterns ---
-    # CALIBRÉ : /EmbeddedFile + /JS PASSIF n'est PAS un dropper (un RFC embarque sa
-    # source XML et a du JS de navigation → faux positif à 0.9, observé sur rfc9110).
-    # Le vrai dropper exige /Launch (quasi toujours malveillant) OU du JS
-    # AUTO-EXÉCUTÉ (/OpenAction|/AA) qui lance le payload sans interaction.
+    # CALIBRATED: /EmbeddedFile + PASSIVE /JS is NOT a dropper (an RFC embeds its
+    # XML source and has navigation JS → false positive at 0.9, seen on rfc9110).
+    # A real dropper requires /Launch (almost always malicious) OR AUTO-EXECUTED
+    # JS (/OpenAction|/AA) that launches the payload without interaction.
     if embedded and launch:
         rules.append(("dropper_with_payload", 0.90, "T1027"))
     elif embedded and js and auto_action:
         rules.append(("dropper_auto_exec", 0.90, "T1027"))
     elif embedded:
-        # /EmbeddedFile seul : 4/7 benigns le déclenchent → bande suspicious.
+        # /EmbeddedFile alone: 4/7 benigns trigger it → suspicious band.
         rules.append(("embedded_file_alone", 0.15, "T1027"))
 
-    # --- XFA & RichMedia (vecteurs Flash / XML forms) ---
+    # --- XFA & RichMedia (Flash / XML form vectors) ---
     if xfa:
         rules.append(("xfa_form", 0.30, "T1059.007"))
     if rich:
         rules.append(("rich_media", 0.40, "T1027"))
 
-    # NOTE: /OpenAction SEUL et /AcroForm SEUL ne déclenchent PAS de règle.
-    # Ces deux indicateurs sont trop communs dans les PDFs légitimes
-    # (auto-open page 1, formulaires interactifs). Sans corrélation avec
-    # /JS, /Launch ou /EmbeddedFile, ce sont du bruit, pas du signal.
+    # NOTE: /OpenAction ALONE and /AcroForm ALONE do NOT trigger a rule.
+    # These two indicators are too common in legitimate PDFs (auto-open page 1,
+    # interactive forms). Without correlation with /JS, /Launch or /EmbeddedFile,
+    # they are noise, not signal.
 
     max_score = max((s for _, s, _ in rules), default=0.0)
     return max_score, rules
@@ -140,7 +140,7 @@ def _apply_rules(counts: dict[str, int]) -> tuple[float, list[tuple[str, float, 
 # ---------------------------------------------------------------------------
 
 def evaluate_static(pdf_path: Path) -> HypothesisResult:
-    """Analyse statique de structure PDF via règles combinatoires.
+    """Static PDF structure analysis via combinatorial rules.
 
     Signature: (Path) → HypothesisResult.
     """
@@ -154,7 +154,7 @@ def evaluate_static(pdf_path: Path) -> HypothesisResult:
     if not rules:
         return HypothesisResult(value=False, score=0.0, evidence=[])
 
-    # Indicateurs présents (pour traçabilité dans l'evidence)
+    # Present indicators (for traceability in the evidence)
     indicators_str = ",".join(f"{k}={v}" for k, v in counts.items() if v > 0) or "—"
 
     evidence: list[Evidence] = []

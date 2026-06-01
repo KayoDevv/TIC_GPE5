@@ -1,13 +1,13 @@
-"""minio-watcher — transformateur MinIO events → FileRequestedEvent.
+"""minio-watcher — MinIO events → FileRequestedEvent transformer.
 
-Écoute le topic `minio.events` (notifications S3 natives MinIO),
-extrait la clé de l'objet déposé, génère une presigned URL et publie
-un FileRequestedEvent sur `file.requested`.
+Listens on the `minio.events` topic (native MinIO S3 notifications),
+extracts the key of the uploaded object, generates a presigned URL and
+publishes a FileRequestedEvent to `file.requested`.
 
-Aucune interaction humaine requise : dès qu'un fichier arrive dans
-le bucket MinIO, le pipeline sandbox se déclenche automatiquement.
+No human interaction required: as soon as a file lands in the MinIO
+bucket, the sandbox pipeline triggers automatically.
 
-Variables d'environnement :
+Environment variables:
     KAFKA_BOOTSTRAP          default: kafka:29092
     MINIO_TOPIC_IN           default: minio.events
     KAFKA_TOPIC_OUT          default: file.requested
@@ -57,7 +57,7 @@ def _minio_client(endpoint: str) -> Minio:
 
 
 def _sha256_object(client: Minio, bucket: str, key: str) -> str:
-    """Calcule le SHA-256 de l'objet MinIO sans l'écrire sur disque."""
+    """Compute the SHA-256 of the MinIO object without writing it to disk."""
     response = client.get_object(bucket, key)
     try:
         h = hashlib.sha256()
@@ -77,10 +77,10 @@ def _presigned_url(key: str) -> str:
 
 
 def _parse_minio_event(raw: dict) -> list[dict]:
-    """Extrait les clés d'objets depuis un event MinIO S3-style.
+    """Extract object keys from a MinIO S3-style event.
 
-    MinIO envoie soit un objet racine avec une clé 'Records',
-    soit directement la liste des records selon la version.
+    MinIO sends either a root object with a 'Records' key, or the list of
+    records directly, depending on the version.
     """
     records = raw.get("Records") or raw.get("records") or []
     objects = []
@@ -100,7 +100,7 @@ async def process(raw_value: bytes, producer: AIOKafkaProducer) -> None:
     try:
         payload = json.loads(raw_value.decode("utf-8"))
     except json.JSONDecodeError:
-        log.warning("Message non-JSON ignoré")
+        log.warning("Non-JSON message ignored")
         return
 
     objects = _parse_minio_event(payload)
@@ -114,16 +114,16 @@ async def process(raw_value: bytes, producer: AIOKafkaProducer) -> None:
         key = obj["key"]
 
         if bucket != MINIO_BUCKET:
-            log.debug("Bucket %s ignoré (attendu: %s)", bucket, MINIO_BUCKET)
+            log.debug("Bucket %s ignored (expected: %s)", bucket, MINIO_BUCKET)
             continue
 
-        log.info("Nouveau fichier détecté : %s/%s", bucket, key)
+        log.info("New file detected: %s/%s", bucket, key)
 
         try:
             sha256 = _sha256_object(client, bucket, key)
             url = _presigned_url(key)
         except Exception as exc:
-            log.error("Erreur accès MinIO pour %s : %s", key, exc)
+            log.error("MinIO access error for %s: %s", key, exc)
             continue
 
         job_id = str(uuid.uuid4())
@@ -144,7 +144,7 @@ async def process(raw_value: bytes, producer: AIOKafkaProducer) -> None:
             value=json.dumps(event).encode("utf-8"),
         )
         log.info(
-            "FileRequestedEvent publié : job_id=%s sha256=%s...",
+            "FileRequestedEvent published: job_id=%s sha256=%s...",
             job_id, sha256[:16],
         )
 
@@ -161,7 +161,7 @@ async def run() -> None:
     await consumer.start()
     await producer.start()
     log.info(
-        "minio-watcher démarré — écoute %s → publie sur %s",
+        "minio-watcher started — listening %s → publishing to %s",
         MINIO_TOPIC_IN, KAFKA_TOPIC_OUT,
     )
 
@@ -177,7 +177,7 @@ def main() -> None:
     try:
         asyncio.run(run())
     except KeyboardInterrupt:
-        log.info("Arrêt demandé")
+        log.info("Stop requested")
 
 
 if __name__ == "__main__":
