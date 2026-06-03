@@ -1,0 +1,41 @@
+# Calico CNI — Installation CR (tigera-operator).
+#
+# K3s is installed with `--flannel-backend=none --disable-network-policy`
+# (see Makefile `install-k3s`) so that Calico is the SOLE CNI: it provides BOTH
+# the pod dataplane AND NetworkPolicy enforcement, in the `calico-system`
+# namespace. Without Calico the cluster has no CNI (nodes NotReady) and, more
+# importantly for us, NetworkPolicies are NOT enforced — which silently breaks
+# the whole sandbox network hardening (deny-all-default, egress allowlists).
+#
+# Recovered from the original manual install (session 2026-05-12):
+#   Calico v3.27.3 · cni.type=Calico · BGP disabled (VXLAN) · ipPool 10.0.0.0/8.
+# Applied by `make setup-calico` AFTER the tigera-operator manifest.
+#
+# NB on the ipPool CIDR: 10.0.0.0/8 is intentionally broad and must ENCOMPASS
+# the K3s cluster pod CIDR (default 10.42.0.0/16). If you change K3s
+# --cluster-cidr, keep it inside this pool.
+apiVersion: operator.tigera.io/v1
+kind: Installation
+metadata:
+  name: default
+spec:
+  cni:
+    type: Calico
+  calicoNetwork:
+    # BGP disabled → VXLAN encapsulation (single-node, no route reflectors).
+    bgp: Disabled
+    ipPools:
+      - cidr: 10.0.0.0/8
+        encapsulation: VXLANCrossSubnet
+        natOutgoing: Enabled
+        nodeSelector: all()
+---
+# Calico API server (standard, from the official custom-resources.yaml).
+# Not strictly required for NetworkPolicy enforcement, but enables the
+# projectcalico.org/v3 API (calicoctl-style resources) and is part of the
+# canonical operator install.
+apiVersion: operator.tigera.io/v1
+kind: APIServer
+metadata:
+  name: default
+spec: {}

@@ -1,11 +1,11 @@
-# Template — NE PAS appliquer tel quel (contient __NODE_IP__).
-# Généré + appliqué par `make netpol-apiserver` (auto-substitue NODE_IP découvert).
+# Template — do NOT apply as-is (contains __NODE_IP__).
+# Generated + applied by `make netpol-apiserver` (auto-substitutes the discovered NODE_IP).
 #
-# Pourquoi une policy séparée : le kube-apiserver K3s est host-networked, donc
-# non matchable par un namespaceSelector (ce n'est pas un pod). Calico applique
-# correctement ipBlock, mais l'IP du nœud est spécifique à l'hôte → injectée au
-# déploiement depuis NODE_IP (zéro IP figée dans git). Les NetworkPolicy sont
-# additives : cette règle s'ajoute à `consumer-egress` (Kafka/MinIO/DNS).
+# Why a separate policy: the K3s kube-apiserver is host-networked, so it is not
+# matchable by a namespaceSelector (it is NOT a pod). Calico enforces ipBlock
+# correctly, but the node IP is host-specific → injected at deploy time from
+# NODE_IP (no hardcoded IP in git). NetworkPolicies are additive: this rule adds
+# to `consumer-egress` (Kafka/MinIO/DNS).
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:

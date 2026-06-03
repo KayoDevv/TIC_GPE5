@@ -1,11 +1,12 @@
 .PHONY: help \
         configuration deploy launch fix-dns-fai \
         _apt-deps install-k3s install-kubectl install-helm install-docker install-k9s \
-        setup-kubeconfig setup-keda setup-minio-operator \
+        setup-kubeconfig setup-calico setup-keda setup-minio-operator \
         bootstrap-k3s bootstrap-in-cluster deploy-kafka setup-kafka deploy-minio \
         up down install install-dev test sandbox-validate lint format \
         build-sandbox build-pdf-sandbox build-consumer build-watcher import-images \
-        deploy-dev undeploy netpol-apiserver enforce-gvisor migrate-minio-data run-watcher run-consumer
+        deploy-dev undeploy netpol-apiserver install-gvisor enforce-gvisor migrate-minio-data run-watcher run-consumer \
+        clean clean-all
 
 # IP du node K3s (première IP non-loopback). Utilisée pour exposer Bitnami Kafka
 # via NodePort au validator/feeder qui tournent sur le host.
@@ -18,9 +19,15 @@ DEV_OVERLAY := infrastructure/k8s-manifests/overlays/dev
 
 # Versions épinglées (modifier ici uniquement)
 KAFKA_CHART_VERSION   := 31.0.0       # bitnami/kafka — Kafka 3.7.1, KRaft natif
+# Calico: CNI + NetworkPolicy enforcer (tigera-operator). No inline comment here:
+# Make would include the spaces before the '#' in the value and break the
+# manifest URL (.../calico/<version>/manifests/...).
+CALICO_VERSION        := v3.27.3
 MINIO_OPERATOR_REF    := v5.0.15
 KAFKA_NODEPORT        := 32092
-KUBECTL_REPO_VERSION  := v1.30        # dépôt apt pkgs.k8s.io pour kubectl standalone
+# KUBECTL_REPO_VERSION: pkgs.k8s.io apt repo (standalone kubectl). No inline
+# comment (embedded in an apt URL — same stray-space problem).
+KUBECTL_REPO_VERSION  := v1.30
 
 help:
 	@echo "Commandes disponibles :"
@@ -47,6 +54,7 @@ help:
 	@echo "  make install             - Deps Python runtime (aiokafka, minio, kubernetes, ...)"
 	@echo "  make install-dev         - Runtime + dev/test (pytest, ruff)"
 	@echo "  make setup-kubeconfig    - Copie /etc/rancher/k3s/k3s.yaml -> ~/.kube/config"
+	@echo "  make setup-calico        - Installe Calico CNI ($(CALICO_VERSION)) — CNI + enforcement NetworkPolicy"
 	@echo ""
 	@echo "  Infra in-cluster"
 	@echo "  make setup-keda          - Installe KEDA via Helm (autoscaling consumer)"
@@ -58,7 +66,10 @@ help:
 	@echo ""
 	@echo "  Déploiement / migration / qualité"
 	@echo "  make deploy-dev          - Applique overlay dev (workers in-cluster)"
-	@echo "  make undeploy            - Supprime le déploiement dev"
+	@echo "  make install-gvisor      - Installe gVisor (runsc) + RuntimeClass (prérequis détonation)"
+	@echo "  make undeploy            - Supprime le déploiement dev (workers + netpol + VAP)"
+	@echo "  make clean CONFIRM=yes   - Teardown in-cluster (workers+Kafka+MinIO+KEDA), GARDE k3s+Calico"
+	@echo "  make clean-all CONFIRM=yes - NUKE total : désinstalle k3s + images docker -> VM nue"
 	@echo "  make migrate-minio-data  - Copie sandbox-reports docker -> MinIO in-cluster"
 	@echo "  make lint / make format  - ruff check / ruff format"
 	@echo "  make test                - pytest avec couverture"
@@ -75,11 +86,11 @@ help:
 # car il sert à lancer cette cible. Tout le reste est automatisé ici.
 # Ordre : paquets de base -> docker -> k3s -> kubectl/helm/k9s -> kubeconfig ->
 #         fix DNS (restart k3s en dernier) -> deps Python.
-configuration: _apt-deps install-docker install-k3s install-kubectl install-helm install-k9s setup-kubeconfig fix-dns-fai install
+configuration: _apt-deps install-docker install-k3s install-kubectl install-helm install-k9s setup-kubeconfig setup-calico fix-dns-fai install
 	@echo ""
 	@echo "=== Configuration terminée ==="
 	@echo "Outils installés : k3s, kubectl, helm, docker, k9s + deps Python."
-	@echo "kubeconfig en place, DNS FAI corrigé."
+	@echo "kubeconfig en place, Calico CNI déployé (enforcement NetworkPolicy), DNS FAI corrigé."
 	@echo ""
 	@echo ">>> Si docker vient d'être ajouté au groupe : DÉCONNECTE/RECONNECTE-toi"
 	@echo ">>> (ou lance 'newgrp docker') AVANT 'make deploy' / 'make launch'."
@@ -93,12 +104,16 @@ _apt-deps:
 		git curl gnupg ca-certificates net-tools
 
 # k3s single-node. Idempotent (skip si déjà installé).
+# flannel DISABLED + K3s embedded netpol disabled: Calico becomes the SOLE CNI
+# (dataplane + NetworkPolicy enforcement), see `make setup-calico`. Without these
+# flags K3s starts flannel and does NOT enforce NetworkPolicies via Calico → a
+# security hole (the whole sandbox network hardening depends on it).
 install-k3s:
 	@if command -v k3s >/dev/null 2>&1; then \
 		echo "k3s déjà installé ($$(k3s --version 2>/dev/null | head -1))."; \
 	else \
-		echo "Installation k3s single-node..."; \
-		curl -sfL https://get.k3s.io | sh -; \
+		echo "Installation k3s single-node (flannel désactivé pour Calico)..."; \
+		curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="--flannel-backend=none --disable-network-policy" sh -; \
 	fi
 
 # kubectl standalone via dépôt apt officiel (évite le wrapper /usr/local/bin
@@ -170,6 +185,38 @@ setup-kubeconfig:
 		echo 'export KUBECONFIG=$$HOME/.kube/config' >> $(HOME)/.bashrc
 	@kubectl get nodes >/dev/null 2>&1 && echo "kubectl OK." \
 		|| (echo "ATTENTION: kubectl ne joint pas le cluster."; exit 1)
+
+# Calico CNI (tigera-operator, $(CALICO_VERSION)). K3s runs with flannel disabled
+# (see install-k3s) → Calico provides BOTH the dataplane AND NetworkPolicy
+# enforcement (calico-system namespace). WITHOUT this target a fresh cluster has
+# no CNI (nodes NotReady) and enforces no NetworkPolicy. Idempotent.
+setup-calico:
+	@command -v kubectl >/dev/null 2>&1 || { echo "ERREUR: kubectl non installé (make install-kubectl)."; exit 1; }
+	@if kubectl get installation default >/dev/null 2>&1; then \
+		echo "Calico déjà installé (Installation 'default' présente)."; \
+	else \
+		echo "Installation tigera-operator $(CALICO_VERSION) (server-side apply)..."; \
+		kubectl apply --server-side --force-conflicts -f https://raw.githubusercontent.com/projectcalico/calico/$(strip $(CALICO_VERSION))/manifests/tigera-operator.yaml; \
+		echo "Attente du tigera-operator (Available)..."; \
+		kubectl rollout status deployment/tigera-operator -n tigera-operator --timeout=180s; \
+		echo "Attente que la CRD Installation soit Established..."; \
+		kubectl wait --for=condition=Established crd/installations.operator.tigera.io --timeout=120s; \
+		kubectl apply -f infrastructure/k8s-manifests/system/calico/installation.yaml; \
+	fi
+	@# The operator creates calico-system + the pods ASYNCHRONOUSLY after the
+	@# Installation CR. So we do NOT wait on the pods directly (they don't exist
+	@# yet -> "no matching resources"). We rely on TigeraStatus/calico, the
+	@# readiness signal published by the operator — but it is also created async,
+	@# so we poll for its existence before waiting on its Available condition.
+	@echo "Attente que l'opérateur crée TigeraStatus/calico (asynchrone)..."
+	@for i in $$(seq 1 60); do \
+		kubectl get tigerastatus calico >/dev/null 2>&1 && break; \
+		echo "  pas encore créé, retry ($$i/60)..."; \
+		sleep 5; \
+	done
+	@echo "Attente que Calico soit Available (rollout dataplane, 1-2 min)..."
+	kubectl wait --for=condition=Available tigerastatus/calico --timeout=300s
+	@echo "Calico opérationnel : CNI + enforcement NetworkPolicy (calico-system)."
 
 # Fix DNS FAI (box SFR/Numericable) — NXDOMAIN hijacking sur *.cluster.local.
 # Le resolv.conf des pods ne se réinitialise pas au restart du cluster : on
@@ -359,12 +406,52 @@ import-images: build-consumer build-sandbox build-pdf-sandbox build-watcher
 deploy-dev: setup-kubeconfig setup-keda
 	kubectl apply -k $(DEV_OVERLAY)/
 	$(MAKE) netpol-apiserver
+	$(MAKE) install-gvisor
 	$(MAKE) enforce-gvisor
 	@echo "Stack sandbox déployée (overlay dev, in-cluster)."
 
+# gVisor (runsc) — runtime d'isolation kernel OBLIGATOIRE pour les Jobs de
+# détonation (cf. enforce-gvisor). Sans lui, tout pod charon.io/role=analysis est
+# rejeté ("RuntimeClass gvisor not found") et les Jobs échouent en boucle.
+# install-gvisor pose le binaire runsc + le shim containerd, déclare le runtime
+# dans le containerd de K3s, redémarre k3s si la config a changé, puis crée la
+# RuntimeClass gvisor. DOIT précéder enforce-gvisor (fail-closed). Idempotent.
+GVISOR_ARCH         := $(shell uname -m)
+GVISOR_URL          := https://storage.googleapis.com/gvisor/releases/release/latest/$(GVISOR_ARCH)
+K3S_CONTAINERD_TMPL := /var/lib/rancher/k3s/agent/etc/containerd/config.toml.tmpl
+
+install-gvisor:
+	@if command -v runsc >/dev/null 2>&1; then \
+		echo "runsc déjà installé ($$(runsc --version 2>/dev/null | head -1))."; \
+	else \
+		echo "Installation gVisor (runsc + shim containerd) pour $(GVISOR_ARCH)..."; \
+		cd /tmp && \
+		curl -fsSL -O $(GVISOR_URL)/runsc -O $(GVISOR_URL)/runsc.sha512 \
+		           -O $(GVISOR_URL)/containerd-shim-runsc-v1 -O $(GVISOR_URL)/containerd-shim-runsc-v1.sha512 && \
+		sha512sum -c runsc.sha512 && sha512sum -c containerd-shim-runsc-v1.sha512 && \
+		chmod a+rx runsc containerd-shim-runsc-v1 && \
+		sudo mv runsc containerd-shim-runsc-v1 /usr/local/bin/; \
+	fi
+	@if ! sudo grep -q 'runtimes.runsc' $(K3S_CONTAINERD_TMPL) 2>/dev/null; then \
+		echo "Déclaration du runtime runsc dans containerd K3s ($(K3S_CONTAINERD_TMPL))..."; \
+		[ -f $(K3S_CONTAINERD_TMPL) ] || printf '{{ template "base" . }}\n' | sudo tee $(K3S_CONTAINERD_TMPL) >/dev/null; \
+		printf '\n[plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runsc]\n  runtime_type = "io.containerd.runsc.v1"\n' \
+			| sudo tee -a $(K3S_CONTAINERD_TMPL) >/dev/null; \
+		echo "Redémarrage k3s (régénération config containerd)..."; \
+		sudo systemctl restart k3s; \
+		echo "Attente API K3s..."; \
+		for i in $$(seq 1 30); do kubectl get nodes >/dev/null 2>&1 && break; sleep 2; done; \
+	else \
+		echo "Runtime runsc déjà déclaré dans containerd K3s."; \
+	fi
+	@printf 'apiVersion: node.k8s.io/v1\nkind: RuntimeClass\nmetadata:\n  name: gvisor\nhandler: runsc\n' \
+		| kubectl apply -f -
+	@echo "gVisor opérationnel : RuntimeClass 'gvisor' (handler runsc)."
+
 # ValidatingAdmissionPolicy native (K8s >= 1.30) rendant gVisor OBLIGATOIRE pour
 # les Jobs de détonation (refuse tout pod charon.io/role=analysis sans
-# runtimeClassName=gvisor). Aucun composant à installer (vs Kyverno). Idempotent.
+# runtimeClassName=gvisor). Suppose gVisor installé (cf. install-gvisor, appelé
+# avant dans deploy-dev). Idempotent.
 enforce-gvisor:
 	kubectl apply -f infrastructure/k8s-manifests/applications/sandbox/require-gvisor-vap.yaml
 
@@ -383,6 +470,51 @@ undeploy:
 	kubectl delete -k $(DEV_OVERLAY)/ --ignore-not-found
 	kubectl delete networkpolicy consumer-apiserver-egress -n sandbox --ignore-not-found
 	kubectl delete -f infrastructure/k8s-manifests/applications/sandbox/require-gvisor-vap.yaml --ignore-not-found
+
+# ---------------------------------------------------------------------------
+# Cleanup / teardown — DESTRUCTIVE (CONFIRM=yes guard required)
+# ---------------------------------------------------------------------------
+
+# clean: tear down everything in-cluster (sandbox workers + Kafka + MinIO + KEDA).
+# KEEPS k3s AND Calico (the CNI) → direct re-deploy via make deploy && launch.
+# DESTRUCTIVE: deletes the PVs (MinIO sandbox-reports + Kafka data). Idempotent.
+clean:
+	@if [ "$(CONFIRM)" != "yes" ]; then \
+		echo "DESTRUCTIF — supprime : workers sandbox + Kafka + MinIO (DONNÉES incluses) + KEDA."; \
+		echo "k3s + Calico CONSERVÉS → re-déploiement : make deploy && make launch."; \
+		echo ">>> Confirme avec : make clean CONFIRM=yes"; \
+		exit 1; \
+	fi
+	-$(MAKE) undeploy
+	-helm uninstall keda -n keda 2>/dev/null || true
+	-kubectl delete namespace kafka minio keda --ignore-not-found
+	@echo "Teardown in-cluster terminé (k3s + Calico conservés)."
+
+# clean-all: full NUKE. Uninstalls k3s ENTIRELY (cluster, Calico, ALL data),
+# removes the redis container and ONLY the project's docker images (no global
+# prune — we don't touch other projects' images). Back to a bare VM → rebuild
+# with make configuration && make deploy && make launch.
+clean-all:
+	@if [ "$(CONFIRM)" != "yes" ]; then \
+		echo "TRÈS DESTRUCTIF — désinstalle k3s ENTIÈREMENT (cluster + Calico + TOUTES les données),"; \
+		echo "supprime le conteneur redis et les 4 images docker du projet. Retour VM nue."; \
+		echo "Reconstruction : make configuration && make deploy && make launch."; \
+		echo ">>> Confirme avec : make clean-all CONFIRM=yes"; \
+		exit 1; \
+	fi
+	-docker compose down 2>/dev/null || true
+	-docker rm -f redis 2>/dev/null || true
+	-docker rmi ghcr.io/kayodevv/charon-sandbox-consumer:latest \
+		ghcr.io/kayodevv/ubuntu-sandbox:v1 \
+		ghcr.io/kayodevv/ubuntu-pdf-sandbox:v1 \
+		ghcr.io/kayodevv/charon-minio-watcher:latest 2>/dev/null || true
+	@if [ -x /usr/local/bin/k3s-uninstall.sh ]; then \
+		echo "Désinstallation k3s (cluster + données)..."; \
+		sudo /usr/local/bin/k3s-uninstall.sh; \
+	else \
+		echo "k3s-uninstall.sh introuvable — k3s déjà désinstallé ?"; \
+	fi
+	@echo "VM nettoyée. Reconstruire : make configuration && make deploy && make launch."
 
 # ---------------------------------------------------------------------------
 # Tests / dev hors K8s — port-forward vers Kafka/MinIO in-cluster
