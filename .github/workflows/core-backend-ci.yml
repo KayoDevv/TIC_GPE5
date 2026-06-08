@@ -1,0 +1,46 @@
+name: Core Backend CI
+
+on:
+  push:
+    branches: [main, core_backend]
+    paths:
+      - "apps/core-backend/**"
+      - "packages/core/**"
+  pull_request:
+    branches: [main]
+    paths:
+      - "apps/core-backend/**"
+      - "packages/core/**"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/core-backend
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install Poetry
+        run: |
+          curl -sSL https://install.python-poetry.org | python3 -
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+      - name: Install dependencies
+        run: poetry install
+
+      - name: Lint with Ruff
+        run: poetry run ruff check .
+
+      - name: Type check with MyPy
+        run: poetry run mypy src/
+
+      - name: Run tests with coverage
+        run: poetry run pytest -v --cov=backend --cov-report=term-missing
