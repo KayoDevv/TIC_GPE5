@@ -1,0 +1,17 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "resolveJsonModule": true,
+    "allowSyntheticDefaultImports": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "isolatedModules": true,
+    "baseUrl": ".",
+    "types": ["chrome", "node"],
+    "lib": ["ES2022", "DOM", "DOM.Iterable"]
+  },
+  "include": ["entrypoints/**/*.ts", "entrypoints/**/*.vue", "src/**/*.ts", "src/**/*.vue", "tests/**/*.ts", "wxt.config.ts", "vitest.config.ts", ".wxt/types/**/*.d.ts", "src/env.d.ts"]
+}

@@ -26,6 +26,7 @@ build/
 .claude/
 *CLAUDE.md
 
+apps/workers/ml_layer/data/
 # Outils productivité locaux (non partagés)
 memory/
 TASKS.md

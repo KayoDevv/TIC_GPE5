@@ -1,0 +1,581 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Charon AI — File Analysis</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body {
+  background:#eef0f4;
+  font-family:'Inter', sans-serif;
+  display:flex; align-items:center; justify-content:center;
+  min-height:100vh;
+}
+.stage {
+  display:flex; gap:32px; align-items:flex-start; justify-content:center;
+  flex-wrap:wrap; padding:40px 32px;
+}
+.card-label {
+  font-size:10px; font-weight:500; color:#94a3b8;
+  letter-spacing:0.12em; text-transform:uppercase;
+  text-align:center; margin-bottom:10px;
+  font-family:'JetBrains Mono', monospace;
+}
+
+/* ── Extension shell ── */
+.ext-shell {
+  width:380px;
+  background:#fff;
+  border-radius:12px;
+  box-shadow:
+    0 0 0 1px rgba(0,0,0,0.07),
+    0 4px 6px rgba(0,0,0,0.04),
+    0 12px 32px rgba(0,0,0,0.08);
+  overflow:hidden;
+}
+
+/* ── Header ── */
+.ext-header {
+  background:#1a2742;
+  padding:0 16px;
+  height:44px;
+  display:flex; align-items:center; justify-content:space-between;
+}
+.ext-header-left {
+  display:flex; align-items:center; gap:10px;
+}
+.ext-header-title {
+  font-size:14px; font-weight:600; color:#fff;
+  letter-spacing:0.01em;
+}
+
+/* ── Tabs ── */
+.ext-tabs {
+  display:flex;
+  border-bottom:1px solid #e8ecf1;
+  background:#f8f9fc;
+  padding:0 16px;
+}
+.ext-tab {
+  padding:10px 14px;
+  font-size:12px; font-weight:500;
+  color:#94a3b8;
+  border-bottom:2px solid transparent;
+  cursor:pointer;
+  transition:all 0.18s;
+  letter-spacing:0.01em;
+  margin-bottom:-1px;
+}
+.ext-tab:hover { color:#475569; }
+.ext-tab.active {
+  color:#1a2742;
+  border-bottom:2px solid #1a2742;
+}
+
+/* ── Body ── */
+.ext-body {
+  padding:20px 18px 22px;
+  min-height:240px;
+}
+
+/* ── Drop zone ── */
+.drop-zone {
+  border:1.5px dashed #b8c8dc;
+  border-radius:10px;
+  padding:36px 20px;
+  text-align:center;
+  cursor:pointer;
+  transition:all 0.22s;
+  background:#fff;
+  position:relative;
+}
+.drop-zone:hover, .drop-zone.hover {
+  border-color:#3b6fd4;
+  background:#f0f4ff;
+}
+.drop-zone.dragging {
+  border-color:#3b6fd4;
+  background:#edf2ff;
+  transform:scale(1.01);
+  box-shadow:0 0 0 4px rgba(59,111,212,0.08);
+}
+
+.icon-circle {
+  width:52px; height:52px; border-radius:50%;
+  background:#f0f2f8;
+  display:flex; align-items:center; justify-content:center;
+  margin:0 auto 16px;
+  transition:background 0.22s;
+}
+.drop-zone.dragging .icon-circle,
+.drop-zone.hover .icon-circle {
+  background:#dde8ff;
+}
+
+.drop-title {
+  font-size:15px; font-weight:700; color:#1e293b;
+  margin-bottom:6px; letter-spacing:-0.01em;
+}
+.drop-sub {
+  font-size:13px; color:#94a3b8; font-weight:400;
+}
+.drop-types {
+  margin-top:14px;
+  display:flex; gap:6px; justify-content:center; flex-wrap:wrap;
+}
+.drop-type-chip {
+  padding:3px 9px; border-radius:20px;
+  background:#f1f5f9; border:1px solid #e2e8f0;
+  font-size:10px; font-weight:500; color:#64748b;
+  font-family:'JetBrains Mono', monospace; letter-spacing:0.04em;
+}
+
+/* ── File info bar (after drop) ── */
+.file-bar {
+  display:flex; align-items:center; gap:12px;
+  padding:12px 14px;
+  background:#f8f9fc;
+  border:1px solid #e8ecf1;
+  border-radius:10px;
+  margin-bottom:16px;
+}
+.file-icon {
+  width:36px; height:36px; border-radius:8px;
+  display:flex; align-items:center; justify-content:center;
+  flex-shrink:0;
+  font-size:16px;
+}
+.file-meta { flex:1; overflow:hidden; }
+.file-name {
+  font-size:13px; font-weight:600; color:#1e293b;
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+}
+.file-size {
+  font-size:11px; color:#94a3b8; margin-top:2px;
+  font-family:'JetBrains Mono', monospace;
+}
+.file-remove {
+  width:24px; height:24px; border-radius:6px;
+  border:none; background:none; cursor:pointer;
+  color:#94a3b8; font-size:16px; display:flex; align-items:center; justify-content:center;
+  transition:all 0.15s;
+}
+.file-remove:hover { background:#fee2e2; color:#ef4444; }
+
+/* ── Progress ── */
+.progress-track {
+  height:3px; background:#e8ecf1; border-radius:3px; overflow:hidden;
+  margin-bottom:10px;
+}
+.progress-fill {
+  height:100%; border-radius:3px;
+  background:linear-gradient(90deg, #3b6fd4, #5b8fee);
+  transition:width 0.1s linear;
+  box-shadow:0 0 6px rgba(59,111,212,0.4);
+}
+.engine-row {
+  display:flex; justify-content:space-between; align-items:center;
+  padding:5px 0;
+  border-bottom:1px solid #f1f5f9;
+  font-size:12px;
+}
+.engine-name { color:#475569; }
+.engine-status { font-family:'JetBrains Mono'; font-size:10px; }
+.engine-status.done { color:#3b6fd4; }
+.engine-status.wait { color:#cbd5e1; }
+
+/* ── Result verdict ── */
+.verdict-card {
+  border-radius:10px; padding:20px;
+  text-align:center; margin-bottom:14px;
+  border:1px solid;
+}
+.verdict-card.safe   { background:#f0fdf4; border-color:#bbf7d0; }
+.verdict-card.warn   { background:#fff7ed; border-color:#fed7aa; }
+.verdict-card.danger { background:#fff1f2; border-color:#fecdd3; }
+
+.verdict-dot {
+  width:48px; height:48px; border-radius:50%;
+  margin:0 auto 12px;
+  display:flex; align-items:center; justify-content:center;
+}
+.verdict-card.safe   .verdict-dot { background:#22c55e; box-shadow:0 0 20px rgba(34,197,94,0.30); }
+.verdict-card.warn   .verdict-dot { background:#f97316; box-shadow:0 0 20px rgba(249,115,22,0.30); }
+.verdict-card.danger .verdict-dot { background:#f43f5e; box-shadow:0 0 20px rgba(244,63,94,0.30); }
+
+.verdict-label {
+  font-size:18px; font-weight:700; letter-spacing:-0.01em; margin-bottom:4px;
+}
+.verdict-card.safe   .verdict-label { color:#16a34a; }
+.verdict-card.warn   .verdict-label { color:#ea580c; }
+.verdict-card.danger .verdict-label { color:#e11d48; }
+
+.verdict-detail { font-size:12px; color:#64748b; }
+
+.stats-row { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:14px; }
+.stat-box {
+  padding:10px 12px; border-radius:9px;
+  background:#f8f9fc; border:1px solid #e8ecf1;
+}
+.stat-label { font-size:10px; color:#94a3b8; font-family:'JetBrains Mono'; letter-spacing:0.06em; text-transform:uppercase; margin-bottom:4px; }
+.stat-value { font-size:15px; font-weight:600; color:#1e293b; }
+
+.btn-row { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+.btn-sec {
+  padding:10px; border-radius:9px; border:1px solid #e2e8f0;
+  background:#f8f9fc; color:#475569;
+  font-family:'Inter'; font-size:12px; font-weight:500;
+  cursor:pointer; transition:all 0.15s;
+}
+.btn-sec:hover { background:#f1f5f9; border-color:#cbd5e1; }
+.btn-pri {
+  padding:10px; border-radius:9px; border:none;
+  background:#1a2742; color:#fff;
+  font-family:'Inter'; font-size:12px; font-weight:600;
+  cursor:pointer; transition:all 0.15s;
+  letter-spacing:0.01em;
+}
+.btn-pri:hover { background:#243454; }
+
+/* ── Scan button ── */
+.scan-btn {
+  width:100%; padding:12px; border-radius:9px; border:none;
+  background:#1a2742; color:#fff;
+  font-family:'Inter'; font-size:13px; font-weight:600;
+  cursor:pointer; transition:all 0.18s;
+  letter-spacing:0.02em;
+  margin-top:4px;
+}
+.scan-btn:hover { background:#243454; }
+.scan-btn:disabled { background:#94a3b8; cursor:default; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useRef, useEffect } = React;
+
+function formatBytes(b) {
+  if (b < 1024) return b + ' B';
+  if (b < 1024*1024) return (b/1024).toFixed(1) + ' KB';
+  return (b/1024/1024).toFixed(2) + ' MB';
+}
+
+function getFileIcon(name) {
+  const ext = (name.split('.').pop() || '').toLowerCase();
+  const map = {
+    exe:['#ef4444','⚙'], dll:['#f97316','🔧'], pdf:['#dc2626','📄'],
+    zip:['#8b5cf6','📦'], js:['#eab308','JS'], py:['#3b82f6','🐍'],
+    doc:['#2563eb','📝'], docx:['#2563eb','📝'], sh:['#10b981','$_'],
+    bat:['#64748b','⚙'], apk:['#22c55e','📱'],
+  };
+  const [bg, icon] = map[ext] || ['#64748b','📁'];
+  return { bg, icon };
+}
+
+const ENGINES = ['VirusTotal','MalwareBazaar','Any.run','Hybrid Analysis'];
+const VERDICTS = {
+  safe:   { label:'Clean',      detail:'Aucune menace détectée.', engines:'0 / 72', score:0 },
+  warn:   { label:'Suspect',    detail:'Signaux faibles détectés.', engines:'4 / 72', score:32 },
+  danger: { label:'Malveillant',detail:'Signatures malveillantes confirmées.', engines:'58 / 72', score:94 },
+};
+
+/* ── Grid dots icon ── */
+function GridIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+      {[0,5,10].map(ry => [0,5,10].map(rx => (
+        <circle key={`${rx}${ry}`} cx={3+rx} cy={3+ry} r="1.2" fill="rgba(255,255,255,0.55)"/>
+      )))}
+    </svg>
+  );
+}
+
+/* ── Shield icon ── */
+function ShieldIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+      <path d="M9 2L15 4.5V9C15 12.5 12.5 15.5 9 16.5C5.5 15.5 3 12.5 3 9V4.5L9 2Z" stroke="rgba(255,255,255,0.85)" strokeWidth="1.4" fill="rgba(255,255,255,0.10)"/>
+      <path d="M6.5 9L8 10.5L11.5 7" stroke="rgba(255,255,255,0.85)" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/>
+    </svg>
+  );
+}
+
+/* ── Expand icon ── */
+function ExpandIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+      <path d="M10 2H14V6M6 14H2V10M14 2L9 7M2 14L7 9" stroke="rgba(255,255,255,0.6)" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/>
+    </svg>
+  );
+}
+
+/* ── Upload arrow icon ── */
+function UploadIcon({ active }) {
+  return (
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+      <path d="M12 15V4M12 4L8 8M12 4L16 8" stroke={active ? '#3b6fd4' : '#475569'} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
+      <path d="M4 17V19C4 20.1 4.9 21 6 21H18C19.1 21 20 20.1 20 19V17" stroke={active ? '#3b6fd4' : '#94a3b8'} strokeWidth="1.8" strokeLinecap="round"/>
+    </svg>
+  );
+}
+
+/* ── Single extension popup ── */
+function CharonDrop({ defaultPhase='idle', label }) {
+  const [phase, setPhase]       = useState(defaultPhase); // idle | dropped | scanning | result
+  const [dragging, setDragging] = useState(false);
+  const [hovered, setHovered]   = useState(false);
+  const [file, setFile]         = useState(null);
+  const [progress, setProgress] = useState(0);
+  const [verdict, setVerdict]   = useState(null);
+  const [activeTab, setActiveTab] = useState('file');
+  const inputRef = useRef(null);
+  const timer    = useRef(null);
+
+  function handleDrop(e) {
+    e.preventDefault(); setDragging(false);
+    const f = e.dataTransfer.files[0];
+    if (f) { setFile(f); setPhase('dropped'); }
+  }
+  function handleInput(e) {
+    const f = e.target.files[0];
+    if (f) { setFile(f); setPhase('dropped'); }
+  }
+  function removeFile() { setFile(null); setPhase('idle'); }
+
+  function startScan() {
+    setPhase('scanning'); setProgress(0);
+    let p = 0;
+    timer.current = setInterval(() => {
+      p += Math.random() * 3.5 + 1;
+      setProgress(Math.min(p, 98));
+      if (p >= 98) {
+        clearInterval(timer.current);
+        setTimeout(() => {
+          const keys = ['safe','warn','danger'];
+          setVerdict(keys[Math.floor(Math.random()*3)]);
+          setPhase('result'); setProgress(100);
+        }, 400);
+      }
+    }, 85);
+  }
+
+  function reset() {
+    clearInterval(timer.current);
+    setFile(null); setVerdict(null); setPhase('idle'); setProgress(0);
+  }
+
+  const fi = file ? getFileIcon(file.name) : null;
+  const vd = verdict ? VERDICTS[verdict] : null;
+
+  return (
+    <div>
+      <div className="card-label">{label}</div>
+      <div className="ext-shell">
+
+        {/* ── Header ── */}
+        <div className="ext-header">
+          <div className="ext-header-left">
+            <GridIcon/>
+            <ShieldIcon/>
+            <span className="ext-header-title">Charon AI</span>
+          </div>
+          <ExpandIcon/>
+        </div>
+
+        {/* ── Tabs ── */}
+        <div className="ext-tabs">
+          {[['file','Fichier'],['hash','Hash'],['url','URL']].map(([key,lbl])=>(
+            <div key={key} className={`ext-tab${activeTab===key?' active':''}`} onClick={()=>setActiveTab(key)}>{lbl}</div>
+          ))}
+        </div>
+
+        {/* ── Body ── */}
+        <div className="ext-body">
+
+          {/* ── IDLE / DROP ZONE ── */}
+          {(phase==='idle' || phase==='dropped') && activeTab==='file' && (
+            <>
+              {/* drop zone */}
+              <div
+                className={`drop-zone${dragging?' dragging':hovered?' hover':''}`}
+                onClick={()=>inputRef.current?.click()}
+                onDragOver={e=>{e.preventDefault();setDragging(true);}}
+                onDragLeave={()=>setDragging(false)}
+                onDrop={handleDrop}
+                onMouseEnter={()=>setHovered(true)}
+                onMouseLeave={()=>setHovered(false)}
+              >
+                <input ref={inputRef} type="file" style={{display:'none'}} onChange={handleInput}
+                  accept=".exe,.dll,.pdf,.zip,.js,.py,.bat,.sh,.apk,.doc,.docx,.msi,.jar"/>
+                <div className="icon-circle">
+                  <UploadIcon active={dragging||hovered}/>
+                </div>
+                <div className="drop-title">
+                  {dragging ? 'Relâchez pour analyser' : 'Glissez un fichier ici'}
+                </div>
+                <div className="drop-sub">ou cliquez pour sélectionner</div>
+                <div className="drop-types">
+                  {['EXE','DLL','PDF','ZIP','APK','JS','PY'].map(t=>(
+                    <span key={t} className="drop-type-chip">{t}</span>
+                  ))}
+                </div>
+              </div>
+
+              {/* file bar (after drop) */}
+              {phase==='dropped' && file && (
+                <div style={{marginTop:14}}>
+                  <div className="file-bar">
+                    <div className="file-icon" style={{background:fi.bg+'18'}}>
+                      <span style={{fontSize:18}}>{fi.icon}</span>
+                    </div>
+                    <div className="file-meta">
+                      <div className="file-name">{file.name}</div>
+                      <div className="file-size">{formatBytes(file.size)}</div>
+                    </div>
+                    <button className="file-remove" onClick={removeFile}>×</button>
+                  </div>
+                  <button className="scan-btn" onClick={startScan}>
+                    Lancer l'analyse →
+                  </button>
+                </div>
+              )}
+            </>
+          )}
+
+          {/* ── SCANNING ── */}
+          {phase==='scanning' && (
+            <div style={{animation:'fadeIn 0.3s ease'}}>
+              {file && (
+                <div className="file-bar" style={{marginBottom:14}}>
+                  <div className="file-icon" style={{background:fi.bg+'18'}}>
+                    <span style={{fontSize:18}}>{fi.icon}</span>
+                  </div>
+                  <div className="file-meta">
+                    <div className="file-name">{file.name}</div>
+                    <div className="file-size">{formatBytes(file.size)}</div>
+                  </div>
+                  <div style={{fontSize:11,color:'#3b6fd4',fontWeight:500,flexShrink:0,fontFamily:'JetBrains Mono'}}>···</div>
+                </div>
+              )}
+
+              <div className="progress-track">
+                <div className="progress-fill" style={{width:`${progress}%`}}/>
+              </div>
+              <div style={{display:'flex',justifyContent:'space-between',marginBottom:14}}>
+                <span style={{fontSize:11,color:'#94a3b8',fontFamily:'JetBrains Mono'}}>Analyse en cours…</span>
+                <span style={{fontSize:11,color:'#3b6fd4',fontWeight:600,fontFamily:'JetBrains Mono'}}>{Math.round(progress)}%</span>
+              </div>
+
+              <div>
+                {ENGINES.map((eng, i) => {
+                  const thresholds = [28,52,70,86];
+                  const done = progress > thresholds[i];
+                  return (
+                    <div key={eng} className="engine-row">
+                      <span className="engine-name">{eng}</span>
+                      <span className={`engine-status ${done?'done':'wait'}`}>{done?'✓ terminé':'···'}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* ── RESULT ── */}
+          {phase==='result' && vd && (
+            <div style={{animation:'fadeIn 0.4s ease'}}>
+              <div className={`verdict-card ${verdict}`}>
+                <div className="verdict-dot">
+                  {verdict==='safe'   && <svg width="22" height="22" fill="none" viewBox="0 0 22 22"><path d="M5 11l4 4 8-8" stroke="#fff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/></svg>}
+                  {verdict==='warn'   && <svg width="22" height="22" fill="none" viewBox="0 0 22 22"><path d="M11 7v5M11 15h.01" stroke="#fff" strokeWidth="2.5" strokeLinecap="round"/></svg>}
+                  {verdict==='danger' && <svg width="22" height="22" fill="none" viewBox="0 0 22 22"><path d="M7 7l8 8M15 7l-8 8" stroke="#fff" strokeWidth="2.5" strokeLinecap="round"/></svg>}
+                </div>
+                <div className="verdict-label">{vd.label}</div>
+                <div className="verdict-detail">{vd.detail}</div>
+              </div>
+
+              {file && (
+                <div className="file-bar" style={{marginBottom:12}}>
+                  <div className="file-icon" style={{background:fi.bg+'18'}}>
+                    <span style={{fontSize:18}}>{fi.icon}</span>
+                  </div>
+                  <div className="file-meta">
+                    <div className="file-name">{file.name}</div>
+                    <div className="file-size">{formatBytes(file.size)}</div>
+                  </div>
+                </div>
+              )}
+
+              <div className="stats-row">
+                <div className="stat-box">
+                  <div className="stat-label">Moteurs</div>
+                  <div className="stat-value">{vd.engines}</div>
+                </div>
+                <div className="stat-box">
+                  <div className="stat-label">Risque</div>
+                  <div className="stat-value">{vd.score} / 100</div>
+                </div>
+              </div>
+
+              <div className="btn-row">
+                <button className="btn-sec" onClick={reset}>Nouveau fichier</button>
+                <button className="btn-pri">Rapport complet</button>
+              </div>
+            </div>
+          )}
+
+          {/* ── OTHER TABS placeholder ── */}
+          {activeTab!=='file' && (
+            <div style={{display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',height:180,color:'#94a3b8',gap:8}}>
+              <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
+                <rect x="4" y="4" width="24" height="24" rx="6" stroke="#cbd5e1" strokeWidth="1.5" strokeDasharray="3 2"/>
+                <path d="M16 12v8M12 16h8" stroke="#cbd5e1" strokeWidth="1.5" strokeLinecap="round"/>
+              </svg>
+              <span style={{fontSize:13,fontWeight:500}}>Bientôt disponible</span>
+            </div>
+          )}
+        </div>
+
+        {/* ── Footer ── */}
+        <div style={{padding:'8px 18px',borderTop:'1px solid #f1f5f9',display:'flex',justifyContent:'space-between',alignItems:'center',background:'#f8f9fc'}}>
+          <span style={{fontSize:10,color:'#94a3b8',fontFamily:'JetBrains Mono',letterSpacing:'0.06em'}}>CHARON v1.0.0</span>
+          <div style={{display:'flex',gap:14}}>
+            {['Paramètres','Logs','Aide'].map(n=>(
+              <span key={n} style={{fontSize:10,color:'#94a3b8',cursor:'pointer',letterSpacing:'0.01em'}}>{n}</span>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ── App ── */
+function App() {
+  return (
+    <>
+      <style>{`
+        @keyframes fadeIn { from{opacity:0;transform:translateY(5px)} to{opacity:1;transform:translateY(0)} }
+      `}</style>
+      <div className="stage">
+        <CharonDrop label="Idle — zone de dépôt" defaultPhase="idle"/>
+        <CharonDrop label="Fichier sélectionné" defaultPhase="dropped"/>
+      </div>
+    </>
+  );
+}
+
+/* pre-populate the second card with a fake file */
+const _origUseState = React.useState;
+let _cardIndex = 0;
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+</body>
+</html>

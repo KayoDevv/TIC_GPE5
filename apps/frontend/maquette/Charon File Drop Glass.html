@@ -1,0 +1,685 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Charon — Liquid Glass Drop</title>
+<link href="https://fonts.googleapis.com/css2?family=SF+Pro+Display:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+
+body {
+  font-family:'Inter', system-ui, sans-serif;
+  min-height:100vh;
+  display:flex; align-items:center; justify-content:center;
+  overflow:hidden;
+  background:#000;
+}
+
+/* ── Animated background — Apple-style ── */
+.bg {
+  position:fixed; inset:0; z-index:0;
+  background:
+    radial-gradient(ellipse 900px 700px at 15% 20%, rgba(120,80,255,0.55) 0%, transparent 65%),
+    radial-gradient(ellipse 800px 600px at 85% 80%, rgba(20,160,255,0.45) 0%, transparent 65%),
+    radial-gradient(ellipse 600px 600px at 75% 15%, rgba(255,60,120,0.30) 0%, transparent 60%),
+    radial-gradient(ellipse 700px 500px at 25% 85%, rgba(0,200,160,0.28) 0%, transparent 60%),
+    #0a0a14;
+  animation: bgShift 12s ease-in-out infinite alternate;
+}
+@keyframes bgShift {
+  0%   { filter: hue-rotate(0deg) brightness(1); }
+  100% { filter: hue-rotate(15deg) brightness(1.06); }
+}
+
+/* noise texture overlay */
+.bg::after {
+  content:''; position:absolute; inset:0;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");
+  opacity:0.35; pointer-events:none;
+}
+
+/* ── Scene ── */
+.scene {
+  position:relative; z-index:1;
+  display:flex; gap:36px; align-items:flex-start; justify-content:center;
+  flex-wrap:wrap; padding:60px 40px;
+}
+
+.card-label {
+  font-size:10px; font-weight:500;
+  color:rgba(255,255,255,0.35);
+  letter-spacing:0.14em; text-transform:uppercase;
+  text-align:center; margin-bottom:12px;
+  font-family:'JetBrains Mono', monospace;
+}
+
+/* ═══════════════════════════════════
+   LIQUID GLASS SHELL
+═══════════════════════════════════ */
+.glass-shell {
+  width:380px;
+  border-radius:22px;
+  background: linear-gradient(
+    145deg,
+    rgba(255,255,255,0.14) 0%,
+    rgba(255,255,255,0.07) 40%,
+    rgba(255,255,255,0.05) 100%
+  );
+  backdrop-filter: blur(48px) saturate(180%) brightness(1.05);
+  -webkit-backdrop-filter: blur(48px) saturate(180%) brightness(1.05);
+  border: 1px solid rgba(255,255,255,0.18);
+  border-top: 1px solid rgba(255,255,255,0.32);
+  box-shadow:
+    0 1px 0 rgba(255,255,255,0.20) inset,
+    0 -1px 0 rgba(0,0,0,0.25) inset,
+    0 48px 96px rgba(0,0,0,0.55),
+    0 12px 32px rgba(0,0,0,0.35),
+    0 2px 8px rgba(0,0,0,0.20);
+  overflow:hidden;
+  position:relative;
+}
+
+/* top specular edge */
+.glass-shell::before {
+  content:''; position:absolute; top:0; left:0; right:0; height:1px;
+  background:linear-gradient(90deg, transparent 5%, rgba(255,255,255,0.28) 40%, rgba(255,255,255,0.18) 60%, transparent 95%);
+  z-index:20; pointer-events:none;
+}
+/* top-right point of light */
+.glass-shell::after {
+  content:''; position:absolute; top:-60px; right:-30px;
+  width:180px; height:180px;
+  background:radial-gradient(circle, rgba(255,255,255,0.08) 0%, transparent 65%);
+  z-index:20; pointer-events:none;
+}
+
+/* ── Glass Header ── */
+.g-header {
+  padding:14px 18px;
+  display:flex; align-items:center; justify-content:space-between;
+  border-bottom:1px solid rgba(255,255,255,0.09);
+  background:rgba(255,255,255,0.04);
+}
+.g-header-left { display:flex; align-items:center; gap:10px; }
+.g-logo {
+  width:30px; height:30px; border-radius:9px;
+  background:linear-gradient(135deg, rgba(255,255,255,0.18), rgba(255,255,255,0.06));
+  border:1px solid rgba(255,255,255,0.22);
+  border-top:1px solid rgba(255,255,255,0.35);
+  box-shadow:0 1px 0 rgba(255,255,255,0.12) inset, 0 4px 12px rgba(0,0,0,0.25);
+  display:flex; align-items:center; justify-content:center;
+}
+.g-title { font-size:15px; font-weight:600; color:rgba(255,255,255,0.92); letter-spacing:-0.01em; }
+.g-subtitle { font-size:9px; color:rgba(255,255,255,0.38); font-family:'JetBrains Mono'; letter-spacing:0.10em; text-transform:uppercase; }
+
+.g-status {
+  display:flex; align-items:center; gap:6px;
+  padding:4px 10px; border-radius:20px;
+  background:rgba(255,255,255,0.07);
+  border:1px solid rgba(255,255,255,0.12);
+}
+.g-status-dot {
+  width:5px; height:5px; border-radius:50%;
+  background:rgba(255,255,255,0.30);
+  transition:all 0.4s;
+}
+.g-status-dot.active { background:#4ade80; box-shadow:0 0 6px rgba(74,222,128,0.6); }
+.g-status-text { font-size:9px; color:rgba(255,255,255,0.40); font-family:'JetBrains Mono'; letter-spacing:0.08em; text-transform:uppercase; }
+
+/* ── Tabs ── */
+.g-tabs {
+  display:flex; padding:0 18px;
+  border-bottom:1px solid rgba(255,255,255,0.07);
+}
+.g-tab {
+  padding:11px 14px; font-size:12px; font-weight:500;
+  color:rgba(255,255,255,0.35); letter-spacing:0.01em;
+  border-bottom:1.5px solid transparent; margin-bottom:-1px;
+  cursor:pointer; transition:all 0.18s;
+}
+.g-tab:hover { color:rgba(255,255,255,0.65); }
+.g-tab.active { color:rgba(255,255,255,0.92); border-bottom:1.5px solid rgba(255,255,255,0.70); }
+
+/* ── Body ── */
+.g-body { padding:20px 18px 22px; min-height:260px; }
+
+/* ── Drop zone ── */
+.g-drop {
+  border:1.5px dashed rgba(255,255,255,0.18);
+  border-radius:16px;
+  padding:38px 20px;
+  text-align:center; cursor:pointer;
+  transition:all 0.24s cubic-bezier(0.34,1.56,0.64,1);
+  background:rgba(255,255,255,0.03);
+  position:relative; overflow:hidden;
+}
+.g-drop::before {
+  content:''; position:absolute; inset:0; border-radius:16px;
+  background:radial-gradient(ellipse 80% 60% at 50% 0%, rgba(255,255,255,0.06), transparent);
+  pointer-events:none;
+}
+.g-drop:hover, .g-drop.hover {
+  border-color:rgba(255,255,255,0.35);
+  background:rgba(255,255,255,0.06);
+  transform:scale(1.008);
+}
+.g-drop.dragging {
+  border-color:rgba(255,255,255,0.55);
+  background:rgba(255,255,255,0.09);
+  transform:scale(1.016);
+  box-shadow:0 0 0 4px rgba(255,255,255,0.06), 0 0 40px rgba(120,80,255,0.15);
+}
+
+/* icon */
+.g-drop-icon {
+  width:56px; height:56px; border-radius:18px; margin:0 auto 18px;
+  background:linear-gradient(145deg, rgba(255,255,255,0.16), rgba(255,255,255,0.06));
+  border:1px solid rgba(255,255,255,0.18);
+  border-top:1px solid rgba(255,255,255,0.30);
+  box-shadow:0 1px 0 rgba(255,255,255,0.12) inset, 0 8px 24px rgba(0,0,0,0.3);
+  display:flex; align-items:center; justify-content:center;
+  transition:all 0.24s;
+}
+.g-drop.dragging .g-drop-icon,
+.g-drop.hover .g-drop-icon {
+  background:linear-gradient(145deg, rgba(255,255,255,0.22), rgba(255,255,255,0.10));
+  box-shadow:0 1px 0 rgba(255,255,255,0.18) inset, 0 8px 32px rgba(0,0,0,0.35), 0 0 30px rgba(120,80,255,0.20);
+  transform:translateY(-2px);
+}
+
+.g-drop-title { font-size:15px; font-weight:600; color:rgba(255,255,255,0.88); letter-spacing:-0.01em; margin-bottom:6px; }
+.g-drop-sub   { font-size:12px; color:rgba(255,255,255,0.38); }
+
+.g-chips { display:flex; gap:5px; justify-content:center; flex-wrap:wrap; margin-top:16px; }
+.g-chip {
+  padding:3px 9px; border-radius:20px;
+  background:rgba(255,255,255,0.07);
+  border:1px solid rgba(255,255,255,0.12);
+  font-size:9px; font-weight:500; color:rgba(255,255,255,0.45);
+  font-family:'JetBrains Mono'; letter-spacing:0.06em;
+}
+
+/* ── File bar ── */
+.g-file-bar {
+  display:flex; align-items:center; gap:12px;
+  padding:12px 14px; border-radius:14px; margin-bottom:14px;
+  background:rgba(255,255,255,0.06);
+  border:1px solid rgba(255,255,255,0.10);
+  border-top:1px solid rgba(255,255,255,0.16);
+  box-shadow:0 1px 0 rgba(255,255,255,0.07) inset;
+}
+.g-file-icon {
+  width:36px; height:36px; border-radius:10px;
+  display:flex; align-items:center; justify-content:center;
+  font-size:18px; flex-shrink:0;
+  background:rgba(255,255,255,0.08);
+  border:1px solid rgba(255,255,255,0.12);
+}
+.g-file-name { font-size:13px; font-weight:600; color:rgba(255,255,255,0.88); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.g-file-size { font-size:10px; color:rgba(255,255,255,0.35); margin-top:2px; font-family:'JetBrains Mono'; }
+.g-file-remove {
+  width:26px; height:26px; border-radius:8px; border:none;
+  background:rgba(255,255,255,0.07); color:rgba(255,255,255,0.45);
+  font-size:16px; cursor:pointer; display:flex; align-items:center; justify-content:center;
+  transition:all 0.15s; flex-shrink:0;
+}
+.g-file-remove:hover { background:rgba(244,63,94,0.20); color:#f43f5e; }
+
+/* ── Buttons ── */
+.g-btn-primary {
+  width:100%; padding:13px; border-radius:14px; border:none; cursor:pointer;
+  background:linear-gradient(135deg, rgba(255,255,255,0.22), rgba(255,255,255,0.10));
+  border-top:1px solid rgba(255,255,255,0.32);
+  border-bottom:1px solid rgba(0,0,0,0.10);
+  box-shadow:0 1px 0 rgba(255,255,255,0.14) inset, 0 8px 24px rgba(0,0,0,0.25);
+  color:rgba(255,255,255,0.92); font-family:'Inter'; font-size:13px; font-weight:600;
+  letter-spacing:0.02em; transition:all 0.18s;
+  backdrop-filter:blur(8px);
+}
+.g-btn-primary:hover { background:linear-gradient(135deg,rgba(255,255,255,0.28),rgba(255,255,255,0.14)); transform:translateY(-1px); box-shadow:0 1px 0 rgba(255,255,255,0.18) inset,0 12px 32px rgba(0,0,0,0.30); }
+.g-btn-primary:disabled { opacity:0.35; cursor:default; transform:none; }
+
+.g-btn-secondary {
+  padding:12px; border-radius:13px; border:none; cursor:pointer;
+  background:rgba(255,255,255,0.07);
+  border:1px solid rgba(255,255,255,0.12);
+  color:rgba(255,255,255,0.60); font-family:'Inter'; font-size:12px; font-weight:500;
+  transition:all 0.15s;
+}
+.g-btn-secondary:hover { background:rgba(255,255,255,0.11); color:rgba(255,255,255,0.80); }
+
+/* ── Progress ── */
+.g-progress-track {
+  height:2px; border-radius:2px; margin-bottom:12px;
+  background:rgba(255,255,255,0.08); overflow:hidden;
+}
+.g-progress-fill {
+  height:100%; border-radius:2px;
+  background:linear-gradient(90deg,rgba(255,255,255,0.50),rgba(255,255,255,0.90));
+  box-shadow:0 0 8px rgba(255,255,255,0.50);
+  transition:width 0.1s linear;
+}
+
+/* ── Engine rows ── */
+.g-engine-row {
+  display:flex; justify-content:space-between; align-items:center;
+  padding:6px 0; border-bottom:1px solid rgba(255,255,255,0.05);
+  font-size:12px;
+}
+.g-engine-name { color:rgba(255,255,255,0.50); }
+.g-engine-done { font-family:'JetBrains Mono'; font-size:9px; color:rgba(255,255,255,0.75); letter-spacing:0.06em; }
+.g-engine-wait { font-family:'JetBrains Mono'; font-size:9px; color:rgba(255,255,255,0.20); }
+
+/* ── Verdict ── */
+.g-verdict {
+  border-radius:16px; padding:22px 18px; text-align:center; margin-bottom:14px;
+  border:1px solid rgba(255,255,255,0.10);
+  border-top:1px solid rgba(255,255,255,0.18);
+  background:rgba(255,255,255,0.05);
+  box-shadow:0 1px 0 rgba(255,255,255,0.07) inset;
+  position:relative; overflow:hidden;
+}
+.g-verdict-glow {
+  position:absolute; inset:0; border-radius:16px; pointer-events:none;
+  opacity:0.6;
+}
+.g-verdict-dot {
+  width:52px; height:52px; border-radius:50%; margin:0 auto 12px;
+  display:flex; align-items:center; justify-content:center;
+  position:relative; z-index:1;
+}
+.g-verdict-label { font-size:20px; font-weight:700; letter-spacing:-0.02em; margin-bottom:4px; position:relative; z-index:1; }
+.g-verdict-detail { font-size:12px; color:rgba(255,255,255,0.45); position:relative; z-index:1; }
+
+/* ── Stats ── */
+.g-stats { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:12px; }
+.g-stat {
+  padding:12px 13px; border-radius:13px;
+  background:rgba(255,255,255,0.05);
+  border:1px solid rgba(255,255,255,0.08);
+  border-top:1px solid rgba(255,255,255,0.12);
+  box-shadow:0 1px 0 rgba(255,255,255,0.05) inset;
+}
+.g-stat-label { font-size:9px; color:rgba(255,255,255,0.28); font-family:'JetBrains Mono'; letter-spacing:0.08em; text-transform:uppercase; margin-bottom:5px; }
+.g-stat-value { font-size:16px; font-weight:600; color:rgba(255,255,255,0.85); }
+
+/* ── Footer ── */
+.g-footer {
+  padding:9px 18px;
+  border-top:1px solid rgba(255,255,255,0.06);
+  background:rgba(0,0,0,0.15);
+  display:flex; justify-content:space-between; align-items:center;
+}
+
+/* ── Scanning orb ── */
+@keyframes hbCore { 0%{transform:scale(1);opacity:.72} 14%{transform:scale(1.11);opacity:1} 28%{transform:scale(1);opacity:.72} 42%{transform:scale(1.06);opacity:.9} 70%{transform:scale(1);opacity:.72} 100%{transform:scale(1);opacity:.72} }
+@keyframes hbR1 { 0%{transform:scale(.74);opacity:.55} 14%{transform:scale(1.65);opacity:0} 100%{transform:scale(.74);opacity:0} }
+@keyframes hbR2 { 0%{transform:scale(.74);opacity:0} 42%{transform:scale(.74);opacity:.45} 70%{transform:scale(1.55);opacity:0} 100%{transform:scale(.74);opacity:0} }
+@keyframes scanLine { 0%{top:0%;opacity:.55} 50%{top:100%;opacity:.22} 100%{top:0%;opacity:.55} }
+@keyframes fadeUp { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
+
+.orb-wrap {
+  position:relative; width:130px; height:130px;
+  margin:16px auto 20px;
+  display:flex; align-items:center; justify-content:center;
+}
+.orb-ring {
+  position:absolute; inset:0; border-radius:50%;
+  border:1px solid rgba(255,255,255,0.28);
+}
+.orb-ring.r1 { animation:hbR1 1.5s ease-out infinite; }
+.orb-ring.r2 { animation:hbR2 1.5s ease-out infinite; }
+.orb-inner {
+  position:absolute; inset:14px; border-radius:50%;
+  border:1px solid rgba(255,255,255,0.10);
+  background:radial-gradient(circle, rgba(255,255,255,0.08) 0%, transparent 70%);
+}
+.orb-core {
+  width:60px; height:60px; border-radius:50%;
+  background:radial-gradient(circle at 35% 30%, rgba(255,255,255,0.35) 0%, rgba(255,255,255,0.12) 50%, transparent 80%);
+  border:1px solid rgba(255,255,255,0.30);
+  border-top:1px solid rgba(255,255,255,0.50);
+  box-shadow:
+    0 0 0 1px rgba(255,255,255,0.06) inset,
+    0 0 40px rgba(255,255,255,0.15),
+    0 0 80px rgba(120,80,255,0.20);
+  animation:hbCore 1.5s ease-in-out infinite;
+  display:flex; align-items:center; justify-content:center;
+}
+.orb-scan-wrap {
+  position:absolute; inset:14px; border-radius:50%; overflow:hidden; pointer-events:none;
+}
+.orb-scan-line {
+  position:absolute; left:0; right:0; height:2px;
+  background:linear-gradient(90deg, transparent, rgba(255,255,255,0.55), transparent);
+  animation:scanLine 1.8s linear infinite;
+}
+</style>
+</head>
+<body style="background-color: rgb(49, 36, 36)">
+<div class="bg"></div>
+<div id="root"></div>
+
+<script type="text/babel">
+const { useState, useRef, useEffect } = React;
+
+/* ── utils ── */
+function formatBytes(b) {
+  if (!b) return '—';
+  if (b < 1024) return b + ' B';
+  if (b < 1024*1024) return (b/1024).toFixed(1) + ' KB';
+  return (b/1024/1024).toFixed(2) + ' MB';
+}
+function fileIcon(name='') {
+  const ext = (name.split('.').pop()||'').toLowerCase();
+  const m = {exe:'⚙',dll:'🔧',pdf:'📄',zip:'📦',js:'JS',py:'🐍',doc:'📝',docx:'📝',sh:'$_',bat:'⚙',apk:'📱',jar:'☕',msi:'⚙'};
+  return m[ext] || '📁';
+}
+
+const ENGINES = ['VirusTotal','MalwareBazaar','Any.run','Hybrid Analysis'];
+const THRESHOLDS = [28,52,70,86];
+const VERDICTS = {
+  safe:   { label:'Clean',       detail:'Aucune menace détectée.', engines:'0 / 72', score:0,  color:'#4ade80', glow:'rgba(74,222,128,0.30)'  },
+  warn:   { label:'Suspect',     detail:'Signaux faibles détectés.', engines:'4 / 72', score:32, color:'#fb923c', glow:'rgba(251,146,60,0.30)'  },
+  danger: { label:'Malveillant', detail:'Signatures malveillantes confirmées.', engines:'58 / 72', score:94, color:'#f43f5e', glow:'rgba(244,63,94,0.30)' },
+};
+
+/* ── Shield icon ── */
+function ShieldSvg() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 18 18" fill="none">
+      <path d="M9 2L15 4.5V9C15 12.5 12.5 15.5 9 16.5C5.5 15.5 3 12.5 3 9V4.5L9 2Z"
+        stroke="rgba(255,255,255,0.80)" strokeWidth="1.3" fill="rgba(255,255,255,0.08)"/>
+      <path d="M6.5 9L8 10.5L11.5 7" stroke="rgba(255,255,255,0.80)" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"/>
+    </svg>
+  );
+}
+
+/* ── Upload icon ── */
+function UploadSvg({ bright }) {
+  const c = bright ? 'rgba(255,255,255,0.85)' : 'rgba(255,255,255,0.55)';
+  return (
+    <svg width="26" height="26" viewBox="0 0 26 26" fill="none">
+      <path d="M13 17V7M13 7L9 11M13 7L17 11" stroke={c} strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"/>
+      <path d="M5 19V21C5 21.6 5.4 22 6 22H20C20.6 22 21 21.6 21 21V19" stroke={bright?'rgba(255,255,255,0.60)':'rgba(255,255,255,0.30)'} strokeWidth="1.7" strokeLinecap="round"/>
+    </svg>
+  );
+}
+
+/* ════════════════════════════════
+   MAIN POPUP
+════════════════════════════════ */
+function GlassDrop({ label }) {
+  const [phase,    setPhase]    = useState('idle');
+  const [dragging, setDragging] = useState(false);
+  const [hovered,  setHovered]  = useState(false);
+  const [file,     setFile]     = useState(null);
+  const [progress, setProgress] = useState(0);
+  const [verdict,  setVerdict]  = useState(null);
+  const [tab,      setTab]      = useState('file');
+  const inputRef = useRef(null);
+  const timer    = useRef(null);
+
+  function handleDrop(e) {
+    e.preventDefault(); setDragging(false);
+    const f = e.dataTransfer.files[0];
+    if (f) { setFile(f); setPhase('dropped'); }
+  }
+  function handleInput(e) {
+    const f = e.target.files[0];
+    if (f) { setFile(f); setPhase('dropped'); }
+  }
+  function removeFile() { setFile(null); setPhase('idle'); }
+
+  function startScan() {
+    setPhase('scanning'); setProgress(0);
+    let p = 0;
+    timer.current = setInterval(() => {
+      p += Math.random()*3.5 + 1;
+      setProgress(Math.min(p, 98));
+      if (p >= 98) {
+        clearInterval(timer.current);
+        setTimeout(() => {
+          const k = ['safe','warn','danger'][Math.floor(Math.random()*3)];
+          setVerdict(k); setPhase('result'); setProgress(100);
+        }, 400);
+      }
+    }, 85);
+  }
+
+  function reset() {
+    clearInterval(timer.current);
+    setFile(null); setVerdict(null); setPhase('idle'); setProgress(0);
+  }
+
+  const vd = verdict ? VERDICTS[verdict] : null;
+  const isActive = phase === 'scanning' || phase === 'result';
+
+  return (
+    <div>
+      <div className="card-label">{label}</div>
+      <div className="glass-shell">
+
+        {/* ── Header ── */}
+        <div className="g-header">
+          <div className="g-header-left">
+            <div className="g-logo"><ShieldSvg/></div>
+            <div>
+              <div className="g-title">Charon</div>
+              <div className="g-subtitle">Malware Analysis</div>
+            </div>
+          </div>
+          <div className="g-status">
+            <div className={`g-status-dot${isActive?' active':''}`}/>
+            <span className="g-status-text">
+              {phase==='idle'||phase==='dropped' ? 'Standby' : phase==='scanning' ? 'Scanning' : 'Complete'}
+            </span>
+          </div>
+        </div>
+
+        {/* ── Tabs ── */}
+        <div className="g-tabs">
+          {[['file','Fichier'],['hash','Hash'],['url','URL']].map(([k,l])=>(
+            <div key={k} className={`g-tab${tab===k?' active':''}`} onClick={()=>setTab(k)}>{l}</div>
+          ))}
+        </div>
+
+        {/* ── Body ── */}
+        <div className="g-body">
+
+          {/* FILE TAB */}
+          {tab==='file' && (
+            <>
+              {/* IDLE / DROPPED */}
+              {(phase==='idle'||phase==='dropped') && (
+                <div style={{animation:'fadeUp 0.3s ease'}}>
+                  {/* drop zone */}
+                  <div
+                    className={`g-drop${dragging?' dragging':hovered?' hover':''}`}
+                    onClick={()=>inputRef.current?.click()}
+                    onDragOver={e=>{e.preventDefault();setDragging(true);}}
+                    onDragLeave={()=>setDragging(false)}
+                    onDrop={handleDrop}
+                    onMouseEnter={()=>setHovered(true)}
+                    onMouseLeave={()=>setHovered(false)}
+                  >
+                    <input ref={inputRef} type="file" style={{display:'none'}} onChange={handleInput}
+                      accept=".exe,.dll,.pdf,.zip,.js,.py,.bat,.sh,.apk,.doc,.docx,.msi,.jar"/>
+                    <div className="g-drop-icon">
+                      <UploadSvg bright={dragging||hovered}/>
+                    </div>
+                    <div className="g-drop-title">
+                      {dragging ? 'Relâchez pour analyser' : 'Glissez un fichier ici'}
+                    </div>
+                    <div className="g-drop-sub">ou cliquez pour sélectionner</div>
+                    <div className="g-chips">
+                      {['EXE','DLL','PDF','ZIP','APK','JS','PY','JAR'].map(t=>(
+                        <span key={t} className="g-chip">{t}</span>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* File bar */}
+                  {phase==='dropped' && file && (
+                    <div style={{marginTop:14}}>
+                      <div className="g-file-bar">
+                        <div className="g-file-icon">
+                          <span>{fileIcon(file.name)}</span>
+                        </div>
+                        <div style={{flex:1,overflow:'hidden'}}>
+                          <div className="g-file-name">{file.name}</div>
+                          <div className="g-file-size">{formatBytes(file.size)}</div>
+                        </div>
+                        <button className="g-file-remove" onClick={removeFile}>×</button>
+                      </div>
+                      <button className="g-btn-primary" onClick={startScan}>
+                        Lancer l'analyse →
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* SCANNING */}
+              {phase==='scanning' && (
+                <div style={{animation:'fadeUp 0.3s ease', display:'flex', flexDirection:'column', alignItems:'center'}}>
+                  {/* heartbeat orb */}
+                  <div className="orb-wrap">
+                    <div className="orb-ring r1"/>
+                    <div className="orb-ring r2"/>
+                    <div className="orb-inner"/>
+                    <div className="orb-core">
+                      <ShieldSvg/>
+                    </div>
+                    <div className="orb-scan-wrap">
+                      <div className="orb-scan-line"/>
+                    </div>
+                  </div>
+
+                  <div style={{fontFamily:'JetBrains Mono',fontSize:11,letterSpacing:'0.12em',color:'rgba(255,255,255,0.55)',textTransform:'uppercase',marginBottom:6}}>Analyse en cours…</div>
+                  {file && <div style={{fontFamily:'JetBrains Mono',fontSize:9,color:'rgba(255,255,255,0.28)',marginBottom:18,maxWidth:260,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{file.name}</div>}
+
+                  <div className="g-progress-track" style={{width:'100%'}}>
+                    <div className="g-progress-fill" style={{width:`${progress}%`}}/>
+                  </div>
+                  <div style={{display:'flex',justifyContent:'space-between',width:'100%',marginBottom:16}}>
+                    <span style={{fontSize:10,color:'rgba(255,255,255,0.28)',fontFamily:'JetBrains Mono'}}>Interrogation des moteurs</span>
+                    <span style={{fontSize:10,color:'rgba(255,255,255,0.65)',fontWeight:600,fontFamily:'JetBrains Mono'}}>{Math.round(progress)}%</span>
+                  </div>
+
+                  <div style={{width:'100%'}}>
+                    {ENGINES.map((eng,i)=>(
+                      <div key={eng} className="g-engine-row">
+                        <span className="g-engine-name">{eng}</span>
+                        <span className={progress>THRESHOLDS[i]?'g-engine-done':'g-engine-wait'}>
+                          {progress>THRESHOLDS[i]?'✓ terminé':'···'}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* RESULT */}
+              {phase==='result' && vd && (
+                <div style={{animation:'fadeUp 0.4s ease'}}>
+                  <div className="g-verdict">
+                    {/* colored glow bg */}
+                    <div className="g-verdict-glow" style={{background:`radial-gradient(ellipse 200px 120px at 50% 50%, ${vd.glow}, transparent)`}}/>
+                    {/* top line accent */}
+                    <div style={{position:'absolute',top:0,left:0,right:0,height:1,background:`linear-gradient(90deg,transparent,${vd.color}44 50%,transparent)`,borderRadius:'16px 16px 0 0'}}/>
+
+                    <div className="g-verdict-dot" style={{
+                      background:`radial-gradient(circle at 35% 30%, ${vd.color}, ${vd.glow} 60%, transparent)`,
+                      boxShadow:`0 0 0 1px ${vd.color}22, 0 0 30px ${vd.glow}, 0 0 60px ${vd.glow.replace('0.30','0.12')}`
+                    }}>
+                      {verdict==='safe'   && <svg width="20" height="20" fill="none" viewBox="0 0 22 22"><path d="M5 11l4 4 8-8" stroke="rgba(0,0,0,0.75)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/></svg>}
+                      {verdict==='warn'   && <svg width="20" height="20" fill="none" viewBox="0 0 22 22"><path d="M11 7v5M11 15h.01" stroke="rgba(0,0,0,0.75)" strokeWidth="2.5" strokeLinecap="round"/></svg>}
+                      {verdict==='danger' && <svg width="20" height="20" fill="none" viewBox="0 0 22 22"><path d="M7 7l8 8M15 7l-8 8" stroke="rgba(0,0,0,0.75)" strokeWidth="2.5" strokeLinecap="round"/></svg>}
+                    </div>
+                    <div className="g-verdict-label" style={{color:vd.color,textShadow:`0 0 20px ${vd.glow}`}}>{vd.label}</div>
+                    <div className="g-verdict-detail">{vd.detail}</div>
+                  </div>
+
+                  {file && (
+                    <div className="g-file-bar" style={{marginBottom:12}}>
+                      <div className="g-file-icon"><span>{fileIcon(file.name)}</span></div>
+                      <div style={{flex:1,overflow:'hidden'}}>
+                        <div className="g-file-name">{file.name}</div>
+                        <div className="g-file-size">{formatBytes(file.size)}</div>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="g-stats">
+                    {[{l:'Moteurs',v:vd.engines},{l:'Score risque',v:`${vd.score} / 100`}].map((s,i)=>(
+                      <div key={i} className="g-stat">
+                        <div className="g-stat-label">{s.l}</div>
+                        <div className="g-stat-value">{s.v}</div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
+                    <button className="g-btn-secondary" onClick={reset}>Nouveau fichier</button>
+                    <button className="g-btn-primary" style={{width:'auto'}}>Rapport complet</button>
+                  </div>
+                </div>
+              )}
+
+              {/* OTHER TABS */}
+              {tab!=='file' && (
+                <div style={{display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',height:200,color:'rgba(255,255,255,0.28)',gap:10}}>
+                  <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
+                    <rect x="4" y="4" width="24" height="24" rx="6" stroke="rgba(255,255,255,0.20)" strokeWidth="1.5" strokeDasharray="3 2"/>
+                    <path d="M16 12v8M12 16h8" stroke="rgba(255,255,255,0.20)" strokeWidth="1.5" strokeLinecap="round"/>
+                  </svg>
+                  <span style={{fontSize:13,fontWeight:500}}>Bientôt disponible</span>
+                </div>
+              )}
+            </>
+          )}
+
+          {/* HASH / URL TABS */}
+          {tab!=='file' && (
+            <div style={{display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',height:200,color:'rgba(255,255,255,0.28)',gap:10}}>
+              <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
+                <rect x="4" y="4" width="24" height="24" rx="6" stroke="rgba(255,255,255,0.18)" strokeWidth="1.5" strokeDasharray="3 2"/>
+                <path d="M16 12v8M12 16h8" stroke="rgba(255,255,255,0.18)" strokeWidth="1.5" strokeLinecap="round"/>
+              </svg>
+              <span style={{fontSize:13,fontWeight:500}}>Bientôt disponible</span>
+            </div>
+          )}
+        </div>
+
+        {/* ── Footer ── */}
+        <div className="g-footer">
+          <span style={{fontFamily:'JetBrains Mono',fontSize:8,color:'rgba(255,255,255,0.18)',letterSpacing:'0.08em'}}>CHARON v1.0.0</span>
+          <div style={{display:'flex',gap:14}}>
+            {['Paramètres','Logs','Aide'].map(n=>(
+              <span key={n} style={{fontFamily:'JetBrains Mono',fontSize:8,color:'rgba(255,255,255,0.25)',cursor:'pointer',letterSpacing:'0.05em'}}>{n}</span>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function App() {
+  return (
+    <div className="scene">
+      <GlassDrop label="Idle — zone de dépôt"/>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+</body>
+</html>
