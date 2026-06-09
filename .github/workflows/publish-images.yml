@@ -1,0 +1,117 @@
+name: Build & Push images (GHCR)
+
+# Versioning/backup workflow driven ENTIRELY by the Dockerfiles.
+#
+# Each Dockerfile declares its image name AND version in a marker:
+#     # ghcr-image: mon-image:v1.0.0
+#
+# On every push to main the workflow reads those markers and, for each image:
+#   - if the tag <image>:<version> ALREADY exists on GHCR  -> skip (no rebuild)
+#   - if it does NOT exist (you bumped the version)         -> build + push it
+#
+# So a save happens ONLY when you change the version in the marker. No sha tags,
+# no git tags — the version is the single source of truth, in the Dockerfile.
+# GHCR is an archive only: the K3s VM still builds locally, it never pulls.
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch: {}
+
+concurrency:
+  group: ghcr-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: write           # push to GHCR via GITHUB_TOKEN (no PAT)
+
+env:
+  REGISTRY: ghcr.io
+  # Forced lowercase: github.repository = ".../GPE-ETNA" has an uppercase letter,
+  # which is invalid in an OCI image reference.
+  OWNER: kayodevv
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Read every Dockerfile marked "# ghcr-image: <name>:<version>" and emit a
+  # build matrix {image, version, dockerfile}. Single source of truth = the
+  # Dockerfiles. Fails fast if a marker has no version.
+  # ---------------------------------------------------------------------------
+  discover:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.scan.outputs.matrix }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Scan for marked Dockerfiles
+        id: scan
+        run: |
+          set -euo pipefail
+          entries=$(grep -rIl --include='Dockerfile*' -E '^[[:space:]]*#[[:space:]]*ghcr-image:' . \
+            | while read -r df; do
+                spec=$(grep -m1 -E '^[[:space:]]*#[[:space:]]*ghcr-image:' "$df" \
+                       | sed -E 's/.*ghcr-image:[[:space:]]*//; s/[[:space:]]+$//')
+                df_rel="${df#./}"
+                if [ "${spec##*:}" = "$spec" ] || [ -z "${spec##*:}" ] || [ -z "${spec%:*}" ]; then
+                  echo "::error file=$df_rel::marker '# ghcr-image: $spec' must be <name>:<version> (e.g. mon-image:v1.0.0)" >&2
+                  exit 1
+                fi
+                jq -nc --arg image "${spec%:*}" --arg version "${spec##*:}" --arg dockerfile "$df_rel" \
+                  '{image:$image, version:$version, dockerfile:$dockerfile}'
+              done | jq -sc '{include: .}')
+          echo "Discovered images:"
+          echo "$entries" | jq .
+          count=$(echo "$entries" | jq '.include | length')
+          if [ "$count" -eq 0 ]; then
+            echo "::error::No Dockerfile with a '# ghcr-image:' marker found." >&2
+            exit 1
+          fi
+          echo "matrix=$entries" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: discover
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false      # one image must not abort the others
+      matrix: ${{ fromJSON(needs.discover.outputs.matrix) }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Does this version already exist on GHCR?
+        id: check
+        run: |
+          ref="${REGISTRY}/${OWNER}/${{ matrix.image }}:${{ matrix.version }}"
+          if docker buildx imagetools inspect "$ref" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::$ref already exists — version unchanged, skipping build."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::$ref is new — building and pushing."
+          fi
+
+      - name: Build & push (only if version is new)
+        if: steps.check.outputs.exists == 'false'
+        uses: docker/build-push-action@v6
+        with:
+          context: .                               # repo root REQUIRED (COPY apps/... packages/...)
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64                   # NO multi-arch (target is x86-64-v1, cf. MinIO 2023-01 pin)
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ env.OWNER }}/${{ matrix.image }}:${{ matrix.version }}
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}

@@ -1,3 +1,4 @@
+# ghcr-image: charon-minio-watcher:v1.0.0
 # minio-watcher image — S3 events → FileRequestedEvent transformer.
 # Lightweight, no K8s API access, hardened.
 #

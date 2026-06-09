@@ -1,3 +1,4 @@
+# ghcr-image: ubuntu-pdf-sandbox:v1.0.0
 # PDF sandbox image — ubuntu-pdf-sandbox:v1
 # Runs in a batch/v1 K8s Job with cap SYS_PTRACE.
 # Tools: mupdf 1.24.10 (built from source) + pdfid + strace + Python agent
