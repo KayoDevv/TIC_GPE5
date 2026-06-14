@@ -388,6 +388,12 @@ CI also runs yamllint, kubeconform, hadolint, gitleaks (secrets), and schema-com
 checks. **Run `make lint` and `make test` locally before pushing** — a red CI is your
 responsibility, not the reviewer's.
 
+All build/dev commands go through **Make**, which follows a strict parent-child orchestrator
+architecture: one root orchestrator delegates a fixed nine-verb contract
+(`install build test lint format typecheck run deploy clean`) to per-service child Makefiles.
+Before adding or changing a Makefile, read
+[makefile-architecture.md](makefile-architecture.md).
+
 ---
 
 ## 14. Git & pull requests
