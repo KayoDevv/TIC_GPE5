@@ -12,6 +12,7 @@ Exit 0 on success, 1 on missing/invalid field.
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -19,10 +20,33 @@ REQUIRED_TOP = ("job_id", "iocs", "behavior_summary", "email_context", "timestam
 REQUIRED_EMAIL = ("sender", "subject", "body_text")
 ALLOWED_IOC_TYPES = {"ip", "domain", "file_hash", "registry_key", "syscall"}
 
+# note.txt #3 / Cahier D4: the sandbox must strip chat-template control tokens
+# from the untrusted fields before emission. This validator rejects any payload
+# where a raw token survived -- if it ever fires, the sandbox side regressed and
+# CI must go red rather than the LLM silently working around it.
+CONTROL_TOKENS = (
+    "<|begin_of_text|>", "<|start_header_id|>", "<|end_header_id|>",
+    "<|eot_id|>", "<|eom_id|>", "<|python_tag|>",
+    "[INST]", "[/INST]", "<<SYS>>", "<</SYS>>", "<s>", "</s>",
+    "<|im_start|>", "<|im_end|>",
+)
+_PREFIX_RE = re.compile(r"\n\s*\n\s*(human|assistant|system)\s*:", re.IGNORECASE)
+
 
 def fail(msg: str) -> None:
     print(f"FAIL: {msg}", file=sys.stderr)
     sys.exit(1)
+
+
+def _check_no_control_tokens(where: str, text: str) -> None:
+    if not isinstance(text, str):
+        return
+    low = text.lower()
+    for tok in CONTROL_TOKENS:
+        if tok.lower() in low:
+            fail(f"raw control token {tok!r} survived in {where} (sandbox regression)")
+    if _PREFIX_RE.search(text):
+        fail(f"raw conversational prefix survived in {where} (sandbox regression)")
 
 
 def validate(payload: dict) -> None:
@@ -37,9 +61,12 @@ def validate(payload: dict) -> None:
             fail(f"iocs[{i}] missing type/value")
         if ioc["type"] not in ALLOWED_IOC_TYPES:
             fail(f"iocs[{i}].type={ioc['type']!r} not in {ALLOWED_IOC_TYPES}")
+        _check_no_control_tokens(f"iocs[{i}].value", ioc["value"])
+        _check_no_control_tokens(f"iocs[{i}].description", ioc.get("description", ""))
 
     if not isinstance(payload["behavior_summary"], str) or not payload["behavior_summary"].strip():
         fail("behavior_summary must be a non-empty string (LLM prompt input)")
+    _check_no_control_tokens("behavior_summary", payload["behavior_summary"])
 
     ctx = payload["email_context"]
     if not isinstance(ctx, dict):
@@ -47,6 +74,7 @@ def validate(payload: dict) -> None:
     for k in REQUIRED_EMAIL:
         if k not in ctx:
             fail(f"email_context.{k} missing")
+        _check_no_control_tokens(f"email_context.{k}", ctx[k])
 
     print(f"OK ({len(payload['iocs'])} IoCs, summary={len(payload['behavior_summary'])} chars)")
 
