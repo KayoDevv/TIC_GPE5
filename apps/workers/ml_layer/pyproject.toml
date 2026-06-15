@@ -1,8 +1,12 @@
-[tool.poetry]
+[project]
 name = "ml-layer"
 version = "0.1.0"
 description = "ML Layer — Static PDF analysis worker for GPE-ETNA"
-authors = ["Antigravity <ai@zero-trust.local>"]
+authors = [{name = "Antigravity", email = "ai@zero-trust.local"}]
+requires-python = ">=3.11"
+dynamic = ["dependencies"]
+
+[tool.poetry]
 packages = [{include = "ml_layer", from = "src"}]
 
 [tool.poetry.dependencies]

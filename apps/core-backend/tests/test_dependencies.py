@@ -1,17 +1,17 @@
 import time
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
-from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
 from jose import jwt
 
 from backend.auth import JWTPayload
 from backend.config import Settings
-from backend.dependencies import get_settings, get_current_user
-
+from backend.dependencies import get_current_user, get_settings
 
 # --- Helpers : RSA key pair ---
+
 
 def _generate_rsa_keys() -> tuple[rsa.RSAPrivateKey, rsa.RSAPublicKey]:
     private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)

@@ -74,9 +74,9 @@ async def ws_verdict(websocket: WebSocket, job_id: str) -> None:
     await websocket.accept()
 
     verdict_event = asyncio.Event()
-    verdict_data: dict = {}
+    verdict_data: dict[str, object] = {}
 
-    async def on_verdict(data: dict) -> None:
+    async def on_verdict(data: dict[str, object]) -> None:
         nonlocal verdict_data
         verdict_data = data
         verdict_event.set()

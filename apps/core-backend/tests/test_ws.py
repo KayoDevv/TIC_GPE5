@@ -1,18 +1,17 @@
-import time
 import asyncio
+import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
 from jose import jwt
 
-from backend.auth import JWTPayload
 from backend.main import create_app
 from backend.services.verdict_consumer import VerdictDispatcher
 
-
 # --- Helpers : RSA key pair for JWT signing ---
+
 
 def _generate_rsa_keys() -> tuple[rsa.RSAPrivateKey, rsa.RSAPublicKey]:
     private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
@@ -81,11 +80,13 @@ class TestWebSocketRoute:
             mock_auth.return_value = True
 
             from starlette.testclient import TestClient
+
             client = TestClient(app)
 
             def dispatch_after_delay():
                 """Dispatch verdict from a separate thread after a short delay."""
                 import time
+
                 time.sleep(0.1)
                 dispatcher = app.state.verdict_dispatcher
                 loop = asyncio.new_event_loop()
@@ -107,6 +108,7 @@ class TestWebSocketRoute:
         job_id = "550e8400-e29b-41d4-a716-446655440000"
 
         from starlette.testclient import TestClient
+
         client = TestClient(app)
 
         with pytest.raises(Exception):
@@ -122,6 +124,7 @@ class TestWebSocketRoute:
             mock_jwt.side_effect = ValueError("INVALID_TOKEN")
 
             from starlette.testclient import TestClient
+
             client = TestClient(app)
 
             with pytest.raises(Exception):
@@ -136,6 +139,7 @@ class TestWebSocketRoute:
             mock_auth.return_value = True
 
             from starlette.testclient import TestClient
+
             client = TestClient(app)
 
             with pytest.raises(Exception):

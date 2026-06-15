@@ -1,4 +1,3 @@
-import pytest
 from unittest.mock import AsyncMock
 
 from backend.services.verdict_consumer import VerdictDispatcher

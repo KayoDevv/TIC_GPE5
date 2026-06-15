@@ -4,6 +4,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Depends, Form, Request, UploadFile
 from fastapi.responses import JSONResponse
+from zt_shared.models.events import EmailContext, FileRequestedEvent
 
 from backend.auth import JWTPayload
 from backend.config import Settings
@@ -11,7 +12,6 @@ from backend.dependencies import get_current_user, get_settings
 from backend.dtos import AnalyzeResponseDTO, ErrorDTO
 from backend.services.hasher import compute_sha256
 from backend.services.storage import upload_file
-from zt_shared.models.events import EmailContext, FileRequestedEvent
 
 logger = logging.getLogger(__name__)
 
@@ -30,9 +30,13 @@ async def validate_form_fields(
     """
     if not sender or not subject:
         from fastapi import HTTPException
+
         raise HTTPException(
             status_code=400,
-            detail={"error": "MISSING_FIELDS", "message": "Required form fields (sender, subject) are missing."},
+            detail={
+                "error": "MISSING_FIELDS",
+                "message": "Required form fields (sender, subject) are missing.",
+            },
         )
     return {"sender": sender, "subject": subject, "body_text": body_text}
 
@@ -49,11 +53,13 @@ async def validate_file(
 
     if len(file_bytes) > settings.max_file_size_bytes:
         from fastapi import HTTPException
+
         raise HTTPException(
             status_code=400,
             detail={
                 "error": "FILE_TOO_LARGE",
-                "message": f"File exceeds the {settings.max_file_size_bytes // (1024 * 1024)} MB limit.",
+                "message": f"File exceeds the "
+                f"{settings.max_file_size_bytes // (1024 * 1024)} MB limit.",
             },
         )
 

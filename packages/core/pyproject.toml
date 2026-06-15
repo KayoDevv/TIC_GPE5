@@ -1,9 +1,13 @@
-[tool.poetry]
+[project]
 name = "zt-shared"
 version = "0.1.0"
 description = "Core Library for Kafka events and Pydantic validation"
-authors = ["Antigravity <ai@zero-trust.local>"]
+authors = [{name = "Antigravity", email = "ai@zero-trust.local"}]
 readme = "README.md"
+requires-python = ">=3.9"
+dynamic = ["dependencies"]
+
+[tool.poetry]
 packages = [{include = "zt_shared", from = "src"}]
 
 [tool.poetry.dependencies]
@@ -17,7 +21,6 @@ pytest-asyncio = "^0.23.2"
 pytest-cov = "^4.1.0"
 ruff = "^0.1.6"
 mypy = "^1.7.1"
-aiomock = "^1.0.1"
 
 [build-system]
 requires = ["poetry-core"]

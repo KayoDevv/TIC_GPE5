@@ -26,7 +26,10 @@ async def get_current_user(
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(
             status_code=401,
-            detail={"error": "INVALID_TOKEN", "message": "Missing or malformed Authorization header."},
+            detail={
+                "error": "INVALID_TOKEN",
+                "message": "Missing or malformed Authorization header.",
+            },
         )
 
     token = authorization.removeprefix("Bearer ")
@@ -37,7 +40,7 @@ async def get_current_user(
         raise HTTPException(
             status_code=401,
             detail={"error": "INVALID_TOKEN", "message": "Invalid or expired JWT token."},
-        )
+        ) from None
 
 
 def get_publisher(request: Request) -> Any:
