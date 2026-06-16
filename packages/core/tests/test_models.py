@@ -1,16 +1,18 @@
-import pytest
 from datetime import datetime
 from uuid import uuid4
+
+import pytest
 from pydantic import ValidationError
 
 from zt_shared.models.events import (
     FileRequestedEvent,
+    Ioc,
+    LlmLayerResultEvent,
     MlLayerResultEvent,
     SandboxLayerResultEvent,
-    LlmLayerResultEvent,
     VerdictResultEvent,
-    Ioc
 )
+
 
 def test_file_requested_event_valid(valid_email_context):
     event = FileRequestedEvent(

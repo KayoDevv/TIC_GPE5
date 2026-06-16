@@ -9,11 +9,10 @@ import pikepdf
 import pytest
 
 from ml_layer.features.pdf import (
-    FEATURE_ORDER,
-    PDFFeatureExtractor,
-    _MAX_BFS_OBJECTS,
     _MAX_STREAM_BODY_BYTES,
     _MAX_STREAM_COMPRESSED_BYTES,
+    FEATURE_ORDER,
+    PDFFeatureExtractor,
     _compute_filter_depth,
     _get_stream_dict_values,
     _read_stream_body,

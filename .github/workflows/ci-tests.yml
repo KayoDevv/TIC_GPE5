@@ -1,0 +1,168 @@
+name: CI — Tests
+
+# Runs on every PR to main and on direct pushes to main / feat branches.
+# All jobs must pass before a PR can be merged (enforce in branch ruleset).
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main, feat/**]
+
+permissions:
+  contents: read   # checkout only — no write needed
+
+# Cancel superseded runs on the same branch/PR to save runner minutes.
+concurrency:
+  group: ci-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # packages/core — Pydantic event models + Kafka producer/consumer
+  # Foundation of the whole pipeline: all other Python packages depend on it.
+  # ────────────────────────────────────────────────────────────────────────────
+  test-core:
+    name: Test · packages/core
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python + Poetry
+        uses: ./.github/actions/python-setup
+        with:
+          python-version: "3.11"
+          working-directory: packages/core
+
+      - name: Ruff lint
+        working-directory: packages/core
+        run: poetry run ruff check .
+
+      - name: MyPy strict type check
+        working-directory: packages/core
+        run: poetry run mypy src/
+
+      - name: pytest — 100 % coverage enforced (fail_under set in pyproject.toml)
+        working-directory: packages/core
+        run: poetry run pytest --cov --cov-report=term-missing
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # apps/workers/ml_layer — static PDF analysis (LightGBM / ONNX Runtime)
+  # Depends on test-core: validates the foundation before building on it.
+  # ────────────────────────────────────────────────────────────────────────────
+  test-ml-layer:
+    name: Test · apps/workers/ml_layer
+    runs-on: ubuntu-latest
+    needs: test-core
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python + Poetry
+        uses: ./.github/actions/python-setup
+        with:
+          python-version: "3.11"
+          working-directory: apps/workers/ml_layer
+
+      - name: Ruff lint
+        working-directory: apps/workers/ml_layer
+        run: poetry run ruff check .
+
+      - name: MyPy strict type check
+        working-directory: apps/workers/ml_layer
+        run: poetry run mypy src/
+
+      - name: pytest — 100 % coverage enforced (fail_under set in pyproject.toml)
+        working-directory: apps/workers/ml_layer
+        run: poetry run pytest --cov --cov-report=term-missing
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # apps/workers/sandbox_layer — behavioural analysis engine (pure core only)
+  #
+  # What runs here: golden tests + hypothesis unit tests (test_golden_core.py,
+  # test_lolbins.py, test_pipeline_order.py). These are 100 % pure — no
+  # subprocess, no I/O, no real sample, no K8s, no strace.
+  #
+  # What does NOT run here: the imperative shell (strace, MinIO, K8s Job
+  # creation). That is validated on the VM via `make sandbox-validate`.
+  #
+  # Deps: aiokafka is needed because run_analysis.py / run_pdf_analysis.py
+  # import AIOKafkaProducer at module level (even though the tests never call
+  # the Kafka code path).
+  # ────────────────────────────────────────────────────────────────────────────
+  test-sandbox-layer:
+    name: Test · apps/workers/sandbox_layer (pure core)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache pip packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-sandbox-${{ runner.os }}-${{ hashFiles('apps/workers/sandbox_layer/**/*.py') }}
+          restore-keys: pip-sandbox-${{ runner.os }}-
+
+      - name: Install test dependencies
+        run: |
+          pip install --quiet \
+            "pydantic==2.7.1" \
+            "aiokafka==0.10.0" \
+            pytest \
+            pytest-cov \
+            ruff
+
+      - name: Ruff lint — pure core modules (hypotheses / scoring / report / models)
+        run: |
+          ruff check \
+            apps/workers/sandbox_layer/agent/core/ \
+            apps/workers/sandbox_layer/agent/hypotheses/ \
+            apps/workers/sandbox_layer/agent/models/
+
+      # PYTHONPATH allows `from hypotheses._types import ...` etc.
+      # (mirrors the sys.path.insert done by test_golden_core.py itself)
+      - name: pytest — golden + unit (pure core)
+        env:
+          PYTHONPATH: apps/workers/sandbox_layer/agent
+        run: |
+          pytest apps/workers/sandbox_layer/agent/tests/ \
+            -v --tb=short \
+            --cov=apps/workers/sandbox_layer/agent/core \
+            --cov=apps/workers/sandbox_layer/agent/hypotheses \
+            --cov=apps/workers/sandbox_layer/agent/models \
+            --cov-report=term-missing
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # apps/core-backend — FastAPI API Gateway
+  # ────────────────────────────────────────────────────────────────────────────
+  test-core-backend:
+    name: Test · apps/core-backend
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python + Poetry
+        uses: ./.github/actions/python-setup
+        with:
+          python-version: "3.11"
+          working-directory: apps/core-backend
+
+      - name: Ruff lint
+        working-directory: apps/core-backend
+        run: poetry run ruff check .
+
+      - name: MyPy strict type check
+        working-directory: apps/core-backend
+        run: poetry run mypy src/
+
+      - name: pytest — 100 % coverage enforced
+        working-directory: apps/core-backend
+        run: poetry run pytest --cov --cov-report=term-missing

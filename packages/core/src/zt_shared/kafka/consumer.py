@@ -1,6 +1,7 @@
 import json
 import logging
-from typing import Type, TypeVar, Callable, Awaitable, Any, Optional
+from typing import Awaitable, Callable, Type, TypeVar
+
 from aiokafka import AIOKafkaConsumer
 from pydantic import BaseModel, ValidationError
 
@@ -37,7 +38,7 @@ class KafkaSubscriber:
         )
         self._running = False
 
-    async def start(self):
+    async def start(self) -> None:
         """Connects to Kafka and starts polling for messages."""
         logger.info(f"Starting consumer for topic {self.topic}...")
         await self.consumer.start()
@@ -51,11 +52,11 @@ class KafkaSubscriber:
             await self.consumer.stop()
             logger.info(f"Consumer for topic {self.topic} stopped.")
 
-    async def stop(self):
+    async def stop(self) -> None:
         """Signals the consumer loop to stop."""
         self._running = False
 
-    async def _process_message(self, raw_value: str):
+    async def _process_message(self, raw_value: str) -> None:
         """Parses the raw JSON string into the Pydantic model and calls the handler."""
         try:
             data = json.loads(raw_value)
@@ -64,7 +65,8 @@ class KafkaSubscriber:
             logger.error(f"Failed to decode JSON from {self.topic}: {e} (payload: {raw_value})")
             return
         except ValidationError as e:
-            logger.error(f"Schema validation failed for {self.topic}: {e.errors()} (payload: {raw_value})")
+            msg = f"Schema validation failed for {self.topic}: {e.errors()} (payload: {raw_value})"
+            logger.error(msg)
             return
 
         try:

@@ -33,17 +33,14 @@ async def validate_form_fields(
 
         raise HTTPException(
             status_code=400,
-            detail={
-                "error": "MISSING_FIELDS",
-                "message": "Required form fields (sender, subject) are missing.",
-            },
+            detail={"error": "MISSING_FIELDS", "message": "Required form fields (sender, subject) are missing."},  # noqa: E501
         )
     return {"sender": sender, "subject": subject, "body_text": body_text}
 
 
 async def validate_file(
     file: UploadFile,
-    settings: Settings = Depends(get_settings),
+    settings: Settings = Depends(get_settings),  # noqa: B008
 ) -> tuple[bytes, str]:
     """
     Dependency that reads the file, checks size, and computes SHA-256.
@@ -58,8 +55,7 @@ async def validate_file(
             status_code=400,
             detail={
                 "error": "FILE_TOO_LARGE",
-                "message": f"File exceeds the "
-                f"{settings.max_file_size_bytes // (1024 * 1024)} MB limit.",
+                "message": f"File exceeds the {settings.max_file_size_bytes // (1024 * 1024)} MB limit.",  # noqa: E501
             },
         )
 
@@ -80,10 +76,10 @@ async def validate_file(
 async def analyze(
     request: Request,
     file: UploadFile,
-    current_user: JWTPayload = Depends(get_current_user),
-    form_fields: dict[str, str] = Depends(validate_form_fields),
-    file_data: tuple[bytes, str] = Depends(validate_file),
-    settings: Settings = Depends(get_settings),
+    current_user: JWTPayload = Depends(get_current_user),  # noqa: B008
+    form_fields: dict[str, str] = Depends(validate_form_fields),  # noqa: B008
+    file_data: tuple[bytes, str] = Depends(validate_file),  # noqa: B008
+    settings: Settings = Depends(get_settings),  # noqa: B008
 ) -> AnalyzeResponseDTO | JSONResponse:
     """
     Submit an email attachment for analysis.

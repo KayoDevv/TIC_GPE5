@@ -132,7 +132,9 @@ def load_dataset(source: str, max_workers: int = 4) -> pd.DataFrame:
         return pd.DataFrame(columns=FEATURE_ORDER + ["label"])
 
     total = len(pairs)
-    logger.info("Collected %d files — starting feature extraction with %d workers", total, max_workers)
+    logger.info(
+        "Collected %d files — starting feature extraction with %d workers", total, max_workers
+    )
 
     rows: list[dict[str, float | int]] = []
     skipped = 0

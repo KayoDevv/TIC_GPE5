@@ -3,6 +3,9 @@ node_modules/
 __pycache__/
 *.py[cod]
 *$py.class
+.coverage
+.coverage.*
+htmlcov/
 .env
 .venv
 env/

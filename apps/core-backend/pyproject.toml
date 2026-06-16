@@ -57,5 +57,9 @@ strict = true
 plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
-module = ["jose.*", "zt_shared.*"]
+module = "jose"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "aiokafka"
 ignore_missing_imports = true

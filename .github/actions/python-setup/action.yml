@@ -1,0 +1,57 @@
+name: Python + Poetry Setup
+description: >
+  Sets up Python, installs Poetry, caches the virtual environment, and
+  installs all project dependencies (runtime + dev group). Reusable across
+  every Python package in the monorepo.
+
+inputs:
+  python-version:
+    description: Python version to use (e.g. "3.11", "3.12")
+    required: false
+    default: "3.11"
+  working-directory:
+    description: Path to the package root — the directory that contains pyproject.toml
+    required: true
+
+runs:
+  using: composite
+
+  steps:
+    # ── Python ────────────────────────────────────────────────────────────────
+    - name: Set up Python ${{ inputs.python-version }}
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    # ── Poetry ────────────────────────────────────────────────────────────────
+    # pipx is pre-installed on all GitHub-hosted runners (ubuntu-latest).
+    # `pipx install poetry` is idempotent — safe to run even if Poetry is
+    # already present (e.g. from a previous step that ran in the same job).
+    - name: Install Poetry & configure in-project virtualenv
+      shell: bash
+      run: |
+        pipx install poetry --quiet 2>/dev/null || true
+        poetry config virtualenvs.in-project true
+
+    # ── Cache ─────────────────────────────────────────────────────────────────
+    # Key includes OS + Python version + the package's poetry.lock, so a
+    # lock-file change always produces a cache miss and a clean install.
+    - name: Restore cached virtualenv
+      id: cache-venv
+      uses: actions/cache@v4
+      with:
+        path: ${{ inputs.working-directory }}/.venv
+        key: >-
+          venv-${{ runner.os }}-py${{ inputs.python-version }}-${{
+            hashFiles(format('{0}/poetry.lock', inputs.working-directory))
+          }}
+        restore-keys: |
+          venv-${{ runner.os }}-py${{ inputs.python-version }}-
+
+    # ── Install ───────────────────────────────────────────────────────────────
+    # Skip if the exact virtualenv is already cached.
+    - name: Install project dependencies (runtime + dev)
+      if: steps.cache-venv.outputs.cache-hit != 'true'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: poetry install --with dev

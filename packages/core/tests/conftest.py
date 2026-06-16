@@ -1,5 +1,6 @@
 import pytest
 
+
 @pytest.fixture
 def valid_email_context():
     return {

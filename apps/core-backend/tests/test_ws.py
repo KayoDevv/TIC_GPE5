@@ -6,6 +6,7 @@ import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from jose import jwt
+from starlette.websockets import WebSocketDisconnect
 
 from backend.main import create_app
 from backend.services.verdict_consumer import VerdictDispatcher
@@ -111,7 +112,7 @@ class TestWebSocketRoute:
 
         client = TestClient(app)
 
-        with pytest.raises(Exception):
+        with pytest.raises(WebSocketDisconnect):
             with client.websocket_connect(f"/api/v1/ws/{job_id}"):
                 pass
 
@@ -127,7 +128,7 @@ class TestWebSocketRoute:
 
             client = TestClient(app)
 
-            with pytest.raises(Exception):
+            with pytest.raises(WebSocketDisconnect):
                 with client.websocket_connect(f"/api/v1/ws/{job_id}?token=bad-token"):
                     pass
 
@@ -142,6 +143,6 @@ class TestWebSocketRoute:
 
             client = TestClient(app)
 
-            with pytest.raises(Exception):
+            with pytest.raises(WebSocketDisconnect):
                 with client.websocket_connect(f"/api/v1/ws/not-a-uuid?token={_build_token()}"):
                     pass

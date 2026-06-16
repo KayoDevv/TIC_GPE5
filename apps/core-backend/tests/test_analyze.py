@@ -119,7 +119,8 @@ class TestAnalyzeRoute:
 
         async def _raise_401():
             raise HTTPException(
-                status_code=401, detail={"error": "INVALID_TOKEN", "message": "Invalid token"}
+                status_code=401,
+                detail={"error": "INVALID_TOKEN", "message": "Invalid token"},
             )
 
         app.dependency_overrides[get_current_user] = _raise_401

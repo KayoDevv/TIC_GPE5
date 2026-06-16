@@ -1,6 +1,7 @@
 import json
 import logging
-from typing import TypeVar, Optional
+from typing import Optional, TypeVar
+
 from aiokafka import AIOKafkaProducer
 from pydantic import BaseModel
 
@@ -22,21 +23,21 @@ class KafkaPublisher:
         )
         self._started = False
 
-    async def start(self):
+    async def start(self) -> None:
         """Connects to the Kafka broker."""
         if not self._started:
             await self.producer.start()
             self._started = True
             logger.info("Producer started.")
 
-    async def stop(self):
+    async def stop(self) -> None:
         """Disconnects from the Kafka broker."""
         if self._started:
             await self.producer.stop()
             self._started = False
             logger.info("Producer stopped.")
 
-    async def publish(self, topic: str, event: BaseModel):
+    async def publish(self, topic: str, event: BaseModel) -> None:
         """Validates internally (via standard BaseModel) and sends the event to the topic."""
         if not self._started:
             raise RuntimeError("KafkaPublisher must be started before publishing.")

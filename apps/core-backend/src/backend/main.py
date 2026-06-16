@@ -1,11 +1,11 @@
 import logging
 from contextlib import asynccontextmanager
-from typing import AsyncIterator
+from typing import AsyncIterator, cast
 
 from fastapi import FastAPI, Request
 from zt_shared.kafka import KafkaPublisher
 
-from backend.dependencies import get_publisher, get_s3_client, get_settings
+from backend.dependencies import get_s3_client, get_settings
 from backend.routes.analyze import router as analyze_router
 from backend.routes.health import router as health_router
 from backend.routes.ws import router as ws_router
@@ -49,7 +49,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 def _get_publisher_from_state(request: Request) -> KafkaPublisher:
     """Extract KafkaPublisher from app state for dependency injection."""
-    return get_publisher(request.app.state.publisher)
+    return cast(KafkaPublisher, request.app.state.publisher)
 
 
 def _get_s3_client_from_state(request: Request) -> object:

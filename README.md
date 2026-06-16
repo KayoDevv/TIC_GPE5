@@ -159,7 +159,10 @@ terraform -chdir=infrastructure/terraform fmt -recursive
 |---|---|---|
 | `ci-lint` | push / PR → `main` | yamllint · kubeconform (K8s manifests) · hadolint (Dockerfiles) · docker compose config · terraform fmt + validate |
 | `sanity-checks` | PR → `main` | Gitleaks (secrets) · empty files · forbidden files (`.DS_Store`, `*.pyc`, `__pycache__`) · merge conflict markers · Python syntax |
+| `ci-tests` | PR → `main`, push → `main` / `feat/**` | Test · packages/core · Test · apps/workers/ml\_layer · Test · apps/workers/sandbox\_layer · **Test · apps/core-backend** |
+| `ci-build` | PR → `main` | Build · (all 9 services) — Dockerfile compiles cleanly + Trivy CVE scan (CRITICAL/HIGH gate) |
 | `schema-compatibility` | PR → `main` touching `packages/kafka-schemas/**` | Spins up Kafka stack, registers current `main` schemas, tests PR schemas for `BACKWARD_TRANSITIVE` compatibility |
+| `cd-deploy` | push → `main` | Build → Trivy scan → push to `ghcr.io/kayodevv/charon-*` (sha + latest tags) → deploy stub |
 
 ---
 

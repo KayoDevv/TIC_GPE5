@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -74,9 +75,9 @@ async def ws_verdict(websocket: WebSocket, job_id: str) -> None:
     await websocket.accept()
 
     verdict_event = asyncio.Event()
-    verdict_data: dict[str, object] = {}
+    verdict_data: dict[str, Any] = {}
 
-    async def on_verdict(data: dict[str, object]) -> None:
+    async def on_verdict(data: dict[str, Any]) -> None:
         nonlocal verdict_data
         verdict_data = data
         verdict_event.set()

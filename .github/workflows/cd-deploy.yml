@@ -1,0 +1,167 @@
+name: CD - Build, Push & Deploy
+
+# Triggered when a PR is merged into main (or manually via workflow_dispatch).
+# Flow: build Docker images → Trivy CVE scan → push to ghcr.io → deploy (stub).
+#
+# Registry: ghcr.io (GitHub Container Registry) using GITHUB_TOKEN — no extra
+# secrets needed. Image names are derived from .github/service-matrix.json.
+# OWNER is forced lowercase because the GitHub repo name has an uppercase letter
+# and OCI image references must be lowercase.
+#
+# Tagging: sha- + latest on every merge (rebuild-on-merge). The archived
+# version-tagged images (publish-images.yml) have been consolidated here.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  OWNER: kayodevv     # forced lowercase — github.repository_owner = "KayoDevv"
+
+jobs:
+  # ── Load shared service matrix ─────────────────────────────────────────────
+  load-matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.read.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: read
+        run: echo "matrix=$(jq -c . .github/service-matrix.json)" >> "$GITHUB_OUTPUT"
+
+  # ── Build & push images ────────────────────────────────────────────────────
+  build-and-push:
+    name: Build & Push · ${{ matrix.name }}
+    needs: load-matrix
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.load-matrix.outputs.matrix) }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check Dockerfile exists
+        id: check
+        run: |
+          if [ -f "${{ matrix.dockerfile }}" ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "No Dockerfile at ${{ matrix.dockerfile }} — skipping"
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Log in to GHCR
+        if: steps.check.outputs.exists == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        if: steps.check.outputs.exists == 'true'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Extract Docker metadata
+        if: steps.check.outputs.exists == 'true'
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ env.OWNER }}/${{ matrix.image }}
+          tags: |
+            type=sha,prefix=sha-
+            type=raw,value=latest
+
+      # Build locally first so Trivy can scan before anything is published.
+      - name: Build image (local, pre-scan)
+        if: steps.check.outputs.exists == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: charon/${{ matrix.name }}:scan
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+
+      # Block the push on any CRITICAL or HIGH CVE with a fix available.
+      - name: Scan image for CVEs (Trivy)
+        if: steps.check.outputs.exists == 'true'
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: charon/${{ matrix.name }}:scan
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          severity: CRITICAL,HIGH
+          trivyignores: .trivyignore
+
+      # Push only after a clean scan. Layer cache makes this fast.
+      - name: Push image
+        if: steps.check.outputs.exists == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+
+  # ── Deploy to Kubernetes ───────────────────────────────────────────────────
+  deploy:
+    name: Deploy to Kubernetes
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    environment: production      # add required reviewers in Settings → Environments
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # When the cluster is ready, replace this step with the real deployment.
+      #
+      # Option A — generic kubeconfig (GPE-NYX / K3s):
+      # - name: Configure kubectl
+      #   run: |
+      #     echo "${{ secrets.KUBECONFIG_B64 }}" | base64 -d > kubeconfig.yaml
+      #     echo "KUBECONFIG=$PWD/kubeconfig.yaml" >> "$GITHUB_ENV"
+      #
+      # Option B — cloud-managed auth (pick one):
+      # AWS EKS:
+      #   uses: aws-actions/configure-aws-credentials@v4
+      #   with: { aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}, ... }
+      #   then: aws eks update-kubeconfig --name <cluster-name>
+      # GKE:
+      #   uses: google-github-actions/get-gke-credentials@v2
+      #   with: { cluster_name: <cluster>, location: europe-west1 }
+      #
+      # Then uncomment the real deploy step below:
+      #
+      # - name: Update image tags in prod overlay + apply
+      #   env:
+      #     TAG: sha-${{ github.sha }}
+      #   run: |
+      #     cd infrastructure/k8s-manifests/overlays/prod
+      #     kustomize edit set image \
+      #       ghcr.io/${{ env.OWNER }}/charon-sandbox-consumer=ghcr.io/${{ env.OWNER }}/charon-sandbox-consumer:${TAG} \
+      #       ghcr.io/${{ env.OWNER }}/charon-minio-watcher=ghcr.io/${{ env.OWNER }}/charon-minio-watcher:${TAG}
+      #     kubectl apply -k .
+      #
+      # Note: ubuntu-sandbox and ubuntu-pdf-sandbox are version-pinned Job images.
+      # Update SANDBOX_JOB_IMAGE / SANDBOX_PDF_JOB_IMAGE in consumer-env-patch.yaml
+      # manually when bumping sandbox agent versions.
+
+      - name: Deploy (stub — cluster not yet configured)
+        run: |
+          echo "Images pushed — SHA ${{ github.sha }}"
+          echo "Cluster deployment is pending. See the commented-out steps above."

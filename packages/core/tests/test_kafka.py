@@ -1,13 +1,14 @@
-import pytest
 import json
-from unittest.mock import AsyncMock, patch
-from pydantic import ValidationError
 from datetime import datetime
+from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
-from zt_shared.kafka.producer import KafkaPublisher
+import pytest
+
 from zt_shared.kafka.consumer import KafkaSubscriber
+from zt_shared.kafka.producer import KafkaPublisher
 from zt_shared.models.events import LlmLayerResultEvent
+
 
 @pytest.fixture
 def sample_event():
@@ -144,7 +145,7 @@ async def test_kafka_subscriber_start_stop():
             self.start = AsyncMock()
             self.stop = AsyncMock()
             self.items = [
-                '{"job_id": "00000000-0000-0000-0000-000000000000", "is_malicious": true, "explanation_text": "text", "timestamp": "2024-01-01T00:00:00Z"}',
+                '{"job_id": "00000000-0000-0000-0000-000000000000", "is_malicious": true, "explanation_text": "text", "timestamp": "2024-01-01T00:00:00Z"}',  # noqa: E501
                 'bad_json_it_should_stop_before'
             ]
             self.index = 0
@@ -191,7 +192,7 @@ async def test_kafka_subscriber_natural_exhaustion():
         def __aiter__(self):
             async def empty_gen():
                 class Msg:
-                    value = '{"job_id": "00000000-0000-0000-0000-000000000000", "is_malicious": true, "explanation_text": "text", "timestamp": "2024-01-01T00:00:00Z"}'
+                    value = '{"job_id": "00000000-0000-0000-0000-000000000000", "is_malicious": true, "explanation_text": "text", "timestamp": "2024-01-01T00:00:00Z"}'  # noqa: E501
                 yield Msg()
             return empty_gen()
             
