@@ -51,7 +51,7 @@ jobs:
 
       - name: Set up Docker Buildx
         if: steps.check.outputs.exists == 'true'
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       # Build with load:true so Trivy can scan the image before we approve merge.
       - name: Build image (local, pre-scan)
