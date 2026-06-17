@@ -20,37 +20,33 @@ REQUIRED_TOP = ("job_id", "iocs", "behavior_summary", "email_context", "timestam
 REQUIRED_EMAIL = ("sender", "subject", "body_text")
 ALLOWED_IOC_TYPES = {"ip", "domain", "file_hash", "registry_key", "syscall"}
 
-# D4 — the LLM Layer injects the attacker-influenced free-text fields below into
-# an LLM prompt. The sandbox is contractually required to have neutralized any
-# chat-template control token that could flip the model out of its data context
-# (see sandbox_layer/agent/core/sanitize.py). The consumer verifies this
-# INDEPENDENTLY here: if a raw role-switching token reaches the LLM input, the
-# contract is broken and the PR cannot merge. This list mirrors the producer's.
-_CONTROL_TOKEN_RE = re.compile(
-    r"<\|[^|>\n]{0,40}\|>|\[/?INST\]|<</?SYS>>|</?s>|<(?:start|end)_of_turn>"
-    r"|\n\n(?:Human|Assistant|System):",
-    re.IGNORECASE,
+# note.txt #3 / Cahier D4: the sandbox must strip chat-template control tokens
+# from the untrusted fields before emission. This validator rejects any payload
+# where a raw token survived -- if it ever fires, the sandbox side regressed and
+# CI must go red rather than the LLM silently working around it.
+CONTROL_TOKENS = (
+    "<|begin_of_text|>", "<|start_header_id|>", "<|end_header_id|>",
+    "<|eot_id|>", "<|eom_id|>", "<|python_tag|>",
+    "[INST]", "[/INST]", "<<SYS>>", "<</SYS>>", "<s>", "</s>",
+    "<|im_start|>", "<|im_end|>",
 )
-
-
-def _assert_injection_safe(payload: dict) -> None:
-    """Fail if any prompt-bound free-text field still carries a control token."""
-    fields = [("behavior_summary", payload.get("behavior_summary", ""))]
-    ctx = payload.get("email_context", {})
-    if isinstance(ctx, dict):
-        fields += [(f"email_context.{k}", v) for k, v in ctx.items()]
-    for i, ioc in enumerate(payload.get("iocs", [])):
-        fields.append((f"iocs[{i}].value", ioc.get("value", "")))
-        fields.append((f"iocs[{i}].description", ioc.get("description", "")))
-    for name, val in fields:
-        if isinstance(val, str) and _CONTROL_TOKEN_RE.search(val):
-            fail(f"prompt-injection control token survived in {name!r} — "
-                 f"sandbox must neutralize it (D4 contract)")
+_PREFIX_RE = re.compile(r"\n\s*\n\s*(human|assistant|system)\s*:", re.IGNORECASE)
 
 
 def fail(msg: str) -> None:
     print(f"FAIL: {msg}", file=sys.stderr)
     sys.exit(1)
+
+
+def _check_no_control_tokens(where: str, text: str) -> None:
+    if not isinstance(text, str):
+        return
+    low = text.lower()
+    for tok in CONTROL_TOKENS:
+        if tok.lower() in low:
+            fail(f"raw control token {tok!r} survived in {where} (sandbox regression)")
+    if _PREFIX_RE.search(text):
+        fail(f"raw conversational prefix survived in {where} (sandbox regression)")
 
 
 def validate(payload: dict) -> None:
@@ -65,9 +61,12 @@ def validate(payload: dict) -> None:
             fail(f"iocs[{i}] missing type/value")
         if ioc["type"] not in ALLOWED_IOC_TYPES:
             fail(f"iocs[{i}].type={ioc['type']!r} not in {ALLOWED_IOC_TYPES}")
+        _check_no_control_tokens(f"iocs[{i}].value", ioc["value"])
+        _check_no_control_tokens(f"iocs[{i}].description", ioc.get("description", ""))
 
     if not isinstance(payload["behavior_summary"], str) or not payload["behavior_summary"].strip():
         fail("behavior_summary must be a non-empty string (LLM prompt input)")
+    _check_no_control_tokens("behavior_summary", payload["behavior_summary"])
 
     ctx = payload["email_context"]
     if not isinstance(ctx, dict):
@@ -75,6 +74,7 @@ def validate(payload: dict) -> None:
     for k in REQUIRED_EMAIL:
         if k not in ctx:
             fail(f"email_context.{k} missing")
+        _check_no_control_tokens(f"email_context.{k}", ctx[k])
 
     _assert_injection_safe(payload)
 
