@@ -1,0 +1,90 @@
+version: 2
+
+updates:
+  # ── GitHub Actions ──────────────────────────────────────────────────────────
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "08:00"
+      timezone: Europe/Paris
+    commit-message:
+      prefix: "ci(deps)"
+    labels: [dependencies, ci]
+    # One grouped PR for all Action bumps, not one PR per action.
+    groups:
+      github-actions:
+        patterns: ["*"]
+
+  # ── Python — packages/core ──────────────────────────────────────────────────
+  - package-ecosystem: pip
+    directory: /packages/core
+    schedule:
+      interval: weekly
+      day: monday
+      time: "08:00"
+      timezone: Europe/Paris
+    commit-message:
+      prefix: "chore(deps)"
+    labels: [dependencies, python]
+    # One grouped PR per package — avoids the serial poetry.lock merge churn.
+    groups:
+      core:
+        patterns: ["*"]
+
+  # ── Python — apps/workers/ml_layer ─────────────────────────────────────────
+  - package-ecosystem: pip
+    directory: /apps/workers/ml_layer
+    schedule:
+      interval: weekly
+      day: monday
+      time: "08:00"
+      timezone: Europe/Paris
+    commit-message:
+      prefix: "chore(deps)"
+    labels: [dependencies, python]
+    groups:
+      ml-layer:
+        patterns: ["*"]
+
+  # ── Docker — sandbox images ─────────────────────────────────────────────────
+  - package-ecosystem: docker
+    directory: /apps/workers/sandbox_layer
+    schedule:
+      interval: weekly
+      day: monday
+      time: "08:00"
+      timezone: Europe/Paris
+    commit-message:
+      prefix: "chore(deps)"
+    labels: [dependencies, docker]
+    groups:
+      sandbox:
+        patterns: ["*"]
+    # OS/runtime base-image jumps are bumped deliberately, not by Dependabot
+    # (Ubuntu 26.04 / Python 3.14 broke the toolchain — see closed #30/#32).
+    ignore:
+      - dependency-name: ubuntu
+        update-types: ["version-update:semver-major"]
+      - dependency-name: python
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+
+  # ── Docker — minio watcher ──────────────────────────────────────────────────
+  - package-ecosystem: docker
+    directory: /apps/workers/minio_watcher
+    schedule:
+      interval: weekly
+      day: monday
+      time: "08:00"
+      timezone: Europe/Paris
+    commit-message:
+      prefix: "chore(deps)"
+    labels: [dependencies, docker]
+    groups:
+      minio-watcher:
+        patterns: ["*"]
+    # Python runtime bumped deliberately (3.14 broke the build — see closed #31).
+    ignore:
+      - dependency-name: python
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]

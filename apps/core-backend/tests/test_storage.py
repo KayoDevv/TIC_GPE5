@@ -1,9 +1,10 @@
 import boto3
 import pytest
+from botocore.exceptions import ClientError
 from moto import mock_aws
 
 from backend.config import Settings
-from backend.services.storage import upload_file, create_s3_client
+from backend.services.storage import create_s3_client, upload_file
 
 SETTINGS = Settings(
     s3_endpoint_url="https://s3.amazonaws.com",
@@ -50,7 +51,7 @@ class TestUploadFile:
         filename = "malware.exe"
         data = b"\x00\x01\x02 evil bytes"
 
-        url = await upload_file(
+        await upload_file(
             s3_client=s3_client,
             bucket=SETTINGS.s3_bucket_name,
             job_id=job_id,
@@ -67,7 +68,7 @@ class TestUploadFile:
 
     async def test_upload_to_missing_bucket_raises(self, s3_client) -> None:
         """Upload to a non-existent bucket must raise an exception."""
-        with pytest.raises(Exception):
+        with pytest.raises(ClientError):
             await upload_file(
                 s3_client=s3_client,
                 bucket="bucket-qui-nexiste-pas",

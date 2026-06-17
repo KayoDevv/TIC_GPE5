@@ -194,8 +194,9 @@ class TestPipeline:
         output = str(tmp_path / "out.onnx")
         dataset = str(tmp_path)
 
+        argv = ["pipeline", "--dataset", dataset, "--output", output, "--workers", "2"]
         with patch("training.pipeline.run") as mock_run, \
-             patch.object(sys, "argv", ["pipeline", "--dataset", dataset, "--output", output, "--workers", "2"]):
+             patch.object(sys, "argv", argv):
             main()
 
         mock_run.assert_called_once_with(dataset, output, max_workers=2)

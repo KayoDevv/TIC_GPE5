@@ -1,15 +1,15 @@
 __version__ = "0.1.0"
 
-from .kafka import KafkaSubscriber, KafkaPublisher
+from .kafka import KafkaPublisher, KafkaSubscriber
 from .models import (
     EmailContext,
     FileRequestedEvent,
-    MlLayerResultEvent,
-    SandboxLayerResultEvent,
     Ioc,
     LlmLayerResultEvent,
+    MlLayerResultEvent,
+    SandboxLayerResultEvent,
+    TechnicalSummary,
     VerdictResultEvent,
-    TechnicalSummary
 )
 
 __all__ = [

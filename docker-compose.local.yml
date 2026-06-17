@@ -1,0 +1,116 @@
+# ---------------------------------------------------------------------------
+# LOCAL DEV HARNESS — full pipeline dependencies on your laptop (macOS/Linux).
+#
+# The production stack runs Kafka + MinIO IN-CLUSTER (k3s, see Makefile), which
+# is Linux-only (apt / systemctl / hostname -I). This file is the laptop-friendly
+# equivalent: a single-node Kafka (KRaft, no Zookeeper), MinIO and Redis, with
+# the 5 topics auto-created — enough to mock events and exercise a worker.
+#
+# Runtime path uses PLAIN JSON (zt_shared KafkaPublisher/Subscriber), so NO
+# Schema Registry is needed here — it is only used by the CI schema-compat check.
+#
+# Usage:
+#   docker compose -f docker-compose.local.yml up -d
+#   docker compose -f docker-compose.local.yml down          # add -v to wipe data
+#
+# Host endpoints once up:
+#   Kafka  -> localhost:9092
+#   MinIO  -> localhost:9000 (API)  /  localhost:9001 (console, minioadmin/minioadmin)
+#   Redis  -> localhost:6379
+# ---------------------------------------------------------------------------
+
+services:
+  kafka:
+    image: apache/kafka:3.7.1            # same Kafka version as the cluster (Bitnami 3.7.1)
+    container_name: kafka-local
+    ports:
+      - "9092:9092"                      # EXTERNAL listener for host processes
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      # INTERNAL (container->broker) on 29092, EXTERNAL (host->broker) on 9092.
+      KAFKA_LISTENERS: INTERNAL://0.0.0.0:29092,EXTERNAL://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:29092,EXTERNAL://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      CLUSTER_ID: "5L6g3nShT-eMCtK--X86sw"   # fixed so a persisted volume re-mounts cleanly
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+      start_period: 15s
+
+  # One-shot: create the 5 pipeline topics (60 min retention for GDPR), then exit.
+  kafka-init:
+    image: apache/kafka:3.7.1
+    container_name: kafka-init-local
+    depends_on:
+      kafka:
+        condition: service_healthy
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        set -e
+        for t in file.requested ml_layer.result sandbox_layer.result llm_layer.result verdict.result; do
+          /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 \
+            --create --if-not-exists --topic "$$t" \
+            --partitions 3 --replication-factor 1 --config retention.ms=3600000
+        done
+        echo "---- topics ready ----"
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 --list
+    restart: "no"
+
+  minio:
+    image: minio/minio
+    container_name: minio-local
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "mc ready local || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  # One-shot: create the buckets the apps expect, then exit.
+  minio-init:
+    image: minio/mc
+    container_name: minio-init-local
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        mc alias set local http://minio:9000 minioadmin minioadmin
+        mc mb -p local/zero-trust-files local/sandbox-reports
+        echo "---- buckets ready ----"
+        mc ls local
+    restart: "no"
+
+  redis:
+    image: redis:7.0-alpine
+    container_name: redis-local
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+
+volumes:
+  kafka_data:
+  minio_data:

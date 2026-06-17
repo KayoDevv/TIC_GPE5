@@ -150,7 +150,7 @@ def evaluate(
                 seen_patterns.add(desc)
                 evidence.append(Evidence(
                     source="runtime_signals",
-                    field_path=f"syscalls_summary[execve].sample_args",
+                    field_path="syscalls_summary[execve].sample_args",
                     value=f"{binary}: {desc} — {args_raw[:200]}",
                 ))
                 hit_pattern = True
@@ -161,7 +161,7 @@ def evaluate(
             seen_patterns.add(f"lolbin_present:{binary}")
             evidence.append(Evidence(
                 source="runtime_signals",
-                field_path=f"syscalls_summary[execve].sample_args",
+                field_path="syscalls_summary[execve].sample_args",
                 value=f"{binary} executed (no suspicious args pattern)",
             ))
 

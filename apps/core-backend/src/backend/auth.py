@@ -1,7 +1,7 @@
 import logging
 from dataclasses import dataclass
 
-from jose import jwt, JWTError
+from jose import JWTError, jwt
 
 from backend.config import Settings
 

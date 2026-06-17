@@ -1,0 +1,86 @@
+name: Kafka Schema Compatibility
+
+# Checks that any change to packages/kafka-schemas/** respects the
+# BACKWARD_TRANSITIVE rule: a new schema version must still be able to read
+# data (Kafka messages) produced by any previous version.
+#
+# This prevents silent consumer breakage — e.g. adding a required field would
+# make the new consumer crash on messages produced before the schema change.
+#
+# Only triggers when a schema file or this workflow itself changes.
+# Runs entirely in Python — no Kafka cluster required.
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "packages/kafka-schemas/**"
+      - ".github/workflows/schema-compatibility.yml"
+      - "scripts/ci/check_schema_compat.py"
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: BACKWARD_TRANSITIVE · ${{ matrix.schema }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false   # check all schemas, not just the first broken one
+      matrix:
+        schema:
+          - file.requested.json
+          - ml_layer.result.json
+          - sandbox_layer.result.json
+          - llm_layer.result.json
+          - verdict_layer.result.json
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history so `git show origin/main:...` can reach the base schema.
+          fetch-depth: 0
+
+      - name: Fetch main branch ref
+        run: git fetch origin main --quiet
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      # Determine whether this schema actually changed in the PR.
+      # If unchanged, this job is a no-op (another schema triggered the workflow).
+      - name: Check whether schema changed in this PR
+        id: changed
+        run: |
+          SCHEMA="packages/kafka-schemas/${{ matrix.schema }}"
+          if git diff --name-only origin/main...HEAD | grep -qF "$SCHEMA"; then
+            echo "changed=true"  >> "$GITHUB_OUTPUT"
+          else
+            echo "Schema $SCHEMA is unchanged in this PR — skipping"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Retrieve the current main-branch version of the schema (the "old" one).
+      # If the file doesn't exist on main yet this is a first introduction,
+      # which is always compatible — skip the check.
+      - name: Extract schema from main branch (old version)
+        id: old
+        if: steps.changed.outputs.changed == 'true'
+        run: |
+          SCHEMA="packages/kafka-schemas/${{ matrix.schema }}"
+          if git show "origin/main:$SCHEMA" > /tmp/old_schema.json 2>/dev/null; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Schema $SCHEMA does not exist on main yet — first introduction is always compatible"
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run BACKWARD_TRANSITIVE compatibility check
+        if: >
+          steps.changed.outputs.changed == 'true' &&
+          steps.old.outputs.exists == 'true'
+        run: |
+          python scripts/ci/check_schema_compat.py \
+            /tmp/old_schema.json \
+            "packages/kafka-schemas/${{ matrix.schema }}"

@@ -1,0 +1,49 @@
+{
+  "include": [
+    {
+      "name": "sandbox-consumer",
+      "image": "charon-sandbox-consumer",
+      "dockerfile": "apps/workers/sandbox_layer/Dockerfile.consumer"
+    },
+    {
+      "name": "sandbox-agent",
+      "image": "ubuntu-sandbox",
+      "dockerfile": "apps/workers/sandbox_layer/Dockerfile.agent"
+    },
+    {
+      "name": "sandbox-pdf-agent",
+      "image": "ubuntu-pdf-sandbox",
+      "dockerfile": "apps/workers/sandbox_layer/Dockerfile.pdf-agent"
+    },
+    {
+      "name": "minio-watcher",
+      "image": "charon-minio-watcher",
+      "dockerfile": "apps/workers/minio_watcher/Dockerfile"
+    },
+    {
+      "name": "core-backend",
+      "image": "charon-core-backend",
+      "dockerfile": "apps/core-backend/Dockerfile"
+    },
+    {
+      "name": "frontend",
+      "image": "charon-frontend",
+      "dockerfile": "apps/frontend/Dockerfile"
+    },
+    {
+      "name": "ml-layer",
+      "image": "charon-ml-layer",
+      "dockerfile": "apps/workers/ml_layer/Dockerfile"
+    },
+    {
+      "name": "llm-layer",
+      "image": "charon-llm-layer",
+      "dockerfile": "apps/workers/llm_layer/Dockerfile"
+    },
+    {
+      "name": "verdict-layer",
+      "image": "charon-verdict-layer",
+      "dockerfile": "apps/workers/verdict_layer/Dockerfile"
+    }
+  ]
+}

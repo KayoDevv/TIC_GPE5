@@ -23,9 +23,9 @@ _SRC = Path(__file__).resolve().parent.parent / "src"
 if str(_SRC) not in sys.path:  # pragma: no branch
     sys.path.insert(0, str(_SRC))  # pragma: no cover
 
-from training.export import export_to_onnx
-from training.ingest import load_dataset
-from training.train import train
+from training.export import export_to_onnx  # noqa: E402
+from training.ingest import load_dataset  # noqa: E402
+from training.train import train  # noqa: E402
 
 logging.basicConfig(
     level=logging.INFO,

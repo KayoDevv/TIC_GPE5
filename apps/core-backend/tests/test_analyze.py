@@ -1,13 +1,11 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
 from fastapi import HTTPException
 from httpx import ASGITransport, AsyncClient
 
 from backend.auth import JWTPayload
 from backend.dependencies import get_current_user
 from backend.main import create_app
-
 
 # --- Helpers ---
 
@@ -120,7 +118,10 @@ class TestAnalyzeRoute:
         app, _ = _create_test_app(authenticated=False)
 
         async def _raise_401():
-            raise HTTPException(status_code=401, detail={"error": "INVALID_TOKEN", "message": "Invalid token"})
+            raise HTTPException(
+                status_code=401,
+                detail={"error": "INVALID_TOKEN", "message": "Invalid token"},
+            )
 
         app.dependency_overrides[get_current_user] = _raise_401
 

@@ -15,7 +15,7 @@ def get_settings() -> Settings:
 
 async def get_current_user(
     authorization: str | None = Header(default=None),
-    settings: Settings = Depends(get_settings),
+    settings: Settings = Depends(get_settings),  # noqa: B008
 ) -> JWTPayload:
     """
     FastAPI dependency that extracts and verifies the JWT from
@@ -26,18 +26,18 @@ async def get_current_user(
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(
             status_code=401,
-            detail={"error": "INVALID_TOKEN", "message": "Missing or malformed Authorization header."},
+            detail={"error": "INVALID_TOKEN", "message": "Missing or malformed Authorization header."},  # noqa: E501
         )
 
     token = authorization.removeprefix("Bearer ")
 
     try:
         return await verify_jwt(token, settings)
-    except ValueError:
+    except ValueError as err:
         raise HTTPException(
             status_code=401,
             detail={"error": "INVALID_TOKEN", "message": "Invalid or expired JWT token."},
-        )
+        ) from err
 
 
 def get_publisher(request: Request) -> Any:

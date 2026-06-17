@@ -1,12 +1,12 @@
 from .events import (
     EmailContext,
     FileRequestedEvent,
-    MlLayerResultEvent,
-    SandboxLayerResultEvent,
     Ioc,
     LlmLayerResultEvent,
+    MlLayerResultEvent,
+    SandboxLayerResultEvent,
+    TechnicalSummary,
     VerdictResultEvent,
-    TechnicalSummary
 )
 
 __all__ = [

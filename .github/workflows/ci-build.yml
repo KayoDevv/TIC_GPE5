@@ -1,0 +1,80 @@
+name: CI — Build Docker Images
+
+# Verification-only build on every PR to main.
+# Goal: confirm every Dockerfile compiles cleanly and has no CRITICAL/HIGH CVEs
+# before merge. Nothing is pushed — the actual push happens in cd-deploy.yml.
+#
+# The service matrix lives in .github/service-matrix.json — single source of
+# truth shared with cd-deploy.yml, so the two workflows never diverge.
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  load-matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.read.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: read
+        run: echo "matrix=$(jq -c . .github/service-matrix.json)" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build · ${{ matrix.name }}
+    needs: load-matrix
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.load-matrix.outputs.matrix) }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check Dockerfile exists
+        id: check
+        run: |
+          if [ -f "${{ matrix.dockerfile }}" ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Dockerfile not found at ${{ matrix.dockerfile }} — skipping"
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up Docker Buildx
+        if: steps.check.outputs.exists == 'true'
+        uses: docker/setup-buildx-action@v4
+
+      # Build with load:true so Trivy can scan the image before we approve merge.
+      - name: Build image (local, pre-scan)
+        if: steps.check.outputs.exists == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: charon/${{ matrix.name }}:pr-${{ github.event.pull_request.number }}
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+
+      # Block merge on any CRITICAL or HIGH CVE with a fix available.
+      - name: Scan image for CVEs (Trivy)
+        if: steps.check.outputs.exists == 'true'
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: charon/${{ matrix.name }}:pr-${{ github.event.pull_request.number }}
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          severity: CRITICAL,HIGH
+          trivyignores: .trivyignore

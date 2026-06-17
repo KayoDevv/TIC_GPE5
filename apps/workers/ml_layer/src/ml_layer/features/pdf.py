@@ -85,7 +85,7 @@ def _compute_filter_depth(filters: Any) -> int:
     ``pikepdf.Name``.  Only filters in ``_ENCODING_FILTERS`` contribute.
     """
     if isinstance(filters, pikepdf.Array):
-        return sum(1 for f in filters if str(f) in _ENCODING_FILTERS)
+        return sum(1 for f in filters if str(f) in _ENCODING_FILTERS)  # type: ignore
     return 1 if str(filters) in _ENCODING_FILTERS else 0
 
 
@@ -109,7 +109,7 @@ def _read_stream_body(obj: pikepdf.Stream) -> bytes | None:
 def _get_stream_dict_values(obj: pikepdf.Stream) -> list[Any]:
     """Return ``list(obj.stream_dict.values())``, or ``[]`` on any error."""
     try:
-        return list(obj.stream_dict.values())
+        return list(obj.stream_dict.values())  # type: ignore[operator]
     except Exception:  # noqa: BLE001
         return []
 
@@ -229,7 +229,7 @@ def _extract_object_signals(
                 queue.append(value)
 
         elif isinstance(obj, pikepdf.Array):
-            for item in obj:
+            for item in obj:  # type: ignore[attr-defined]
                 queue.append(item)
 
 

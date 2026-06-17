@@ -1,123 +1,231 @@
-.PHONY: help \
-        configuration deploy launch fix-dns-fai \
-        _apt-deps install-k3s install-kubectl install-helm install-docker install-k9s \
-        setup-kubeconfig setup-calico setup-keda setup-minio-operator \
-        bootstrap-k3s bootstrap-in-cluster deploy-kafka setup-kafka deploy-minio \
-        up down install install-dev test sandbox-validate lint format \
-        build-sandbox build-pdf-sandbox build-consumer build-watcher import-images \
-        deploy-dev undeploy netpol-apiserver install-gvisor enforce-gvisor migrate-minio-data run-watcher run-consumer \
-        clean clean-all
+# ══════════════════════════════════════════════════════════════════════════════
+# CHARON — Zero-Trust Endpoint Analysis Platform
+# Root Makefile — parent-child orchestrator + K3s operations
+#
+# Service usage : make <action> [SERVICE...]
+# Infra usage   : make configuration / make deploy-infra / make launch
+# ══════════════════════════════════════════════════════════════════════════════
 
-# IP du node K3s (première IP non-loopback). Utilisée pour exposer Bitnami Kafka
-# via NodePort au validator/feeder qui tournent sur le host.
+.DEFAULT_GOAL := help
+
+# ── Service registry ──────────────────────────────────────────────────────────
+BACKEND_DIR  := apps/core-backend
+FRONTEND_DIR := apps/frontend
+ML_DIR       := apps/workers/ml_layer
+SANDBOX_DIR  := apps/workers/sandbox_layer
+LLM_DIR      := apps/workers/llm_layer
+VERDICT_DIR  := apps/workers/verdict_layer
+MINIO_DIR    := apps/workers/minio_watcher
+SHARED_DIR   := packages/core
+SCHEMAS_DIR  := packages/kafka-schemas
+
+SERVICE_NAMES := BACKEND FRONTEND ML SANDBOX LLM VERDICT MINIO SHARED SCHEMAS
+ALL_SVC_DIRS  := $(BACKEND_DIR) $(FRONTEND_DIR) $(ML_DIR) $(SANDBOX_DIR) \
+                 $(LLM_DIR) $(VERDICT_DIR) $(MINIO_DIR) $(SHARED_DIR) $(SCHEMAS_DIR)
+
+# ── Service dispatch ──────────────────────────────────────────────────────────
+# make build LLM  ->  _SVC = LLM  ->  delegates to apps/workers/llm_layer
+_SVC := $(filter $(SERVICE_NAMES),$(MAKECMDGOALS))
+_TARGET_DIRS = $(if $(_SVC),$(foreach s,$(_SVC),$($(s)_DIR)),$(ALL_SVC_DIRS))
+
+# Catch service names so Make doesn't error on "No rule to make target 'LLM'"
+.PHONY: $(SERVICE_NAMES)
+$(SERVICE_NAMES):
+	@:
+
+# ── K3s / infra variables ────────────────────────────────────────────────────
 NODE_IP := $(shell hostname -I 2>/dev/null | awk '{print $$1}')
-
-# Utilisateur courant (pour usermod groupe docker). Fallback sur `whoami`.
 HOST_USER := $(shell echo $${USER:-$$(whoami)})
-
 DEV_OVERLAY := infrastructure/k8s-manifests/overlays/dev
 
-# Versions épinglées (modifier ici uniquement)
-KAFKA_CHART_VERSION   := 31.0.0       # bitnami/kafka — Kafka 3.7.1, KRaft natif
-# Calico: CNI + NetworkPolicy enforcer (tigera-operator). No inline comment here:
-# Make would include the spaces before the '#' in the value and break the
-# manifest URL (.../calico/<version>/manifests/...).
+KAFKA_CHART_VERSION   := 31.0.0
 CALICO_VERSION        := v3.27.3
 MINIO_OPERATOR_REF    := v5.0.15
 KAFKA_NODEPORT        := 32092
-# KUBECTL_REPO_VERSION: pkgs.k8s.io apt repo (standalone kubectl). No inline
-# comment (embedded in an apt URL — same stray-space problem).
 KUBECTL_REPO_VERSION  := v1.30
 
-help:
-	@echo "Commandes disponibles :"
-	@echo ""
-	@echo "  ============================================================"
-	@echo "  PARCOURS PRINCIPAL (fresh install -> stack en marche)"
-	@echo "  ============================================================"
-	@echo "  1. make configuration    - Installe TOUT le nécessaire (outils + deps + kubeconfig + DNS)"
-	@echo "  2. make deploy           - Déploie l'infra K3s dans le bon ordre (KEDA -> Kafka -> MinIO)"
-	@echo "  3. make launch           - Lance la stack (build/import images + workers)"
-	@echo ""
-	@echo "  Cas particulier réseau"
-	@echo "  make fix-dns-fai         - Corrige le NXDOMAIN hijacking box SFR/Numericable (resolv.conf k3s)"
-	@echo ""
-	@echo "  ------------------------------------------------------------"
-	@echo "  Cibles unitaires (appelées par les orchestrateurs ci-dessus)"
-	@echo "  ------------------------------------------------------------"
-	@echo "  Installation des prérequis"
-	@echo "  make install-k3s         - Installe k3s single-node (curl | sh)"
-	@echo "  make install-kubectl     - kubectl standalone (dépôt apt $(KUBECTL_REPO_VERSION))"
-	@echo "  make install-helm        - Helm 3 (script officiel)"
-	@echo "  make install-docker      - Docker CE + ajout au groupe docker (RELOG requis)"
-	@echo "  make install-k9s         - K9s TUI monitoring (optionnel)"
-	@echo "  make install             - Deps Python runtime (aiokafka, minio, kubernetes, ...)"
-	@echo "  make install-dev         - Runtime + dev/test (pytest, ruff)"
-	@echo "  make setup-kubeconfig    - Copie /etc/rancher/k3s/k3s.yaml -> ~/.kube/config"
-	@echo "  make setup-calico        - Installe Calico CNI ($(CALICO_VERSION)) — CNI + enforcement NetworkPolicy"
-	@echo ""
-	@echo "  Infra in-cluster"
-	@echo "  make setup-keda          - Installe KEDA via Helm (autoscaling consumer)"
-	@echo "  make setup-kafka         - Déploie Kafka (Bitnami chart, KRaft 1-node) + topics"
-	@echo "  make deploy-minio        - Déploie MinIO StatefulSet + bucket sandbox-reports"
-	@echo ""
-	@echo "  Images K3s (sandbox/consumer/watcher)"
-	@echo "  make import-images       - Build + import les 4 images dans containerd K3s"
-	@echo ""
-	@echo "  Déploiement / migration / qualité"
-	@echo "  make deploy-dev          - Applique overlay dev (workers in-cluster)"
-	@echo "  make install-gvisor      - Installe gVisor (runsc) + RuntimeClass (prérequis détonation)"
-	@echo "  make undeploy            - Supprime le déploiement dev (workers + netpol + VAP)"
-	@echo "  make clean CONFIRM=yes   - Teardown in-cluster (workers+Kafka+MinIO+KEDA), GARDE k3s+Calico"
-	@echo "  make clean-all CONFIRM=yes - NUKE total : désinstalle k3s + images docker -> VM nue"
-	@echo "  make migrate-minio-data  - Copie sandbox-reports docker -> MinIO in-cluster"
-	@echo "  make lint / make format  - ruff check / ruff format"
-	@echo "  make test                - pytest avec couverture"
-	@echo ""
-	@echo "  Validation à grande échelle"
-	@echo "  make sandbox-validate CORPUS=<dir> RUN_ID=<id> [REPS=2 MAX_INFLIGHT=7]"
-	@echo ""
-	@echo "  Variables auto-détectées : NODE_IP=$(NODE_IP)  KAFKA_NODEPORT=$(KAFKA_NODEPORT)  HOST_USER=$(HOST_USER)"
+# ── Colors ────────────────────────────────────────────────────────────────────
+_RST  := \033[0m
+_BOLD := \033[1m
+_DIM  := \033[2m
+_CYN  := \033[36m
+_YLW  := \033[33m
+_GRN  := \033[32m
+_RED  := \033[31m
 
-# ===========================================================================
-# 1. CONFIGURATION — initialise tout le nécessaire (fresh install, une fois)
-# ===========================================================================
-# Hypothèse : seul `make` (build-essential) est requis manuellement au départ,
-# car il sert à lancer cette cible. Tout le reste est automatisé ici.
-# Ordre : paquets de base -> docker -> k3s -> kubectl/helm/k9s -> kubeconfig ->
-#         fix DNS (restart k3s en dernier) -> deps Python.
+# ── Tools ─────────────────────────────────────────────────────────────────────
+DOCKER_COMPOSE := $(shell command -v docker-compose 2>/dev/null || echo "docker compose")
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  HELP
+# ══════════════════════════════════════════════════════════════════════════════
+
+.PHONY: help
+help:
+	@printf "\n"
+	@printf "$(_BOLD)$(_CYN)  ░█████╗░██╗░░██╗░█████╗░██████╗░░█████╗░███╗░░██╗$(_RST)\n"
+	@printf "$(_BOLD)$(_CYN)  ██╔══██╗██║░░██║██╔══██╗██╔══██╗██╔══██╗████╗░██║$(_RST)\n"
+	@printf "$(_BOLD)$(_CYN)  ██║░░╚═╝███████║███████║██████╔╝██║░░██║██╔██╗██║$(_RST)\n"
+	@printf "$(_BOLD)$(_CYN)  ██║░░██╗██╔══██║██╔══██║██╔══██╗██║░░██║██║╚████║$(_RST)\n"
+	@printf "$(_BOLD)$(_CYN)  ╚█████╔╝██║░░██║██║░░██║██║░░██║╚█████╔╝██║░╚███║$(_RST)\n"
+	@printf "$(_BOLD)$(_CYN)  ░╚════╝░╚═╝░░╚═╝╚═╝░░╚═╝╚═╝░░╚═╝░╚════╝░╚═╝░░╚══╝$(_RST)\n"
+	@printf "$(_DIM)  Zero-Trust Endpoint Analysis Platform$(_RST)\n"
+	@printf "\n"
+	@printf "$(_BOLD)$(_YLW)  SERVICES$(_RST)  $(_CYN)BACKEND$(_RST) · $(_CYN)FRONTEND$(_RST) · $(_CYN)ML$(_RST) · $(_CYN)SANDBOX$(_RST) · $(_CYN)LLM$(_RST) · $(_CYN)VERDICT$(_RST) · $(_CYN)MINIO$(_RST) · $(_CYN)SHARED$(_RST) · $(_CYN)SCHEMAS$(_RST)\n"
+	@printf "\n"
+	@printf "$(_BOLD)$(_YLW)  USAGE$(_RST)     make <action> [SERVICE...]\n"
+	@printf "\n"
+	@printf "$(_BOLD)$(_YLW)  ACTIONS$(_RST)\n"
+	@printf "    install     Install dependencies\n"
+	@printf "    build       Build service\n"
+	@printf "    test        Run tests\n"
+	@printf "    lint        Check code\n"
+	@printf "    format      Format code\n"
+	@printf "    typecheck   Type check\n"
+	@printf "    run         Start dev server (+ infra)\n"
+	@printf "    deploy      Build + push Docker image\n"
+	@printf "    clean       Remove artifacts\n"
+	@printf "    ci          Full CI pipeline (lint + typecheck + test)\n"
+	@printf "\n"
+	@printf "$(_BOLD)$(_YLW)  INFRA$(_RST)\n"
+	@printf "    up            Start local cache (Redis)\n"
+	@printf "    down          Stop local infrastructure\n"
+	@printf "    kafka-logs    kafka-init container logs\n"
+	@printf "    status        Container status\n"
+	@printf "\n"
+	@printf "$(_BOLD)$(_YLW)  K3s (cluster)$(_RST)\n"
+	@printf "    configuration Fresh install (tools + deps + kubeconfig + DNS)\n"
+	@printf "    deploy-infra  Deploy K3s infra (KEDA -> Kafka -> MinIO)\n"
+	@printf "    launch        Build images + deploy workers\n"
+	@printf "    import-images Build + import images into K3s containerd\n"
+	@printf "\n"
+	@printf "$(_BOLD)$(_YLW)  EXAMPLES$(_RST)\n"
+	@printf "    make test              Test all services\n"
+	@printf "    make build LLM         Build the LLM Layer\n"
+	@printf "    make run BACKEND       Start the API (+ infra)\n"
+	@printf "    make lint ML SHARED    Lint ML Layer and zt-shared\n"
+	@printf "\n"
+	@printf "  Variables: NODE_IP=$(NODE_IP)  KAFKA_NODEPORT=$(KAFKA_NODEPORT)  HOST_USER=$(HOST_USER)\n"
+	@printf "\n"
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  SERVICE ACTIONS — delegated to child Makefiles
+# ══════════════════════════════════════════════════════════════════════════════
+
+.PHONY: svc-install svc-build svc-test svc-lint svc-format svc-typecheck svc-deploy svc-clean
+
+install:
+	@for dir in $(_TARGET_DIRS); do \
+		printf "$(_BOLD)$(_YLW)── $$dir$(_RST)\n"; \
+		$(MAKE) --no-print-directory -C $$dir install || exit 1; \
+	done
+
+build:
+	@for dir in $(_TARGET_DIRS); do \
+		printf "$(_BOLD)$(_YLW)── $$dir$(_RST)\n"; \
+		$(MAKE) --no-print-directory -C $$dir build || exit 1; \
+	done
+
+test:
+	@for dir in $(_TARGET_DIRS); do \
+		printf "$(_BOLD)$(_YLW)── $$dir$(_RST)\n"; \
+		$(MAKE) --no-print-directory -C $$dir test || exit 1; \
+	done
+
+lint:
+	@for dir in $(_TARGET_DIRS); do \
+		printf "$(_BOLD)$(_YLW)── $$dir$(_RST)\n"; \
+		$(MAKE) --no-print-directory -C $$dir lint || exit 1; \
+	done
+
+format:
+	@for dir in $(_TARGET_DIRS); do \
+		printf "$(_BOLD)$(_YLW)── $$dir$(_RST)\n"; \
+		$(MAKE) --no-print-directory -C $$dir format || exit 1; \
+	done
+
+typecheck:
+	@for dir in $(_TARGET_DIRS); do \
+		printf "$(_BOLD)$(_YLW)── $$dir$(_RST)\n"; \
+		$(MAKE) --no-print-directory -C $$dir typecheck || exit 1; \
+	done
+
+deploy:
+	@for dir in $(_TARGET_DIRS); do \
+		printf "$(_BOLD)$(_YLW)── $$dir$(_RST)\n"; \
+		$(MAKE) --no-print-directory -C $$dir deploy || exit 1; \
+	done
+
+.PHONY: run
+run:
+	@$(MAKE) --no-print-directory up
+ifneq ($(_SVC),)
+	@for dir in $(_TARGET_DIRS); do \
+		$(MAKE) --no-print-directory -C $$dir run; \
+	done
+else
+	@printf "\n$(_BOLD)Usage: make run <SERVICE>$(_RST)\n"
+	@printf "  e.g. make run BACKEND, make run FRONTEND\n\n"
+endif
+
+.PHONY: ci
+ci:
+	@printf "$(_BOLD)$(_CYN)══ CI Pipeline$(_RST)\n"
+	@$(MAKE) --no-print-directory lint
+	@$(MAKE) --no-print-directory typecheck
+	@$(MAKE) --no-print-directory test
+	@printf "\n$(_GRN)$(_BOLD)  ✓ CI pipeline complete$(_RST)\n\n"
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  LOCAL INFRASTRUCTURE
+# ══════════════════════════════════════════════════════════════════════════════
+
+.PHONY: up down kafka-logs status
+
+up:
+	docker compose up -d redis
+	@printf "$(_GRN)  Redis started. Kafka and MinIO are in-cluster — see make deploy-infra.$(_RST)\n"
+
+down:
+	docker compose down
+
+kafka-logs:
+	docker compose logs -f kafka-init
+
+status:
+	docker compose ps
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  K3s — CONFIGURATION (fresh install, run once)
+# ══════════════════════════════════════════════════════════════════════════════
+
+.PHONY: configuration _apt-deps install-k3s install-kubectl install-helm install-docker install-k9s \
+        setup-kubeconfig setup-calico fix-dns-fai
+
 configuration: _apt-deps install-docker install-k3s install-kubectl install-helm install-k9s setup-kubeconfig setup-calico fix-dns-fai install
 	@echo ""
-	@echo "=== Configuration terminée ==="
-	@echo "Outils installés : k3s, kubectl, helm, docker, k9s + deps Python."
-	@echo "kubeconfig en place, Calico CNI déployé (enforcement NetworkPolicy), DNS FAI corrigé."
+	@echo "=== Configuration complete ==="
+	@echo "Tools installed: k3s, kubectl, helm, docker, k9s + Python deps."
+	@echo "kubeconfig in place, Calico CNI deployed (NetworkPolicy enforcement), ISP DNS fixed."
 	@echo ""
-	@echo ">>> Si docker vient d'être ajouté au groupe : DÉCONNECTE/RECONNECTE-toi"
-	@echo ">>> (ou lance 'newgrp docker') AVANT 'make deploy' / 'make launch'."
+	@echo ">>> If docker was just added to your group: LOG OUT/LOG BACK IN"
+	@echo ">>> (or run 'newgrp docker') BEFORE 'make deploy-infra' / 'make launch'."
 	@echo ""
-	@echo "Étape suivante : make deploy"
+	@echo "Next step: make deploy-infra"
 
-# Paquets système de base. apt est idempotent (re-run inoffensif).
 _apt-deps:
 	sudo apt update
 	sudo apt install -y build-essential python3-pip python-is-python3 \
 		git curl gnupg ca-certificates net-tools
 
-# k3s single-node. Idempotent (skip si déjà installé).
-# flannel DISABLED + K3s embedded netpol disabled: Calico becomes the SOLE CNI
-# (dataplane + NetworkPolicy enforcement), see `make setup-calico`. Without these
-# flags K3s starts flannel and does NOT enforce NetworkPolicies via Calico → a
-# security hole (the whole sandbox network hardening depends on it).
 install-k3s:
 	@if command -v k3s >/dev/null 2>&1; then \
-		echo "k3s déjà installé ($$(k3s --version 2>/dev/null | head -1))."; \
+		echo "k3s already installed ($$(k3s --version 2>/dev/null | head -1))."; \
 	else \
-		echo "Installation k3s single-node (flannel désactivé pour Calico)..."; \
+		echo "Installing k3s single-node (flannel disabled for Calico)..."; \
 		curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="--flannel-backend=none --disable-network-policy" sh -; \
 	fi
 
-# kubectl standalone via dépôt apt officiel (évite le wrapper /usr/local/bin
-# de k3s qui masque le vrai kubectl). Idempotent.
 install-kubectl:
 	sudo mkdir -p /etc/apt/keyrings
 	@if [ ! -f /etc/apt/keyrings/kubernetes-apt-keyring.gpg ]; then \
@@ -128,19 +236,16 @@ install-kubectl:
 	fi
 	sudo apt update && sudo apt install -y kubectl
 
-# Helm 3 via script officiel. Idempotent.
 install-helm:
 	@if command -v helm >/dev/null 2>&1; then \
-		echo "helm déjà installé ($$(helm version --short 2>/dev/null))."; \
+		echo "helm already installed ($$(helm version --short 2>/dev/null))."; \
 	else \
 		curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash; \
 	fi
 
-# Docker CE + ajout au groupe docker. Le Makefile appelle docker sans sudo.
-# ATTENTION : le groupe docker ne devient actif qu'après reconnexion.
 install-docker:
 	@if command -v docker >/dev/null 2>&1; then \
-		echo "docker déjà installé ($$(docker --version 2>/dev/null))."; \
+		echo "docker already installed ($$(docker --version 2>/dev/null))."; \
 	else \
 		sudo install -m 0755 -d /etc/apt/keyrings; \
 		curl -fsSL https://download.docker.com/linux/debian/gpg | \
@@ -154,22 +259,20 @@ install-docker:
 	fi
 	@sudo usermod -aG docker $(HOST_USER) 2>/dev/null || true
 	@if ! id -nG "$(HOST_USER)" 2>/dev/null | grep -qw docker; then \
-		echo ">>> $(HOST_USER) ajouté au groupe docker — RELOG nécessaire pour l'activer."; \
+		echo ">>> $(HOST_USER) added to docker group — RELOG required to activate."; \
 	fi
 
-# K9s — TUI de monitoring (confort, non obligatoire). Idempotent.
 install-k9s:
 	@if command -v k9s >/dev/null 2>&1; then \
-		echo "k9s déjà installé."; \
+		echo "k9s already installed."; \
 	else \
 		curl -sL https://github.com/derailed/k9s/releases/latest/download/k9s_linux_amd64.deb -o /tmp/k9s.deb; \
 		sudo apt install -y /tmp/k9s.deb && rm -f /tmp/k9s.deb; \
 	fi
 
-# Fix erreur x509 "unknown authority" sur fresh K3s. Idempotent.
 setup-kubeconfig:
 	@if [ ! -f /etc/rancher/k3s/k3s.yaml ]; then \
-		echo "ERREUR: /etc/rancher/k3s/k3s.yaml introuvable. K3s est-il installé ?"; \
+		echo "ERROR: /etc/rancher/k3s/k3s.yaml not found. Is k3s installed?"; \
 		exit 1; \
 	fi
 	@mkdir -p $(HOME)/.kube
@@ -177,95 +280,85 @@ setup-kubeconfig:
 		sudo cp /etc/rancher/k3s/k3s.yaml $(HOME)/.kube/config; \
 		sudo chown $(shell id -u):$(shell id -g) $(HOME)/.kube/config; \
 		chmod 600 $(HOME)/.kube/config; \
-		echo "kubeconfig mis à jour."; \
+		echo "kubeconfig updated."; \
 	else \
-		echo "kubeconfig déjà à jour."; \
+		echo "kubeconfig already up to date."; \
 	fi
 	@grep -q 'KUBECONFIG=' $(HOME)/.bashrc 2>/dev/null || \
 		echo 'export KUBECONFIG=$$HOME/.kube/config' >> $(HOME)/.bashrc
 	@kubectl get nodes >/dev/null 2>&1 && echo "kubectl OK." \
-		|| (echo "ATTENTION: kubectl ne joint pas le cluster."; exit 1)
+		|| (echo "WARNING: kubectl cannot reach the cluster."; exit 1)
 
-# Calico CNI (tigera-operator, $(CALICO_VERSION)). K3s runs with flannel disabled
-# (see install-k3s) → Calico provides BOTH the dataplane AND NetworkPolicy
-# enforcement (calico-system namespace). WITHOUT this target a fresh cluster has
+# Calico CNI (tigera-operator). K3s runs with flannel disabled — Calico provides
+# BOTH the dataplane AND NetworkPolicy enforcement. Without this the cluster has
 # no CNI (nodes NotReady) and enforces no NetworkPolicy. Idempotent.
 setup-calico:
-	@command -v kubectl >/dev/null 2>&1 || { echo "ERREUR: kubectl non installé (make install-kubectl)."; exit 1; }
+	@command -v kubectl >/dev/null 2>&1 || { echo "ERROR: kubectl not installed (make install-kubectl)."; exit 1; }
 	@if kubectl get installation default >/dev/null 2>&1; then \
-		echo "Calico déjà installé (Installation 'default' présente)."; \
+		echo "Calico already installed (Installation 'default' present)."; \
 	else \
-		echo "Installation tigera-operator $(CALICO_VERSION) (server-side apply)..."; \
+		echo "Installing tigera-operator $(CALICO_VERSION) (server-side apply)..."; \
 		kubectl apply --server-side --force-conflicts -f https://raw.githubusercontent.com/projectcalico/calico/$(strip $(CALICO_VERSION))/manifests/tigera-operator.yaml; \
-		echo "Attente du tigera-operator (Available)..."; \
+		echo "Waiting for tigera-operator (Available)..."; \
 		kubectl rollout status deployment/tigera-operator -n tigera-operator --timeout=180s; \
-		echo "Attente que la CRD Installation soit Established..."; \
+		echo "Waiting for Installation CRD to be Established..."; \
 		kubectl wait --for=condition=Established crd/installations.operator.tigera.io --timeout=120s; \
 		kubectl apply -f infrastructure/k8s-manifests/system/calico/installation.yaml; \
 	fi
-	@# The operator creates calico-system + the pods ASYNCHRONOUSLY after the
-	@# Installation CR. So we do NOT wait on the pods directly (they don't exist
-	@# yet -> "no matching resources"). We rely on TigeraStatus/calico, the
-	@# readiness signal published by the operator — but it is also created async,
-	@# so we poll for its existence before waiting on its Available condition.
-	@echo "Attente que l'opérateur crée TigeraStatus/calico (asynchrone)..."
+	@echo "Waiting for operator to create TigeraStatus/calico (async)..."
 	@for i in $$(seq 1 60); do \
 		kubectl get tigerastatus calico >/dev/null 2>&1 && break; \
-		echo "  pas encore créé, retry ($$i/60)..."; \
+		echo "  not yet created, retry ($$i/60)..."; \
 		sleep 5; \
 	done
-	@echo "Attente que Calico soit Available (rollout dataplane, 1-2 min)..."
+	@echo "Waiting for Calico to be Available (dataplane rollout, 1-2 min)..."
 	kubectl wait --for=condition=Available tigerastatus/calico --timeout=300s
-	@echo "Calico opérationnel : CNI + enforcement NetworkPolicy (calico-system)."
+	@echo "Calico operational: CNI + NetworkPolicy enforcement (calico-system)."
 
-# Fix DNS FAI (box SFR/Numericable) — NXDOMAIN hijacking sur *.cluster.local.
-# Le resolv.conf des pods ne se réinitialise pas au restart du cluster : on
-# force un resolv.conf propre déclaré dans la config k3s. Idempotent.
-# cf. DEPENDENCIES.md §7.
+# Fix ISP DNS hijacking (e.g. SFR/Numericable NXDOMAIN hijack on *.cluster.local).
+# Forces a clean resolv.conf declared in k3s config. Idempotent.
 fix-dns-fai:
 	@if [ ! -d /etc/rancher/k3s ]; then \
-		echo "ERREUR: /etc/rancher/k3s introuvable — installe k3s d'abord (make install-k3s)."; \
+		echo "ERROR: /etc/rancher/k3s not found — install k3s first (make install-k3s)."; \
 		exit 1; \
 	fi
 	@printf 'nameserver 1.1.1.1\nnameserver 8.8.8.8\n' | sudo tee /etc/k3s-resolv.conf >/dev/null
 	@if ! sudo grep -q '^resolv-conf:' /etc/rancher/k3s/config.yaml 2>/dev/null; then \
 		echo 'resolv-conf: /etc/k3s-resolv.conf' | sudo tee -a /etc/rancher/k3s/config.yaml >/dev/null; \
-		echo "config.yaml : 'resolv-conf' ajouté."; \
+		echo "config.yaml: 'resolv-conf' added."; \
 	else \
-		echo "config.yaml : 'resolv-conf' déjà présent."; \
+		echo "config.yaml: 'resolv-conf' already present."; \
 	fi
 	sudo systemctl restart k3s
-	@echo "DNS FAI corrigé (resolv-conf -> 1.1.1.1 / 8.8.8.8). k3s redémarré."
-	@echo "Vérif : kubectl run rc --rm -i --image=busybox:1.36 --restart=Never -- cat /etc/resolv.conf"
+	@echo "ISP DNS fixed (resolv-conf -> 1.1.1.1 / 8.8.8.8). k3s restarted."
 
-# ===========================================================================
-# 2. DEPLOY — déploie l'infra K3s dans le bon ordre
-# ===========================================================================
-# Ordre strict (cf. DEPENDENCIES.md §8) : KEDA -> Kafka -> MinIO.
-# MinIO 2023-01 panique si Kafka est injoignable : Kafka DOIT être Ready avant.
-deploy: setup-kubeconfig setup-keda setup-kafka deploy-minio
-	@echo ""
-	@echo "=== Déploiement infra K3s terminé ==="
-	@echo "Ordre respecté : KEDA -> Kafka -> MinIO (DEPENDENCIES.md §8)."
-	@echo "Kafka : kafka.kafka.svc.cluster.local:9092 (NodePort $(NODE_IP):$(KAFKA_NODEPORT))"
-	@echo "MinIO : minio.minio.svc.cluster.local:9000"
-	@echo ""
-	@echo "Étape suivante : make launch"
+# ══════════════════════════════════════════════════════════════════════════════
+#  K3s — DEPLOY (in-cluster infra)
+# ══════════════════════════════════════════════════════════════════════════════
 
-# KEDA — autoscaling du consumer sur le lag Kafka. Idempotent.
+.PHONY: deploy-infra setup-keda setup-kafka deploy-kafka deploy-minio
+
+deploy-infra: setup-kubeconfig setup-keda setup-kafka deploy-minio
+	@echo ""
+	@echo "=== K3s infra deployment complete ==="
+	@echo "Order respected: KEDA -> Kafka -> MinIO (DEPENDENCIES.md)."
+	@echo "Kafka: kafka.kafka.svc.cluster.local:9092 (NodePort $(NODE_IP):$(KAFKA_NODEPORT))"
+	@echo "MinIO: minio.minio.svc.cluster.local:9000"
+	@echo ""
+	@echo "Next step: make launch"
+
 setup-keda:
-	@command -v helm >/dev/null 2>&1 || { echo "ERREUR: helm non installé (make install-helm)."; exit 1; }
+	@command -v helm >/dev/null 2>&1 || { echo "ERROR: helm not installed (make install-helm)."; exit 1; }
 	@if kubectl get ns keda >/dev/null 2>&1 && kubectl get deploy -n keda keda-operator >/dev/null 2>&1; then \
-		echo "KEDA déjà installé."; \
+		echo "KEDA already installed."; \
 	else \
 		helm repo add kedacore https://kedacore.github.io/charts 2>/dev/null || true; \
 		helm repo update kedacore; \
 		helm upgrade --install keda kedacore/keda --namespace keda --create-namespace --wait --timeout 5m; \
 	fi
 
-# Kafka : Bitnami Helm chart (KRaft 1-node combined mode). Topics inclus.
 setup-kafka:
-	@command -v helm >/dev/null 2>&1 || { echo "ERREUR: helm non installé (make install-helm)."; exit 1; }
+	@command -v helm >/dev/null 2>&1 || { echo "ERROR: helm not installed (make install-helm)."; exit 1; }
 	kubectl apply -f infrastructure/k8s-manifests/applications/kafka/namespace.yaml
 	@helm repo add bitnami https://charts.bitnami.com/bitnami 2>/dev/null || true
 	@helm repo update bitnami
@@ -274,107 +367,28 @@ setup-kafka:
 		-f infrastructure/k8s-manifests/applications/kafka/values.yaml \
 		--wait --timeout 10m
 	kubectl apply -k infrastructure/k8s-manifests/applications/kafka/
-	@echo "Kafka in-cluster prêt. Service : kafka.kafka.svc.cluster.local:9092"
-	@echo "NodePort externe (validator host) : $(NODE_IP):$(KAFKA_NODEPORT)"
+	@echo "Kafka in-cluster ready. Service: kafka.kafka.svc.cluster.local:9092"
+	@echo "External NodePort: $(NODE_IP):$(KAFKA_NODEPORT)"
 
-# Alias rétro-compatible (anciens scripts/docs peuvent appeler deploy-kafka).
 deploy-kafka: setup-kafka
 
-# MinIO standalone StatefulSet — plus de MinIO Operator (pivot 2026-05-13).
-# Raison : CPU VM GPE-NYX = x86-64-v1, oblige MinIO 2023-01 (dernière build v1),
-# que l'Operator v5 ne supporte plus. StatefulSet standard plus simple.
 deploy-minio:
 	kubectl apply -k infrastructure/k8s-manifests/applications/minio/
-	@echo "Attente MinIO Ready..."
+	@echo "Waiting for MinIO Ready..."
 	kubectl rollout status statefulset/minio -n minio --timeout=300s
-	@echo "MinIO in-cluster prêt. Service interne : minio.minio.svc.cluster.local:9000"
+	@echo "MinIO in-cluster ready. Internal service: minio.minio.svc.cluster.local:9000"
 
-# ===========================================================================
-# 3. LAUNCH — lance la stack (images + workers)
-# ===========================================================================
+# ══════════════════════════════════════════════════════════════════════════════
+#  K3s — LAUNCH (images + workers)
+# ══════════════════════════════════════════════════════════════════════════════
+
+.PHONY: launch import-images deploy-dev
+
 launch: import-images deploy-dev
 	@echo ""
-	@echo "=== Stack sandbox lancée ==="
-	@echo "Images importées dans containerd, workers déployés (overlay dev)."
-	@echo "Suivi : k9s   ou   kubectl get pods -A"
-
-# ---------------------------------------------------------------------------
-# Alias rétro-compatibilité (docs apps/workers/sandbox_layer/README.md, etc.)
-# ---------------------------------------------------------------------------
-# bootstrap-k3s : préparation cluster (kubeconfig + KEDA). setup-minio-operator
-# RETIRÉ du flow (code mort depuis le pivot StatefulSet 2026-05-13).
-bootstrap-k3s: setup-kubeconfig setup-keda
-	@echo ""
-	@echo "Bootstrap K3s terminé (kubeconfig + KEDA). Suite : make deploy puis make launch."
-
-# bootstrap-in-cluster : déploie Kafka + MinIO (équivalent de la 2e moitié de deploy).
-bootstrap-in-cluster: setup-kafka deploy-minio
-	@echo "Kafka (Bitnami) + MinIO (StatefulSet) déployés in-cluster."
-
-# MinIO Operator — DÉPRÉCIÉ (pivot StatefulSet 2026-05-13). Conservé pour
-# compatibilité docs uniquement ; n'est plus appelé par aucun orchestrateur.
-setup-minio-operator:
-	@echo "DÉPRÉCIÉ : MinIO tourne en StatefulSet standalone (voir make deploy-minio)."
-	@kubectl get crd tenants.minio.min.io >/dev/null 2>&1 \
-		&& echo "MinIO Operator déjà installé." \
-		|| { \
-			echo "Installation MinIO Operator $(MINIO_OPERATOR_REF)..."; \
-			kubectl apply -k "github.com/minio/operator/?ref=$(MINIO_OPERATOR_REF)"; \
-			kubectl wait deploy/minio-operator -n minio-operator --for=condition=Available --timeout=300s; \
-		}
-
-# Migre les données depuis l'ancien MinIO (docker compose host) vers le nouveau
-# StatefulSet in-cluster via mc mirror. Lit la NodePort MinIO depuis le service.
-migrate-minio-data:
-	@MINIO_NODEPORT=$$(kubectl get svc minio -n minio -o jsonpath='{.spec.ports[0].nodePort}' 2>/dev/null); \
-	if [ -z "$$MINIO_NODEPORT" ]; then \
-		echo "Service MinIO sans NodePort — création temporaire pour migration..."; \
-		kubectl patch svc minio -n minio -p '{"spec":{"type":"NodePort"}}'; \
-		MINIO_NODEPORT=$$(kubectl get svc minio -n minio -o jsonpath='{.spec.ports[0].nodePort}'); \
-	fi; \
-	echo "Migration depuis 172.16.249.133:9000 (docker compose) vers $(NODE_IP):$$MINIO_NODEPORT (in-cluster)..."; \
-	docker run --rm --network host quay.io/minio/mc:RELEASE.2024-09-09T17-00-14Z sh -c "\
-		mc alias set old http://172.16.249.133:9000 minioadmin minioadmin && \
-		mc alias set new http://$(NODE_IP):$$MINIO_NODEPORT minioadmin minioadmin && \
-		mc mb -p new/sandbox-reports || true && \
-		mc mirror --overwrite old/sandbox-reports new/sandbox-reports && \
-		echo 'Migration terminée.'"
-
-# ---------------------------------------------------------------------------
-# Infra dev locale (cache uniquement — Kafka/MinIO sont in-cluster désormais)
-# ---------------------------------------------------------------------------
-
-up:
-	docker compose up -d redis
-	@echo "Redis démarré. Kafka et MinIO sont in-cluster — voir make deploy."
-
-down:
-	docker compose down
-
-# ---------------------------------------------------------------------------
-# Dépendances Python
-# ---------------------------------------------------------------------------
-
-install:
-	pip install --break-system-packages \
-		aiokafka==0.10.0 \
-		kafka-python \
-		minio \
-		kubernetes==29.0.0 \
-		pydantic==2.7.1 \
-		structlog==24.1.0 \
-		duckdb
-
-install-dev: install
-	pip install --break-system-packages \
-		pytest \
-		pytest-asyncio \
-		pytest-cov \
-		ruff
-
-# ---------------------------------------------------------------------------
-# Images K3s
-# ---------------------------------------------------------------------------
+	@echo "=== Sandbox stack launched ==="
+	@echo "Images imported into containerd, workers deployed (dev overlay)."
+	@echo "Monitor: k9s   or   kubectl get pods -A"
 
 build-consumer:
 	docker build -t ghcr.io/kayodevv/charon-sandbox-consumer:latest \
@@ -397,34 +411,30 @@ import-images: build-consumer build-sandbox build-pdf-sandbox build-watcher
 	docker save ghcr.io/kayodevv/ubuntu-sandbox:v1              | sudo k3s ctr images import -
 	docker save ghcr.io/kayodevv/ubuntu-pdf-sandbox:v1          | sudo k3s ctr images import -
 	docker save ghcr.io/kayodevv/charon-minio-watcher:latest    | sudo k3s ctr images import -
-	@echo "Images importées dans K3s."
-
-# ---------------------------------------------------------------------------
-# Déploiement workers
-# ---------------------------------------------------------------------------
+	@echo "Images imported into K3s."
 
 deploy-dev: setup-kubeconfig setup-keda
 	kubectl apply -k $(DEV_OVERLAY)/
 	$(MAKE) netpol-apiserver
 	$(MAKE) install-gvisor
 	$(MAKE) enforce-gvisor
-	@echo "Stack sandbox déployée (overlay dev, in-cluster)."
+	@echo "Sandbox stack deployed (dev overlay, in-cluster)."
 
-# gVisor (runsc) — runtime d'isolation kernel OBLIGATOIRE pour les Jobs de
-# détonation (cf. enforce-gvisor). Sans lui, tout pod charon.io/role=analysis est
-# rejeté ("RuntimeClass gvisor not found") et les Jobs échouent en boucle.
-# install-gvisor pose le binaire runsc + le shim containerd, déclare le runtime
-# dans le containerd de K3s, redémarre k3s si la config a changé, puis crée la
-# RuntimeClass gvisor. DOIT précéder enforce-gvisor (fail-closed). Idempotent.
+# ══════════════════════════════════════════════════════════════════════════════
+#  K3s — gVisor + NetworkPolicy + Validation
+# ══════════════════════════════════════════════════════════════════════════════
+
 GVISOR_ARCH         := $(shell uname -m)
 GVISOR_URL          := https://storage.googleapis.com/gvisor/releases/release/latest/$(GVISOR_ARCH)
 K3S_CONTAINERD_TMPL := /var/lib/rancher/k3s/agent/etc/containerd/config.toml.tmpl
 
+.PHONY: install-gvisor enforce-gvisor netpol-apiserver undeploy
+
 install-gvisor:
 	@if command -v runsc >/dev/null 2>&1; then \
-		echo "runsc déjà installé ($$(runsc --version 2>/dev/null | head -1))."; \
+		echo "runsc already installed ($$(runsc --version 2>/dev/null | head -1))."; \
 	else \
-		echo "Installation gVisor (runsc + shim containerd) pour $(GVISOR_ARCH)..."; \
+		echo "Installing gVisor (runsc + containerd shim) for $(GVISOR_ARCH)..."; \
 		cd /tmp && \
 		curl -fsSL -O $(GVISOR_URL)/runsc -O $(GVISOR_URL)/runsc.sha512 \
 		           -O $(GVISOR_URL)/containerd-shim-runsc-v1 -O $(GVISOR_URL)/containerd-shim-runsc-v1.sha512 && \
@@ -433,34 +443,26 @@ install-gvisor:
 		sudo mv runsc containerd-shim-runsc-v1 /usr/local/bin/; \
 	fi
 	@if ! sudo grep -q 'runtimes.runsc' $(K3S_CONTAINERD_TMPL) 2>/dev/null; then \
-		echo "Déclaration du runtime runsc dans containerd K3s ($(K3S_CONTAINERD_TMPL))..."; \
+		echo "Declaring runsc runtime in K3s containerd ($(K3S_CONTAINERD_TMPL))..."; \
 		[ -f $(K3S_CONTAINERD_TMPL) ] || printf '{{ template "base" . }}\n' | sudo tee $(K3S_CONTAINERD_TMPL) >/dev/null; \
 		printf '\n[plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runsc]\n  runtime_type = "io.containerd.runsc.v1"\n' \
 			| sudo tee -a $(K3S_CONTAINERD_TMPL) >/dev/null; \
-		echo "Redémarrage k3s (régénération config containerd)..."; \
+		echo "Restarting k3s (containerd config regeneration)..."; \
 		sudo systemctl restart k3s; \
-		echo "Attente API K3s..."; \
+		echo "Waiting for K3s API..."; \
 		for i in $$(seq 1 30); do kubectl get nodes >/dev/null 2>&1 && break; sleep 2; done; \
 	else \
-		echo "Runtime runsc déjà déclaré dans containerd K3s."; \
+		echo "runsc runtime already declared in K3s containerd."; \
 	fi
 	@printf 'apiVersion: node.k8s.io/v1\nkind: RuntimeClass\nmetadata:\n  name: gvisor\nhandler: runsc\n' \
 		| kubectl apply -f -
-	@echo "gVisor opérationnel : RuntimeClass 'gvisor' (handler runsc)."
+	@echo "gVisor operational: RuntimeClass 'gvisor' (handler runsc)."
 
-# ValidatingAdmissionPolicy native (K8s >= 1.30) rendant gVisor OBLIGATOIRE pour
-# les Jobs de détonation (refuse tout pod charon.io/role=analysis sans
-# runtimeClassName=gvisor). Suppose gVisor installé (cf. install-gvisor, appelé
-# avant dans deploy-dev). Idempotent.
 enforce-gvisor:
 	kubectl apply -f infrastructure/k8s-manifests/applications/sandbox/require-gvisor-vap.yaml
 
-# NetworkPolicy autorisant le consumer -> kube-apiserver. L'apiserver K3s est
-# host-networked, donc non matchable par namespaceSelector ; on autorise l'IP du
-# nœud, AUTO-DÉCOUVERTE (NODE_IP) pour ne rien figer dans git. Additive à
-# consumer-egress. Idempotent.
 netpol-apiserver:
-	@test -n "$(NODE_IP)" || { echo "ERREUR: NODE_IP introuvable (hostname -I)."; exit 1; }
+	@test -n "$(NODE_IP)" || { echo "ERROR: NODE_IP not found (hostname -I)."; exit 1; }
 	@echo "NetworkPolicy apiserver egress -> NODE_IP=$(NODE_IP)"
 	@sed 's|__NODE_IP__|$(NODE_IP)|g' \
 		infrastructure/k8s-manifests/applications/sandbox/consumer-apiserver-egress.yaml.tmpl \
@@ -471,63 +473,14 @@ undeploy:
 	kubectl delete networkpolicy consumer-apiserver-egress -n sandbox --ignore-not-found
 	kubectl delete -f infrastructure/k8s-manifests/applications/sandbox/require-gvisor-vap.yaml --ignore-not-found
 
-# ---------------------------------------------------------------------------
-# Cleanup / teardown — DESTRUCTIVE (CONFIRM=yes guard required)
-# ---------------------------------------------------------------------------
+# ══════════════════════════════════════════════════════════════════════════════
+#  K3s — LOCAL RUN (port-forward to in-cluster)
+# ══════════════════════════════════════════════════════════════════════════════
 
-# clean: tear down everything in-cluster (sandbox workers + Kafka + MinIO + KEDA).
-# KEEPS k3s AND Calico (the CNI) → direct re-deploy via make deploy && launch.
-# DESTRUCTIVE: deletes the PVs (MinIO sandbox-reports + Kafka data). Idempotent.
-clean:
-	@if [ "$(CONFIRM)" != "yes" ]; then \
-		echo "DESTRUCTIF — supprime : workers sandbox + Kafka + MinIO (DONNÉES incluses) + KEDA."; \
-		echo "k3s + Calico CONSERVÉS → re-déploiement : make deploy && make launch."; \
-		echo ">>> Confirme avec : make clean CONFIRM=yes"; \
-		exit 1; \
-	fi
-	-$(MAKE) undeploy
-	-helm uninstall keda -n keda 2>/dev/null || true
-	-kubectl delete namespace kafka minio keda --ignore-not-found
-	@echo "Teardown in-cluster terminé (k3s + Calico conservés)."
+.PHONY: run-watcher run-consumer
 
-# clean-all: full NUKE. Uninstalls k3s ENTIRELY (cluster, Calico, ALL data),
-# removes the redis container and ONLY the project's docker images (no global
-# prune — we don't touch other projects' images). Back to a bare VM → rebuild
-# with make configuration && make deploy && make launch.
-clean-all:
-	@if [ "$(CONFIRM)" != "yes" ]; then \
-		echo "TRÈS DESTRUCTIF — désinstalle k3s ENTIÈREMENT (cluster + Calico + TOUTES les données),"; \
-		echo "supprime le conteneur redis et les 4 images docker du projet. Retour VM nue."; \
-		echo "Reconstruction : make configuration && make deploy && make launch."; \
-		echo ">>> Confirme avec : make clean-all CONFIRM=yes"; \
-		exit 1; \
-	fi
-	-docker compose down 2>/dev/null || true
-	-docker rm -f redis 2>/dev/null || true
-	-docker rmi ghcr.io/kayodevv/charon-sandbox-consumer:latest \
-		ghcr.io/kayodevv/ubuntu-sandbox:v1 \
-		ghcr.io/kayodevv/ubuntu-pdf-sandbox:v1 \
-		ghcr.io/kayodevv/charon-minio-watcher:latest 2>/dev/null || true
-	@if [ -x /usr/local/bin/k3s-uninstall.sh ]; then \
-		echo "Désinstallation k3s (cluster + données)..."; \
-		sudo /usr/local/bin/k3s-uninstall.sh; \
-	else \
-		echo "k3s-uninstall.sh introuvable — k3s déjà désinstallé ?"; \
-	fi
-	@echo "VM nettoyée. Reconstruire : make configuration && make deploy && make launch."
-
-# ---------------------------------------------------------------------------
-# Tests / dev hors K8s — port-forward vers Kafka/MinIO in-cluster
-# ---------------------------------------------------------------------------
-
-test:
-	pytest apps/ -v --cov=apps --cov-report=term-missing
-
-# Pour run-watcher/run-consumer en local, port-forward Kafka et MinIO depuis K3s :
-#   kubectl port-forward -n kafka svc/kafka-kafka-bootstrap 9092:9092 &
-#   kubectl port-forward -n minio svc/minio 9000:9000 &
 run-watcher:
-	@echo "Prérequis : port-forward Kafka (9092) et MinIO (9000) depuis K3s."
+	@echo "Prerequisite: port-forward Kafka (9092) and MinIO (9000) from K3s."
 	KAFKA_BOOTSTRAP=localhost:9092 \
 	MINIO_ENDPOINT=localhost:9000 \
 	MINIO_PRESIGN_ENDPOINT=localhost:9000 \
@@ -537,7 +490,7 @@ run-watcher:
 	python3 apps/workers/minio_watcher/watcher.py
 
 run-consumer:
-	@echo "Prérequis : port-forward Kafka (9092) depuis K3s."
+	@echo "Prerequisite: port-forward Kafka (9092) from K3s."
 	KAFKA_BOOTSTRAP_SERVERS=localhost:9092 \
 	KAFKA_TOPIC_IN=file.requested \
 	KAFKA_TOPIC_OUT=sandbox_layer.result \
@@ -550,25 +503,99 @@ run-consumer:
 	SANDBOX_TIMEOUT_S=180 \
 	python3 apps/workers/sandbox_layer/consumer.py
 
-# ---------------------------------------------------------------------------
-# Validation sandbox — point d'entrée unique
-# Usage : make sandbox-validate CORPUS=<dir> RUN_ID=<id> [REPS=2 MAX_INFLIGHT=7]
-#
-# Le corpus doit contenir des sous-dossiers benign/, malicious/, unknown/.
-# Le validator joint Kafka via NodePort 32092 et MinIO via NodePort dynamique
-# (les Jobs in-cluster utilisent le DNS K8s minio.minio.svc.cluster.local:9000).
+# ══════════════════════════════════════════════════════════════════════════════
+#  SANDBOX VALIDATION
+# ══════════════════════════════════════════════════════════════════════════════
+
+.PHONY: sandbox-validate
 sandbox-validate:
 	KAFKA_BOOTSTRAP=$(NODE_IP):$(KAFKA_NODEPORT) \
 	$(MAKE) -f scripts/validation/Makefile run \
 		RUN_ID=$(RUN_ID) CORPUS=$(CORPUS) \
 		REPS=$(REPS) MAX_INFLIGHT=$(MAX_INFLIGHT)
 
-# ---------------------------------------------------------------------------
-# Qualité
-# ---------------------------------------------------------------------------
+# ══════════════════════════════════════════════════════════════════════════════
+#  MIGRATION / LEGACY
+# ══════════════════════════════════════════════════════════════════════════════
 
-lint:
-	ruff check apps/ scripts/
+.PHONY: bootstrap-k3s bootstrap-in-cluster setup-minio-operator migrate-minio-data
 
-format:
-	ruff format apps/ scripts/
+bootstrap-k3s: setup-kubeconfig setup-keda
+	@echo "K3s bootstrap complete (kubeconfig + KEDA). Next: make deploy-infra then make launch."
+
+bootstrap-in-cluster: setup-kafka deploy-minio
+	@echo "Kafka (Bitnami) + MinIO (StatefulSet) deployed in-cluster."
+
+# DEPRECATED: MinIO now runs as a standalone StatefulSet (see make deploy-minio).
+setup-minio-operator:
+	@echo "DEPRECATED: MinIO runs as standalone StatefulSet (see make deploy-minio)."
+	@kubectl get crd tenants.minio.min.io >/dev/null 2>&1 \
+		&& echo "MinIO Operator already installed." \
+		|| { \
+			echo "Installing MinIO Operator $(MINIO_OPERATOR_REF)..."; \
+			kubectl apply -k "github.com/minio/operator/?ref=$(MINIO_OPERATOR_REF)"; \
+			kubectl wait deploy/minio-operator -n minio-operator --for=condition=Available --timeout=300s; \
+		}
+
+migrate-minio-data:
+	@MINIO_NODEPORT=$$(kubectl get svc minio -n minio -o jsonpath='{.spec.ports[0].nodePort}' 2>/dev/null); \
+	if [ -z "$$MINIO_NODEPORT" ]; then \
+		echo "MinIO service has no NodePort — creating temporary one for migration..."; \
+		kubectl patch svc minio -n minio -p '{"spec":{"type":"NodePort"}}'; \
+		MINIO_NODEPORT=$$(kubectl get svc minio -n minio -o jsonpath='{.spec.ports[0].nodePort}'); \
+	fi; \
+	echo "Migrating from 172.16.249.133:9000 (docker compose) to $(NODE_IP):$$MINIO_NODEPORT (in-cluster)..."; \
+	docker run --rm --network host quay.io/minio/mc:RELEASE.2024-09-09T17-00-14Z sh -c "\
+		mc alias set old http://172.16.249.133:9000 minioadmin minioadmin && \
+		mc alias set new http://$(NODE_IP):$$MINIO_NODEPORT minioadmin minioadmin && \
+		mc mb -p new/sandbox-reports || true && \
+		mc mirror --overwrite old/sandbox-reports new/sandbox-reports && \
+		echo 'Migration complete.'"
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  CLEANUP
+# ══════════════════════════════════════════════════════════════════════════════
+
+.PHONY: clean clean-all
+
+clean:
+ifneq ($(_SVC),)
+	@for dir in $(_TARGET_DIRS); do \
+		printf "$(_BOLD)$(_YLW)── $$dir$(_RST)\n"; \
+		$(MAKE) --no-print-directory -C $$dir clean; \
+	done
+else
+	@if [ "$(CONFIRM)" != "yes" ]; then \
+		echo "DESTRUCTIVE — removes: sandbox workers + Kafka + MinIO (DATA included) + KEDA."; \
+		echo "k3s + Calico KEPT -> re-deploy with: make deploy-infra && make launch."; \
+		echo ">>> Confirm with: make clean CONFIRM=yes"; \
+		echo ">>> Or local cleanup only: make clean <SERVICE>"; \
+		exit 1; \
+	fi
+	-$(MAKE) undeploy
+	-helm uninstall keda -n keda 2>/dev/null || true
+	-kubectl delete namespace kafka minio keda --ignore-not-found
+	@echo "In-cluster teardown complete (k3s + Calico kept)."
+endif
+
+clean-all:
+	@if [ "$(CONFIRM)" != "yes" ]; then \
+		echo "HIGHLY DESTRUCTIVE — uninstalls k3s ENTIRELY (cluster + Calico + ALL data),"; \
+		echo "removes the redis container and the 4 project docker images. Back to bare VM."; \
+		echo "Rebuild with: make configuration && make deploy-infra && make launch."; \
+		echo ">>> Confirm with: make clean-all CONFIRM=yes"; \
+		exit 1; \
+	fi
+	-docker compose down 2>/dev/null || true
+	-docker rm -f redis 2>/dev/null || true
+	-docker rmi ghcr.io/kayodevv/charon-sandbox-consumer:latest \
+		ghcr.io/kayodevv/ubuntu-sandbox:v1 \
+		ghcr.io/kayodevv/ubuntu-pdf-sandbox:v1 \
+		ghcr.io/kayodevv/charon-minio-watcher:latest 2>/dev/null || true
+	@if [ -x /usr/local/bin/k3s-uninstall.sh ]; then \
+		echo "Uninstalling k3s (cluster + data)..."; \
+		sudo /usr/local/bin/k3s-uninstall.sh; \
+	else \
+		echo "k3s-uninstall.sh not found — k3s already uninstalled?"; \
+	fi
+	@echo "VM cleaned. Rebuild with: make configuration && make deploy-infra && make launch."

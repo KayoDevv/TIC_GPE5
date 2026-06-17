@@ -21,6 +21,13 @@ from __future__ import annotations
 import ipaddress
 import re
 
+from hypotheses._types import Evidence, HypothesisResult
+from models import (
+    MemoryObservables,
+    RuntimeSignals,
+    SnapshotDiff,
+)
+
 _INET_ADDR_RE = re.compile(r'inet_addr\("(\d+\.\d+\.\d+\.\d+)"\)')
 _SIN_PORT_RE = re.compile(r'sin_port=htons\((\d+)\)')
 
@@ -33,14 +40,6 @@ def _targets_from_connect_args(args: list[str]) -> list[tuple[str, int]]:
         if ip_m and port_m:
             out.append((ip_m.group(1), int(port_m.group(1))))
     return out
-
-from models import (
-    MemoryObservables,
-    RuntimeSignals,
-    SnapshotDiff,
-)
-
-from hypotheses._types import Evidence, HypothesisResult
 
 _LATERAL_PORTS = {22, 135, 139, 445, 3389, 5985, 5986}
 

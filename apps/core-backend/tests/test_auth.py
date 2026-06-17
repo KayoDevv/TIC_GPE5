@@ -2,15 +2,15 @@ import time
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
 from jose import jwt
 
-from backend.auth import verify_jwt, JWTPayload
+from backend.auth import JWTPayload, verify_jwt
 from backend.config import Settings
 
-
 # --- Helpers : generate a real RSA key pair for tests ---
+
 
 def _generate_rsa_keys() -> tuple[rsa.RSAPrivateKey, rsa.RSAPublicKey]:
     """Generate a fresh RSA-2048 key pair."""
@@ -68,6 +68,7 @@ def _build_token(
 
 
 # --- Tests ---
+
 
 class TestVerifyJwt:
     """Tests for JWT verification."""
