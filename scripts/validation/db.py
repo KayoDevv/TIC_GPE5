@@ -30,13 +30,24 @@ RESULTS_DB_NAME  = "results.duckdb"
 _FEEDER_SCHEMA = """
 -- Catalog of the corpus files, deduplicated by sha256.
 -- label: 'benign' | 'malicious' | 'unknown' — inferred from the source folder.
+-- label_source: provenance of the label, for anti-circularity (M2). A figure
+--   computed on labels that come from the same AV the sandbox imitates is
+--   circular; 'av_consensus' rows are excluded from the independence claim.
+--   'academic_groundtruth' / 'synthetic' are independent; 'unspecified' is the
+--   legacy default (treated as included).
 CREATE TABLE IF NOT EXISTS corpus (
     sha256        VARCHAR PRIMARY KEY,
     label         VARCHAR NOT NULL,
     source_path   VARCHAR NOT NULL,
     file_size     BIGINT  NOT NULL,
+    label_source  VARCHAR NOT NULL DEFAULT 'unspecified',
     registered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+-- Idempotent migration for DBs created before label_source existed.
+-- NB: DuckDB rejects ADD COLUMN with a NOT NULL constraint ("Adding columns
+-- with constraints not yet supported"); the DEFAULT alone backfills existing
+-- rows with 'unspecified', which is all we need.
+ALTER TABLE corpus ADD COLUMN IF NOT EXISTS label_source VARCHAR DEFAULT 'unspecified';
 
 -- One job per (run_id, sha256, repetition_idx).
 -- job_id = Kafka UUID published on file.requested.
@@ -106,13 +117,19 @@ def register_sample(
     label: str,
     source_path: str,
     file_size: int,
+    label_source: str = "unspecified",
 ) -> None:
-    """Register a file in corpus if absent (idempotent)."""
+    """Register a file in corpus if absent (idempotent).
+
+    label_source records where the label came from (anti-circularity, M2). On a
+    re-feed of an existing sha256, INSERT OR IGNORE keeps the first provenance —
+    fine since distinct datasets are disjoint sample sets.
+    """
     with _WRITE_LOCK:
         conn.execute(
-            "INSERT OR IGNORE INTO corpus(sha256, label, source_path, file_size) "
-            "VALUES (?, ?, ?, ?)",
-            [sha256, label, source_path, file_size],
+            "INSERT OR IGNORE INTO corpus(sha256, label, source_path, file_size, label_source) "
+            "VALUES (?, ?, ?, ?, ?)",
+            [sha256, label, source_path, file_size, label_source],
         )
 
 
@@ -256,11 +273,11 @@ def fetch_run_results(
         [run_id] if run_id else [],
     ).fetchall()
 
-    corpus_map: dict[str, tuple[str, str]] = {}  # sha256 -> (label, source_path)
-    for sha, label, src, _ in cf.execute(
-        "SELECT sha256, label, source_path, file_size FROM corpus"
+    corpus_map: dict[str, tuple[str, str]] = {}  # sha256 -> (label, label_source)
+    for sha, label, label_source in cf.execute(
+        "SELECT sha256, label, label_source FROM corpus"
     ).fetchall():
-        corpus_map[sha] = (label, src)
+        corpus_map[sha] = (label, label_source)
 
     if not sent_rows:
         return []
@@ -283,7 +300,7 @@ def fetch_run_results(
         res = res_map.get(job_id)
         if res is None:
             continue  # not received yet
-        label, _ = corpus_map.get(sha256, ("unknown", ""))
+        label, label_source = corpus_map.get(sha256, ("unknown", "unspecified"))
         out.append({
             "job_id":            job_id,
             "run_id":            run_id_,
@@ -294,6 +311,7 @@ def fetch_run_results(
             "timeout_triggered": res[3],
             "error":             res[4],
             "label":             label,
+            "label_source":      label_source,
         })
     return out
 

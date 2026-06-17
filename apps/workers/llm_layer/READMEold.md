@@ -20,3 +20,25 @@
   2. Asynchronous call to the LLM model with a very low temperature (e.g. `0.1` to `0.3`) to avoid hallucinations.
 - **Output:** A clear binary decision as a boolean (`is_malicious`) and generation of an explanation text (`explanation_text`) understandable by a non-technical person (e.g. an SME's IT manager).
 - **Performance Constraints:** Critical SLA of **3 to 5 seconds maximum** for the full generation of the explanation (requires a high token/sec LLM). A very low Time-To-First-Token (TTFT) is preferred.
+
+## D4 — prompt-injection (Prompt Builder obligations)
+
+The sandbox already strips chat-template control tokens from the untrusted
+fields (`email_context`, `behavior_summary`, `iocs[].value/description`) — see
+`sandbox_layer/agent/core/sanitize.py`. That is only *half* the defence. The
+Prompt Builder MUST do the other half:
+
+1. **Encapsulate, don't concatenate.** Wrap every untrusted field in explicit
+   data delimiters (e.g. `<untrusted_sample_data> … </untrusted_sample_data>`)
+   and instruct the model, in the system prompt, to treat anything inside as
+   data to analyse — never as instructions. Raw concatenation re-opens the hole
+   the token-stripping closed.
+2. **Read `_meta.prompt_injection_filtered`** (int): the count of control tokens
+   the sandbox neutralized. When `> 0`, surface a *weak* warning to the analyst
+   ("this sample carried prompt-injection-shaped content"). Report it as a hint,
+   like the low-observability beacon — **never** as injection "detection"
+   (that would be the over-claim P0c forbids).
+
+The LLM input validator (`contract/validate_sandbox_input.py`) independently
+rejects any payload where a raw control token survived: if it ever fires, the
+sandbox side regressed — do not work around it in the Prompt Builder.

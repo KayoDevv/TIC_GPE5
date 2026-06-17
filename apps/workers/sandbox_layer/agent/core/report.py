@@ -4,52 +4,28 @@ Turns hypothesis results into human-readable text (LLM + UI). No I/O. Two
 variants: PDF (3-band verdict + indicators explained in plain language) and ELF
 (behavioural summary). Tested via tests/test_golden_core.py.
 
-NB: the user-facing strings below (SIGNAL_EXPLAIN values, narrative text) are in
-French on purpose — that is the product's output language, pinned by the golden
-tests. Only comments/docstrings are in English.
+NB: the product output language is French. The user-facing CONTENT (per-signal
+explanations, narrative text) lives in core.messages, not here — this module
+holds only the assembly logic. Code and comments here are English.
 """
 
 from __future__ import annotations
 
+from .messages import (
+    PDF_INDICATORS_PREFIX,
+    PDF_NARRATIVE_BENIGN,
+    PDF_NARRATIVE_MALICIOUS,
+    PDF_NARRATIVE_NEEDS_CONTEXT,
+    PDF_NEEDS_CONTEXT_GUIDE,
+    SIGNAL_EXPLAIN,
+)
+from .sanitize import (
+    count_control_tokens,
+    neutralize_untrusted,
+    sanitize_email_context,
+    sanitize_iocs,
+)
 from .scoring import verdict_band
-
-# Rule-key → plain-language explanation (the key is the last segment of the
-# evidence field_path). Values are French (product output language).
-SIGNAL_EXPLAIN: dict[str, str] = {
-    # Disguise / structure
-    "missing_pdf_magic":        "Le fichier prétend être un PDF mais son entête est d'un autre type (HTML/script) — déguisement caractéristique d'évasion",
-    "no_eof_marker":            "Structure PDF malformée (marqueur de fin %%EOF absent)",
-    "qpdf_check_failed":        "Échec de la validation structurelle stricte (xref/streams réparés à la volée)",
-    "qpdf_linearization_warn":  "Avertissement de linéarisation (PDF web-optimisé) — bénin, fréquent en légitime",
-    "stream_endstream_mismatch":"Incohérence stream/endstream dans la structure PDF",
-    "obj_endobj_mismatch":      "Incohérence obj/endobj dans la structure PDF",
-    "obj_ratio_extreme":        "Ratio objets/pages extrême (>100:1) — pattern d'empaquetage de payload",
-    "obj_ratio_high":           "Ratio objets/pages élevé",
-    "encrypted":                "PDF chiffré (rare en document légitime)",
-    "many_objstm":              "Nombreux object streams (obfuscation possible)",
-    # Execution / active content
-    "js_auto_triggered":        "JavaScript exécuté automatiquement à l'ouverture (/OpenAction) — sans interaction utilisateur",
-    "js_embedded":              "JavaScript embarqué (passif)",
-    "dropper_with_payload":     "Fichier embarqué couplé à un déclencheur d'exécution (pattern dropper)",
-    "dropper_auto_exec":        "Fichier embarqué exécuté automatiquement à l'ouverture (pattern dropper)",
-    "embedded_file_alone":      "Fichier embarqué dans le PDF",
-    "launch_action":            "Action /Launch (exécution d'un programme externe) — quasi toujours malveillant",
-    "jbig2_colors_overflow":    "Pattern d'exploit JBIG2 (CVE-2009-0658)",
-    "rich_media":               "Contenu RichMedia/Flash embarqué",
-    "xfa_form":                 "Formulaire XFA (vecteur d'exécution)",
-    # URI / network
-    "exec_extension":           "Lien pointant vers un exécutable (.exe/.scr/.ps1/...)",
-    "bare_ip":                  "Lien vers une adresse IP nue (contournement DNS/réputation)",
-    "fileshare":                "Lien vers un service de partage de fichiers fréquemment abusé",
-    "free_hosting":             "Lien vers de l'hébergement gratuit/jetable (pattern phishing)",
-    "obfuscated_b64_param":     "URL avec paramètres base64 obfusqués",
-    "shortener":                "Lien raccourci masquant la destination réelle",
-    "suspicious_tld":           "Domaine sur un TLD fréquemment abusé pour le phishing",
-    "raw_hoster":               "Lien vers un hébergeur de contenu brut",
-    "external_url":             "Lien externe vers un domaine non catégorisé",
-    # Generic
-    "local_peak":               "Pic d'entropie localisé (contenu compressé/chiffré)",
-}
 
 
 def explain_signal(field_path: str) -> str | None:
@@ -89,24 +65,16 @@ def build_pdf_narrative(
                 signals.append(expl)
 
     if verdict == "malicious":
-        head = f"Verdict sandbox : MALICIOUS (score {anomaly_score:.2f}). PDF analysé via mutool + PDF.js en {duration_s:.1f}s."
-        body = " Indicateurs : " + " ; ".join(signals) + "." if signals else ""
+        head = PDF_NARRATIVE_MALICIOUS.format(score=anomaly_score, duration=duration_s)
+        body = PDF_INDICATORS_PREFIX + " ; ".join(signals) + "." if signals else ""
         return verdict, head + body
 
     if verdict == "needs_more_context":
-        head = f"Verdict sandbox : NEEDS_MORE_CONTEXT (score {anomaly_score:.2f}). Signaux faibles/ambigus, insuffisants pour trancher seuls."
-        body = " Indicateurs : " + " ; ".join(signals) + "." if signals else ""
-        guide = (
-            " À corréler avec le contexte de l'email (expéditeur, objet, corps) : "
-            "un lien vers un domaine d'apparence légitime ou une structure atypique "
-            "peut être du phishing par usurpation. Le sandbox ne dispose pas du contexte d'envoi."
-        )
-        return verdict, head + body + guide
+        head = PDF_NARRATIVE_NEEDS_CONTEXT.format(score=anomaly_score)
+        body = PDF_INDICATORS_PREFIX + " ; ".join(signals) + "." if signals else ""
+        return verdict, head + body + PDF_NEEDS_CONTEXT_GUIDE
 
-    return verdict, (
-        f"Verdict sandbox : BENIGN (score {anomaly_score:.2f}). "
-        f"Aucun indicateur structurel, comportemental ou d'URI suspect détecté ({duration_s:.1f}s)."
-    )
+    return verdict, PDF_NARRATIVE_BENIGN.format(score=anomaly_score, duration=duration_s)
 
 
 def build_elf_summary(hyp_results: dict, anomaly_score: float, duration_s: float) -> str:
@@ -195,14 +163,28 @@ def build_result_event(
         "pipeline_version": pipeline_version,
         "hypothesis_timings_ms": hypothesis_timings_ms,
         "hypothesis_scores": {k: round(r.score, 3) for k, r in hyp_results.items()},
+        # D4 — count of chat-template control tokens neutralized in the untrusted
+        # fields below (factual, not an intent guess). The LLM Layer reads this to
+        # warn the analyst; report it as a weak signal, never as "detection".
+        "prompt_injection_filtered": (
+            count_control_tokens(behavior_summary)
+            + count_control_tokens(email_context)
+            + count_control_tokens(iocs)
+        ),
     }
     if meta_extra:
         meta.update(meta_extra)
+    # D4 — neutralize chat-template control tokens in the attacker-influenced
+    # fields before they leave the sandbox. This is the single output boundary,
+    # so it covers every vector at once: IOC values/descriptions and the URI
+    # fragments embedded in behavior_summary (sample-derived), and the email
+    # context (fully attacker-controlled). The downstream LLM Layer must still
+    # wrap these fields as untrusted data at prompt-assembly time (contract).
     event: dict = {
         "job_id": job_id,
-        "iocs": iocs,
-        "behavior_summary": behavior_summary,
-        "email_context": email_context,
+        "iocs": sanitize_iocs(iocs),
+        "behavior_summary": neutralize_untrusted(behavior_summary),
+        "email_context": sanitize_email_context(email_context),
         "timeout_triggered": timeout_triggered,
         "timestamp": timestamp,
         "_meta": meta,

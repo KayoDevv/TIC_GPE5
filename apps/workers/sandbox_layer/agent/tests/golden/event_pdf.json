@@ -25,6 +25,7 @@
     "hypothesis_scores": {
       "c2_communication": 0.7
     },
+    "prompt_injection_filtered": 0,
     "file_type": "pdf"
   },
   "verdict": "malicious"

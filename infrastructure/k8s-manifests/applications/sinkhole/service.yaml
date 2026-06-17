@@ -1,0 +1,24 @@
+# sinkhole-dns — fixed ClusterIP so it can be set as the analysis Jobs'
+# nameserver (dnsConfig, phase 3) and referenced by INetSim's dns_default_ip.
+#
+# Maps well-known 53/80/443 onto INetSim's non-privileged container ports.
+#
+# clusterIP is PINNED to 10.43.0.53 — it MUST be free in the K3s service CIDR
+# and MUST match configmap.yaml's dns_default_ip and the job-template dnsConfig.
+apiVersion: v1
+kind: Service
+metadata:
+  name: sinkhole-dns
+  namespace: sinkhole
+  labels:
+    app.kubernetes.io/name: inetsim
+    app.kubernetes.io/part-of: charon
+spec:
+  type: ClusterIP
+  clusterIP: 10.43.0.53
+  selector:
+    app: inetsim
+  ports:
+    - {name: dns-udp, port: 53, targetPort: 5353, protocol: UDP}
+    - {name: dns-tcp, port: 53, targetPort: 5353, protocol: TCP}
+    - {name: http, port: 80, targetPort: 8080, protocol: TCP}

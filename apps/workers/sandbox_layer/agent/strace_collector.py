@@ -9,6 +9,7 @@ import re
 from collections import defaultdict
 
 from models import (
+    EvasionTells,
     MAX_SYSCALL_ARG_CHARS,
     MAX_SYSCALL_SAMPLE_ARGS,
     SyscallSummary,
@@ -104,6 +105,33 @@ def parse_strace_log(log_content: str) -> list[SyscallSummary]:
     ]
     results.sort(key=lambda s: (s.name not in SYSCALLS_OF_INTEREST, -s.call_count))
     return results
+
+
+# D1bis — anti-analysis probe tells, matched on the RAW log (before the noise
+# filtering in parse_strace_log strips /proc/self/*, arch_prctl and return values).
+# Each pattern is something a normal program does not do; the probe IS the tell.
+_TRACERPID_RE = re.compile(
+    r'\b(?:openat|open)\([^)]*"(?:/proc/self/status|/proc/\d+/status)"'
+)
+_CONTAINER_RE = re.compile(
+    r'\b(?:openat|open|access|faccessat|newfstatat|stat|lstat)\('
+    r'[^)]*"(?:/\.dockerenv|/proc/1/cgroup)"'
+)
+# Excluded as non-discriminating (fire for every process, not just samples):
+# rseq->ENOSYS (universal under gVisor) and arch_prctl(0x3001) (issued by the
+# benign detonation runtime — Node/PDF.js, recent glibc — confirmed on benign
+# PDFs during validation: it inflated every benign score by 0.056).
+
+
+def extract_evasion_tells(log_content: str) -> EvasionTells:
+    """Detect anti-analysis probes in the raw strace log (D1bis).
+
+    See models.signals.EvasionTells for the rationale of each tell.
+    """
+    return EvasionTells(
+        reads_tracerpid=bool(_TRACERPID_RE.search(log_content)),
+        container_fingerprint=bool(_CONTAINER_RE.search(log_content)),
+    )
 
 
 def extract_sleep_cumulated(log_content: str) -> float:

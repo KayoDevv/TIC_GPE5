@@ -23,29 +23,36 @@ build/
 .terraform/
 *.tfstate
 *.tfstate.backup
-# .terraform.lock.hcl est volontairement commité pour stabiliser la CI
+# .terraform.lock.hcl is intentionally committed to stabilize CI
 
 # Claude
 .claude/
 *CLAUDE.md
 
 apps/workers/ml_layer/data/
-# Outils productivité locaux (non partagés)
+# Local productivity tools (not shared)
 memory/
 TASKS.md
 dashboard.html
 
-# K8s manifests générés au déploiement (IP host dépendante du dev)
+# K8s manifests generated at deploy time (host IP, dev-dependent)
 infrastructure/k8s-manifests/overlays/dev/host-egress-patch.yaml
 
-# Pipeline de validation : DB locale + corpus (samples malware JAMAIS en clair dans git)
+# Validation pipeline: local DB + corpus (malware samples NEVER stored in git)
 validation/feeder_state.duckdb
 validation/feeder_state.duckdb.wal
 validation/results.duckdb
 validation/results.duckdb.wal
 validation/corpus/
 validation/report*.md
-# Corpus de samples — réels malwares PDF/ELF, ne doivent JAMAIS être committés
+# Sample corpus — real PDF/ELF malware, must NEVER be committed.
+# Wide net: any *_corpus/ or *_test/ folder under scripts/validation/ is a
+# local corpus (scope_test, big_test, etc.) → ignored by default.
 scripts/validation/real_corpus/
 scripts/validation/corpus/
+scripts/validation/*_corpus/
+scripts/validation/*_test/
+# Validation run logs — kept local, never committed
+validation/logs/
+validation_*.log
 tmp/

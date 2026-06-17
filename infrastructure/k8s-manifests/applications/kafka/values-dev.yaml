@@ -1,0 +1,24 @@
+# DEV-ONLY Helm overlay for Kafka — re-enables the host-facing NodePort so the
+# validator/feeder running on the VM host can publish to file.requested and read
+# results. NEVER applied in prod (prod keeps externalAccess.enabled=false from
+# values.yaml → ClusterIP only, no LAN exposure).
+#
+# Usage (merged AFTER values.yaml, so it overrides):
+#   helm upgrade --install kafka bitnami/kafka -n kafka \
+#     -f applications/kafka/values.yaml -f applications/kafka/values-dev.yaml
+# Wired into `make dev-expose` / reverted by `make dev-teardown`.
+externalAccess:
+  enabled: true
+  autoDiscovery:
+    enabled: false
+  controller:
+    forceExpose: true
+    service:
+      type: NodePort
+      ports:
+        external: 9094
+      nodePorts:
+        - 32092
+      # K3s node LAN IP — forced so Kafka advertises the right address to the
+      # host client (validator/feeder). Adjust to the dev node's LAN IP.
+      domain: 172.16.249.133

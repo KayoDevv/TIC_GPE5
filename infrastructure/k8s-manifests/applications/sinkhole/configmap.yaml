@@ -1,0 +1,36 @@
+# INetSim live configuration (single source of truth, mounted at
+# /etc/inetsim/inetsim.conf). Phase 1: DNS + HTTP + HTTPS only.
+#
+# Key idea: dns_default_ip points back at the sinkhole Service ClusterIP, so a
+# sample resolving its C2 domain gets the sinkhole's IP and its follow-up
+# HTTP/HTTPS lands on INetSim. Services bind HIGH ports (non-root); the Service
+# maps 53/80/443 onto them.
+#
+# IMPORTANT: dns_default_ip MUST equal the sinkhole Service clusterIP
+# (service.yaml). Both are pinned to 10.43.0.53 — verify it is free in the K3s
+# service CIDR (10.43.0.0/16; CoreDNS is usually 10.43.0.10) and keep them in sync.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: inetsim-conf
+  namespace: sinkhole
+  labels:
+    app.kubernetes.io/part-of: charon
+data:
+  inetsim.conf: |
+    # ---- services (phase 1: DNS + HTTP only; HTTPS is a later extension) ----
+    start_service dns
+    start_service http
+
+    # ---- run services as our non-root container user (no setuid to nobody) ----
+    service_run_as_user inetsim
+
+    # ---- bind: all interfaces, non-privileged ports (Service maps 53/80) ----
+    service_bind_address 0.0.0.0
+    dns_bind_port   5353
+    http_bind_port  8080
+
+    # ---- DNS: resolve everything to the sinkhole itself ----
+    dns_default_ip          10.43.0.53
+    dns_default_hostname    sinkhole
+    dns_default_domainname  sinkhole.local

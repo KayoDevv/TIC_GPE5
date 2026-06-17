@@ -16,12 +16,13 @@ SANDBOX_DIR  := apps/workers/sandbox_layer
 LLM_DIR      := apps/workers/llm_layer
 VERDICT_DIR  := apps/workers/verdict_layer
 MINIO_DIR    := apps/workers/minio_watcher
+SINKHOLE_DIR := apps/sinkhole
 SHARED_DIR   := packages/core
 SCHEMAS_DIR  := packages/kafka-schemas
 
-SERVICE_NAMES := BACKEND FRONTEND ML SANDBOX LLM VERDICT MINIO SHARED SCHEMAS
+SERVICE_NAMES := BACKEND FRONTEND ML SANDBOX LLM VERDICT MINIO SINKHOLE SHARED SCHEMAS
 ALL_SVC_DIRS  := $(BACKEND_DIR) $(FRONTEND_DIR) $(ML_DIR) $(SANDBOX_DIR) \
-                 $(LLM_DIR) $(VERDICT_DIR) $(MINIO_DIR) $(SHARED_DIR) $(SCHEMAS_DIR)
+                 $(LLM_DIR) $(VERDICT_DIR) $(MINIO_DIR) $(SINKHOLE_DIR) $(SHARED_DIR) $(SCHEMAS_DIR)
 
 # ── Service dispatch ──────────────────────────────────────────────────────────
 # make build LLM  ->  _SVC = LLM  ->  delegates to apps/workers/llm_layer
@@ -42,6 +43,12 @@ KAFKA_CHART_VERSION   := 31.0.0
 CALICO_VERSION        := v3.27.3
 MINIO_OPERATOR_REF    := v5.0.15
 KAFKA_NODEPORT        := 32092
+# Validation tunables — mirror scripts/validation/Makefile. Defaults live here so
+# omitting them on sandbox-validate/-benchmark never passes an empty value down
+# (an empty MAX_INFLIGHT= would override the sub-make default and break the feeder).
+REPS                  ?= 1
+MAX_INFLIGHT          ?= 7
+LABEL_SOURCE          ?= unspecified
 KUBECTL_REPO_VERSION  := v1.30
 
 # ── Colors ────────────────────────────────────────────────────────────────────
@@ -338,37 +345,24 @@ fix-dns-fai:
 
 .PHONY: deploy-infra setup-keda setup-kafka deploy-kafka deploy-minio
 
-deploy-infra: setup-kubeconfig setup-keda setup-kafka deploy-minio
+deploy-infra: setup-kubeconfig deploy-minio
 	@echo ""
-	@echo "=== K3s infra deployment complete ==="
-	@echo "Order respected: KEDA -> Kafka -> MinIO (DEPENDENCIES.md)."
-	@echo "Kafka: kafka.kafka.svc.cluster.local:9092 (NodePort $(NODE_IP):$(KAFKA_NODEPORT))"
+	@echo "=== MinIO ready (kustomize/Make-owned) ==="
+	@echo "The engine (KEDA + Kafka) is now Terraform-owned. Bring it up with:"
+	@echo "  make tf-bootstrap-state && make tf-init"
+	@echo "  make tf-import-namespaces tf-import-compartments tf-import-engine  # existing cluster"
+	@echo "  make tf-plan   # MUST be empty, then: make tf-apply"
 	@echo "MinIO: minio.minio.svc.cluster.local:9000"
 	@echo ""
 	@echo "Next step: make launch"
 
+# DEPRECATED — KEDA + Kafka are now Terraform-owned (helm_release in helm.tf).
+# Kept as no-op shims so existing scripts/docs do not break. Use the tf-* flow.
 setup-keda:
-	@command -v helm >/dev/null 2>&1 || { echo "ERROR: helm not installed (make install-helm)."; exit 1; }
-	@if kubectl get ns keda >/dev/null 2>&1 && kubectl get deploy -n keda keda-operator >/dev/null 2>&1; then \
-		echo "KEDA already installed."; \
-	else \
-		helm repo add kedacore https://kedacore.github.io/charts 2>/dev/null || true; \
-		helm repo update kedacore; \
-		helm upgrade --install keda kedacore/keda --namespace keda --create-namespace --wait --timeout 5m; \
-	fi
+	@echo "DEPRECATED: KEDA is Terraform-owned (helm.tf). Use 'make tf-apply' (see deploy-infra)."
 
 setup-kafka:
-	@command -v helm >/dev/null 2>&1 || { echo "ERROR: helm not installed (make install-helm)."; exit 1; }
-	kubectl apply -f infrastructure/k8s-manifests/applications/kafka/namespace.yaml
-	@helm repo add bitnami https://charts.bitnami.com/bitnami 2>/dev/null || true
-	@helm repo update bitnami
-	helm upgrade --install kafka bitnami/kafka \
-		--namespace kafka --version $(KAFKA_CHART_VERSION) \
-		-f infrastructure/k8s-manifests/applications/kafka/values.yaml \
-		--wait --timeout 10m
-	kubectl apply -k infrastructure/k8s-manifests/applications/kafka/
-	@echo "Kafka in-cluster ready. Service: kafka.kafka.svc.cluster.local:9092"
-	@echo "External NodePort: $(NODE_IP):$(KAFKA_NODEPORT)"
+	@echo "DEPRECATED: Kafka is Terraform-owned (helm.tf). Use 'make tf-apply' (see deploy-infra)."
 
 deploy-kafka: setup-kafka
 
@@ -377,6 +371,79 @@ deploy-minio:
 	@echo "Waiting for MinIO Ready..."
 	kubectl rollout status statefulset/minio -n minio --timeout=300s
 	@echo "MinIO in-cluster ready. Internal service: minio.minio.svc.cluster.local:9000"
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  Terraform — driver (T1: state backend + namespaces)
+#  Make/TF boundary: see docs/terraform-frontier.md. TF owns the compartments +
+#  the engine; Make stays the DRIVER (init/plan/apply) + the one-shot bootstrap
+#  of the state bucket (chicken/egg: the state lives in MinIO).
+# ══════════════════════════════════════════════════════════════════════════════
+
+TERRAFORM_DIR    := infrastructure/terraform
+MINIO_NODEPORT   ?= 32090
+TF_STATE_BUCKET  ?= terraform-state
+
+.PHONY: tf-bootstrap-state tf-init tf-plan tf-apply tf-import-namespaces tf-import-compartments tf-import-engine
+
+# One-shot: create the state bucket in MinIO (already running) BEFORE any
+# tf-init. Idempotent (mc mb -p ... || true). MinIO must be up (make deploy-minio).
+tf-bootstrap-state:
+	@command -v mc >/dev/null 2>&1 || { echo "ERROR: mc (MinIO client) not installed."; exit 1; }
+	@test -n "$(NODE_IP)" || { echo "ERROR: NODE_IP not found (hostname -I)."; exit 1; }
+	mc alias set charon-tf http://$(NODE_IP):$(MINIO_NODEPORT) minioadmin minioadmin
+	mc mb -p charon-tf/$(TF_STATE_BUCKET) || true
+	@echo "State bucket '$(TF_STATE_BUCKET)' ready on MinIO ($(NODE_IP):$(MINIO_NODEPORT))."
+
+tf-init:
+	cd $(TERRAFORM_DIR) && terraform init
+
+tf-plan:
+	cd $(TERRAFORM_DIR) && terraform plan
+
+tf-apply:
+	cd $(TERRAFORM_DIR) && terraform apply
+
+# Import BEFORE the first apply (otherwise "already exists"). The 4 namespaces
+# already exist (historically created by kustomize). Idempotent: a namespace
+# already in state is skipped ("Resource already managed").
+tf-import-namespaces:
+	cd $(TERRAFORM_DIR) && for ns in kafka minio sandbox sinkhole; do \
+		terraform import "kubernetes_namespace.charon[\"$$ns\"]" "$$ns" || true; \
+	done
+	@echo "Namespaces imported. Verify: make tf-plan MUST show 0 changes."
+
+# T2 compartments: import the existing RBAC / NetworkPolicy / RuntimeClass
+# objects BEFORE the first apply. Namespaced ids = "<ns>/<name>"; the
+# cluster-scoped RuntimeClass id = "<name>". Idempotent (|| true).
+# NOTE: the gvisor VAP stays Make-owned (make enforce-gvisor) — no typed
+# provider resource. consumer-apiserver-egress stays Make-owned (host node IP).
+tf-import-compartments:
+	cd $(TERRAFORM_DIR) && printf '%s\n' \
+		'kubernetes_service_account_v1.consumer sandbox/sandbox-consumer' \
+		'kubernetes_service_account_v1.analysis sandbox/sandbox-analysis' \
+		'kubernetes_service_account_v1.watcher sandbox/sandbox-watcher' \
+		'kubernetes_role_v1.job_dispatcher sandbox/sandbox-job-dispatcher' \
+		'kubernetes_role_binding_v1.consumer_can_dispatch sandbox/sandbox-consumer-can-dispatch' \
+		'kubernetes_network_policy_v1.sandbox_deny_all sandbox/deny-all-default' \
+		'kubernetes_network_policy_v1.consumer_egress sandbox/consumer-egress' \
+		'kubernetes_network_policy_v1.watcher_egress sandbox/watcher-egress' \
+		'kubernetes_network_policy_v1.analysis_egress sandbox/analysis-egress' \
+		'kubernetes_network_policy_v1.kafka_deny_all kafka/deny-all-default' \
+		'kubernetes_network_policy_v1.kafka_allow kafka/kafka-allow' \
+		'kubernetes_network_policy_v1.sinkhole_deny_egress sinkhole/sinkhole-deny-egress' \
+		'kubernetes_runtime_class_v1.gvisor gvisor' \
+		| while read -r addr id; do terraform import "$$addr" "$$id" || true; done
+	@echo "Compartments imported. Verify: make tf-plan MUST show 0 changes."
+
+# T3 engine: import the existing Helm releases (id = "<namespace>/<release>").
+# BEFORE importing KEDA, set keda_chart_version to the deployed version
+# (helm list -n keda) so the first plan is empty. Idempotent (|| true).
+tf-import-engine:
+	cd $(TERRAFORM_DIR) && printf '%s\n' \
+		'helm_release.keda keda/keda' \
+		'helm_release.kafka kafka/kafka' \
+		| while read -r addr id; do terraform import "$$addr" "$$id" || true; done
+	@echo "Engine imported. Verify: make tf-plan MUST show 0 changes (align chart versions/values if not)."
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  K3s — LAUNCH (images + workers)
@@ -406,19 +473,42 @@ build-watcher:
 	docker build -t ghcr.io/kayodevv/charon-minio-watcher:latest \
 	             -f apps/workers/minio_watcher/Dockerfile .
 
-import-images: build-consumer build-sandbox build-pdf-sandbox build-watcher
+# Sinkhole image build is owned by its child Makefile (apps/sinkhole), per the
+# parent-child build contract; root only orchestrates the K3s import.
+build-sinkhole:
+	$(MAKE) -C $(SINKHOLE_DIR) build
+
+import-images: build-consumer build-sandbox build-pdf-sandbox build-watcher build-sinkhole
 	docker save ghcr.io/kayodevv/charon-sandbox-consumer:latest | sudo k3s ctr images import -
 	docker save ghcr.io/kayodevv/ubuntu-sandbox:v1              | sudo k3s ctr images import -
 	docker save ghcr.io/kayodevv/ubuntu-pdf-sandbox:v1          | sudo k3s ctr images import -
 	docker save ghcr.io/kayodevv/charon-minio-watcher:latest    | sudo k3s ctr images import -
+	docker save ghcr.io/kayodevv/inetsim-sinkhole:v1.0.0        | sudo k3s ctr images import -
 	@echo "Images imported into K3s."
 
-deploy-dev: setup-kubeconfig setup-keda
+deploy-dev: setup-kubeconfig
+	@# KEDA is Terraform-owned (helm.tf, make tf-apply) — no longer installed here.
 	kubectl apply -k $(DEV_OVERLAY)/
 	$(MAKE) netpol-apiserver
 	$(MAKE) install-gvisor
 	$(MAKE) enforce-gvisor
 	@echo "Sandbox stack deployed (dev overlay, in-cluster)."
+
+# DEV-only host exposure: NodePorts so the host-side validator/feeder can reach
+# Kafka (32092) + MinIO (32090). NOT for prod (prod = ClusterIP only).
+.PHONY: dev-expose dev-teardown
+# Kafka is Terraform-owned (helm.tf): flip the dev externalAccess via a TF
+# variable, NOT a parallel `helm upgrade` (single owner). MinIO stays Make-owned,
+# so its dev NodePort remains a direct kubectl apply.
+dev-expose:
+	cd $(TERRAFORM_DIR) && terraform apply -auto-approve -var kafka_dev_external_access=true
+	kubectl apply -f infrastructure/k8s-manifests/applications/minio/dev/minio-nodeport.yaml
+	@echo "DEV exposed — Kafka $(NODE_IP):$(KAFKA_NODEPORT) + MinIO $(NODE_IP):32090 (host validator/feeder)."
+
+dev-teardown:
+	cd $(TERRAFORM_DIR) && terraform apply -auto-approve -var kafka_dev_external_access=false
+	kubectl delete -f infrastructure/k8s-manifests/applications/minio/dev/minio-nodeport.yaml --ignore-not-found
+	@echo "DEV NodePorts removed (prod-safe ClusterIP only)."
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  K3s — gVisor + NetworkPolicy + Validation
@@ -454,9 +544,8 @@ install-gvisor:
 	else \
 		echo "runsc runtime already declared in K3s containerd."; \
 	fi
-	@printf 'apiVersion: node.k8s.io/v1\nkind: RuntimeClass\nmetadata:\n  name: gvisor\nhandler: runsc\n' \
-		| kubectl apply -f -
-	@echo "gVisor operational: RuntimeClass 'gvisor' (handler runsc)."
+	@echo "gVisor host layer ready (runsc binary + containerd runtime)."
+	@echo "The RuntimeClass 'gvisor' K8s object is owned by Terraform (make tf-apply)."
 
 enforce-gvisor:
 	kubectl apply -f infrastructure/k8s-manifests/applications/sandbox/require-gvisor-vap.yaml
@@ -507,12 +596,22 @@ run-consumer:
 #  SANDBOX VALIDATION
 # ══════════════════════════════════════════════════════════════════════════════
 
-.PHONY: sandbox-validate
+.PHONY: sandbox-validate sandbox-benchmark
 sandbox-validate:
 	KAFKA_BOOTSTRAP=$(NODE_IP):$(KAFKA_NODEPORT) \
 	$(MAKE) -f scripts/validation/Makefile run \
 		RUN_ID=$(RUN_ID) CORPUS=$(CORPUS) \
-		REPS=$(REPS) MAX_INFLIGHT=$(MAX_INFLIGHT)
+		REPS=$(REPS) MAX_INFLIGHT=$(MAX_INFLIGHT) \
+		LABEL_SOURCE=$(LABEL_SOURCE)
+
+# Large-N accuracy benchmark (on-demand, NOT a CI gate) — delegates to the
+# validation tool Makefile, same as sandbox-validate.
+sandbox-benchmark:
+	KAFKA_BOOTSTRAP=$(NODE_IP):$(KAFKA_NODEPORT) \
+	$(MAKE) -f scripts/validation/Makefile benchmark \
+		CORPUS=$(CORPUS) RUN_ID=$(RUN_ID) \
+		REPS=$(REPS) MAX_INFLIGHT=$(MAX_INFLIGHT) \
+		LABEL_SOURCE=$(LABEL_SOURCE)
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  MIGRATION / LEGACY

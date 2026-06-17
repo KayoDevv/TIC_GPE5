@@ -1,0 +1,62 @@
+# INetSim sinkhole — single replica (the analysis Jobs are the only clients;
+# state is irrelevant, a restart loses nothing).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: inetsim
+  namespace: sinkhole
+  labels:
+    app.kubernetes.io/name: inetsim
+    app.kubernetes.io/part-of: charon
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: inetsim
+  template:
+    metadata:
+      labels:
+        app: inetsim
+    spec:
+      automountServiceAccountToken: false
+      # INetSim requires its logfiles to be group-owned by `inetsim` (gid 10003).
+      # fsGroup makes the kubelet set that group on the mounted volumes, so files
+      # created by the root main process inherit gid 10003.
+      securityContext:
+        fsGroup: 10003
+      containers:
+        - name: inetsim
+          # Built locally + imported into containerd (never pulled): see
+          # `make build-sinkhole import-images`. GHCR is archive only.
+          image: ghcr.io/kayodevv/inetsim-sinkhole:v1.0.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - {name: dns-udp, containerPort: 5353, protocol: UDP}
+            - {name: dns-tcp, containerPort: 5353, protocol: TCP}
+            - {name: http, containerPort: 8080, protocol: TCP}
+          resources:
+            requests: {cpu: "50m", memory: "64Mi"}
+            limits: {cpu: "300m", memory: "256Mi"}
+          # INetSim must START as root (inetd-style), then drops each service to
+          # `inetsim` (service_run_as_user in the ConfigMap). So: root + ONLY the
+          # two caps needed to drop privileges, everything else removed.
+          securityContext:
+            runAsUser: 0
+            runAsGroup: 0
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+              add: ["SETUID", "SETGID"]
+            seccompProfile:
+              type: RuntimeDefault
+          volumeMounts:
+            - {name: conf, mountPath: /etc/inetsim/inetsim.conf, subPath: inetsim.conf, readOnly: true}
+            # log-dir + report-dir + pidfile (data-dir is the read-only image /opt/inetsim/data).
+            - {name: logs, mountPath: /var/log/inetsim}
+      volumes:
+        - name: conf
+          configMap:
+            name: inetsim-conf
+        - name: logs
+          emptyDir: {}

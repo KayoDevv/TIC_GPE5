@@ -21,6 +21,18 @@ All state lives in `validation/feeder_state.duckdb` + `validation/results.duckdb
 
 The label is derived from the **first-level subfolder name** — no metadata file to maintain.
 
+**Label provenance (anti-circularity, M2).** Pass `LABEL_SOURCE=` (or `--label-source`
+on the feeder) to record where the labels came from:
+`academic_groundtruth` / `synthetic` (independent of any AV → kept in the headline),
+`av_consensus` (e.g. MalwareBazaar — **excluded** from the accuracy figure, since
+scoring against the same AV the sandbox imitates is circular), `unspecified` (legacy
+default, kept). Run each dataset as its own campaign:
+
+```bash
+make sandbox-validate CORPUS=~/datasets/cic-evasive-pdf  RUN_ID=cic  LABEL_SOURCE=academic_groundtruth
+make sandbox-validate CORPUS=~/datasets/malwarebazaar_pdf RUN_ID=mbz LABEL_SOURCE=av_consensus
+```
+
 > **Single canonical root: `scripts/validation/real_corpus/`.** It is the default of the Makefile and of `prepare_corpus.py`. The samples are **real malware** → the folder is **gitignored** (never committed). Do not recreate a parallel `corpus/` or `tmp/corpus/`: one source of truth only.
 
 ---
@@ -197,6 +209,83 @@ benign  <  0.04  ≤  needs_more_context  <  0.15  ≤  malicious
 | Confident recall | malicious classified *malicious* directly | indicative |
 | Recall with escalation | malicious confirmed **or** escalated (never washed) | > 0.95 |
 | Misses | malicious washed to benign | **0** (the only true security failure) |
+
+> **Reporting honesty (P0c — read before quoting any figure).**
+> - **Always state N and a confidence interval.** A point estimate on a small
+>   corpus is not a result. Precision `1.0` on ~8 confident positives has a
+>   95% Wilson interval of roughly **[0.67, 1.0]** — i.e. not significant.
+>   Report `precision = 1.0 (95% Wilson CI [0.67, 1.0], n=8)`, never a bare `1.0`.
+> - **Confident recall is low and that is by design.** On the golden, **6 of 14**
+>   labelled malicious do **not** score `malicious` directly — they land in
+>   `needs_more_context` (escalated to the LLM) or `benign`. They are **not
+>   detected by the sandbox alone**; they are deferred. Do not fold them into a
+>   precision/F1 figure as if detected.
+> - **The end-to-end verdict (post-LLM) is not yet measured.** Every figure here
+>   is the **sandbox in isolation**. "The system catches X" is unproven until the
+>   FN corpus + post-LLM measurement (P0d) exists. Until then: "capability
+>   deployed, efficacy measurement in progress" — not "detects".
+
+---
+
+## Golden baseline (M3 — anti-regression on scoring changes)
+
+Freeze the per-sample verdicts of a reference run, then gate every scoring
+change (`core/scoring.py`, weights, thresholds) behind a comparison:
+
+```bash
+# 1. Freeze the reference run (once) → scripts/validation/golden/baseline.json
+make -f scripts/validation/Makefile golden-freeze RUN_ID=run_OpusV1.4
+git add scripts/validation/golden/baseline.json && git commit -m "test: golden run baseline"
+
+# 2. After a scoring change: replay the SAME corpus under a new RUN_ID, then
+make -f scripts/validation/Makefile golden-compare RUN_ID=run_after_D1
+```
+
+`golden-compare` exit codes: **0** = no regression, **1** = at least one verdict
+washed downward (`malicious`/`needs_more_context` → `benign`) or a labelled
+malicious sample changed band. Score drift within a band (> 0.02) is reported
+but non-fatal. The baseline stores only sha256 + label + scores + band — never
+sample content — so it is safe to commit.
+
+An intentional change (e.g. D1 turning a 0.000 contentless into
+`needs_more_context`) shows up as FAIL: review it, then **re-freeze consciously**
+with the new run as reference. That is the point — no silent verdict moves.
+
+### Growing the net with trap samples (`golden-extend`)
+
+The golden's value is **curated coverage, not volume**: a small set that holds one
+representative of each known failure class. When a benchmark surfaces a new class
+(e.g. the passive embedded-dropper that broke d-calib at threshold 0.08), graft
+those exact samples onto the baseline instead of re-freezing everything:
+
+```bash
+# SHA  = gating prefixes (a wash on these FAILs the gate)
+# ACCEPT = documented out-of-scope prefixes (reported, never fatal — e.g. a
+#          Windows trojan our Linux detonation cannot execute, like fb87d8a7)
+make -f scripts/validation/Makefile golden-extend RUN_ID=big_test \
+  SHA="<dropper1> <dropper2> <near_threshold_0.090>" ACCEPT="<fb87d8a7>"
+git add scripts/validation/golden/baseline.json
+```
+
+Grafted samples are re-aggregated with the **baseline's** thresholds so their bands
+stay consistent. `compare` lists an accepted sample's band moves (so a future fix
+that finally catches it is visible) but never fails the gate on it.
+
+## Benchmark — large-N accuracy (not a gate)
+
+The golden answers *"did I break a known verdict?"*. The **benchmark** answers
+*"how good am I, and where are the unknown holes?"* — large corpus, replayed
+on-demand (before a defense, after a new capability like D6), **never a CI gate**:
+
+```bash
+# Replays a large corpus and emits the F1 / recall / precision report (M7).
+# REPS defaults to 3 for figure stability. CORPUS is required.
+make sandbox-benchmark CORPUS=<large_corpus> [RUN_ID=<id> REPS=3]
+```
+
+Keep the two separate: the golden (small, stable) keeps **known** failure classes
+closed; the benchmark (large, disposable) hunts **unknown** ones. Folding the big
+corpus into the golden would make it a noisy gate you'd learn to ignore.
 
 ---
 

@@ -74,26 +74,14 @@ tls:
     enabled: false
 
 # ─────────────────────────────────────────────────────────────────────
-# External service — NodePort 32092 for the validator running on the host.
-# IMPORTANT: domain forced to the node's LAN IP (172.16.249.133), otherwise
-# Kafka advertises the ExternalIP detected by K3s (which may be a public IP
-# unreachable from the host).
+# External access — DISABLED by default (prod). In prod Kafka is reachable only
+# in-cluster via kafka.kafka.svc.cluster.local:9092; NO NodePort on the node/LAN
+# (a LAN-exposed broker = verdict forgery on verdict.result — red team finding).
+# The host-side validator/feeder need a NodePort ONLY in dev: it is re-enabled by
+# `make dev-expose`, which merges values-dev.yaml (the full externalAccess block).
 # ─────────────────────────────────────────────────────────────────────
 externalAccess:
-  enabled: true
-  autoDiscovery:
-    enabled: false
-  controller:
-    forceExpose: true
-    service:
-      type: NodePort
-      ports:
-        external: 9094
-      nodePorts:
-        - 32092
-      # K3s node LAN IP — forced so Kafka advertises the right address to the
-      # client (validator/feeder running on the host).
-      domain: 172.16.249.133
+  enabled: false
 
 # ─────────────────────────────────────────────────────────────────────
 # Broker configuration — replication factor 1 everywhere (single-node dev)

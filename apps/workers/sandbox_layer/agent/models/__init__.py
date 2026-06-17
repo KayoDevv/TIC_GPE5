@@ -56,6 +56,7 @@ from .memory import (
 )
 from .signals import (
     DnsQuery,
+    EvasionTells,
     HttpRequest,
     InotifyEvent,
     NetworkFlow,
@@ -98,6 +99,7 @@ __all__ = [
     "SnapshotDiff",
     # signals
     "SyscallSummary",
+    "EvasionTells",
     "InotifyEvent",
     "DnsQuery",
     "HttpRequest",

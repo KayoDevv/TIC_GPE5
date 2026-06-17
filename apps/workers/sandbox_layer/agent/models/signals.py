@@ -38,6 +38,35 @@ class SyscallSummary(BaseModel):
     ] = Field(default_factory=list)
 
 
+class EvasionTells(BaseModel):
+    """Anti-analysis probes observed in the RAW strace log (D1bis).
+
+    Actions a normal program does not perform — each is a near-confession that
+    the sample is fingerprinting the analysis environment, so the probe itself
+    becomes a positive detection signal rather than waiting for the bailout to
+    show up as a contentless run.
+
+    Derived from the raw trace (see strace_collector.extract_evasion_tells)
+    because the aggregating collector drops exactly these: the /proc/self/*
+    path prefix is noise-filtered, arch_prctl is in the noise set, and syscall
+    return values are discarded.
+
+    reads_tracerpid       : opened /proc/self/status (or /proc/<pid>/status) — the
+                            TracerPid anti-debug check.
+    container_fingerprint : touched /.dockerenv or /proc/1/cgroup (container detect).
+
+    NB: two environment-fingerprinting syscalls are deliberately NOT used because
+    they fire for EVERY process and cannot discriminate — rseq->ENOSYS (universal
+    under gVisor) and arch_prctl(0x3001) (issued by the benign detonation runtime,
+    Node/PDF.js + recent glibc; confirmed on benign PDFs during validation).
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    reads_tracerpid: bool = False
+    container_fingerprint: bool = False
+
+
 class InotifyEvent(BaseModel):
     """Timestamped inotify event (relative to t=0).
 
@@ -147,3 +176,6 @@ class RuntimeSignals(BaseModel):
     execution_duration_s: float
     sleep_cumulated_s: float = 0.0  # anti-sandbox sleep detection
     exit_code: int | None = None
+
+    # Anti-analysis probes (D1bis) — derived from the raw trace, see EvasionTells.
+    evasion_tells: EvasionTells = Field(default_factory=EvasionTells)

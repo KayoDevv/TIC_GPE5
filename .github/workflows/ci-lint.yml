@@ -49,7 +49,7 @@ jobs:
             | grep -v 'scripts/' \
             | grep -v 'overlays/' \
             | grep -v 'kustomization.yaml' \
-            | grep -v 'values.yaml' \
+            | grep -vE 'values(-[a-z]+)?\.yaml' \
             || true)
           if [ -z "$FILES" ]; then
             echo "No K8s manifests found, skipping validation"

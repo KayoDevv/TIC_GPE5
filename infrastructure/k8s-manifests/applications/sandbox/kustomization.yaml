@@ -2,9 +2,8 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: sandbox
 resources:
-  - namespace.yaml
-  - rbac.yaml
-  - networkpolicy.yaml
+  # namespace `sandbox`: owned by Terraform (infrastructure/terraform/namespaces.tf)
+  # rbac + networkpolicy: owned by Terraform (rbac.tf, networkpolicy.tf)
   - consumer-deployment.yaml
   - watcher-deployment.yaml
   - keda-scaledobject.yaml
