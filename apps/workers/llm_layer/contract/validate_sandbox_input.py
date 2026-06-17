@@ -12,12 +12,40 @@ Exit 0 on success, 1 on missing/invalid field.
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 
 REQUIRED_TOP = ("job_id", "iocs", "behavior_summary", "email_context", "timestamp")
 REQUIRED_EMAIL = ("sender", "subject", "body_text")
 ALLOWED_IOC_TYPES = {"ip", "domain", "file_hash", "registry_key", "syscall"}
+
+# D4 — the LLM Layer injects the attacker-influenced free-text fields below into
+# an LLM prompt. The sandbox is contractually required to have neutralized any
+# chat-template control token that could flip the model out of its data context
+# (see sandbox_layer/agent/core/sanitize.py). The consumer verifies this
+# INDEPENDENTLY here: if a raw role-switching token reaches the LLM input, the
+# contract is broken and the PR cannot merge. This list mirrors the producer's.
+_CONTROL_TOKEN_RE = re.compile(
+    r"<\|[^|>\n]{0,40}\|>|\[/?INST\]|<</?SYS>>|</?s>|<(?:start|end)_of_turn>"
+    r"|\n\n(?:Human|Assistant|System):",
+    re.IGNORECASE,
+)
+
+
+def _assert_injection_safe(payload: dict) -> None:
+    """Fail if any prompt-bound free-text field still carries a control token."""
+    fields = [("behavior_summary", payload.get("behavior_summary", ""))]
+    ctx = payload.get("email_context", {})
+    if isinstance(ctx, dict):
+        fields += [(f"email_context.{k}", v) for k, v in ctx.items()]
+    for i, ioc in enumerate(payload.get("iocs", [])):
+        fields.append((f"iocs[{i}].value", ioc.get("value", "")))
+        fields.append((f"iocs[{i}].description", ioc.get("description", "")))
+    for name, val in fields:
+        if isinstance(val, str) and _CONTROL_TOKEN_RE.search(val):
+            fail(f"prompt-injection control token survived in {name!r} — "
+                 f"sandbox must neutralize it (D4 contract)")
 
 
 def fail(msg: str) -> None:
@@ -48,7 +76,9 @@ def validate(payload: dict) -> None:
         if k not in ctx:
             fail(f"email_context.{k} missing")
 
-    print(f"OK ({len(payload['iocs'])} IoCs, summary={len(payload['behavior_summary'])} chars)")
+    _assert_injection_safe(payload)
+
+    print(f"OK ({len(payload['iocs'])} IoCs, summary={len(payload['behavior_summary'])} chars, injection-safe)")
 
 
 def main() -> None:

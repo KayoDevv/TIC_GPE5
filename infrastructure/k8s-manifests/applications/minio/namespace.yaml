@@ -1,9 +1,0 @@
-# MinIO namespace — label `kubernetes.io/metadata.name: minio` (auto-added)
-# referenced by the sandbox NetworkPolicies via namespaceSelector.
----
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: minio
-  labels:
-    name: minio

@@ -16,6 +16,6 @@ kind: Kustomization
 namespace: minio
 
 resources:
-  - namespace.yaml
+  # namespace `minio`: owned by Terraform (infrastructure/terraform/namespaces.tf)
   - tenant.yaml
   - bucket-init.yaml

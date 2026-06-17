@@ -1,4 +1,4 @@
-# ghcr-image: ubuntu-pdf-sandbox:v1.0.0
+# ghcr-image: ubuntu-pdf-sandbox:v1.2.1
 # PDF sandbox image — ubuntu-pdf-sandbox:v1
 # Runs in a batch/v1 K8s Job with cap SYS_PTRACE.
 # Tools: mupdf 1.24.10 (built from source) + pdfid + strace + Python agent
@@ -108,11 +108,23 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     zlib1g \
     && rm -rf /var/lib/apt/lists/*
 
-# Node 20 LTS (for the dynamic PDF.js layer — running the PDF's JS)
-# hadolint ignore=DL3008
-RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
-    apt-get install -y --no-install-recommends nodejs && \
-    rm -rf /var/lib/apt/lists/* && \
+# Node 20 LTS (for the dynamic PDF.js layer — running the PDF's JS).
+# Installed from the official nodejs.org tarball, pinned by version and verified
+# against Node's published SHASUMS256. Replaces `curl deb.nodesource.com | bash -`
+# (third-party apt repo + arbitrary root code piped from a CDN at every build —
+# supply-chain risk, pattern xz/SolarWinds). Same official binaries as nodesource,
+# so no CPU-baseline change on the x86-64-v1 VM.
+# Shortcut named: SHASUMS256.txt is fetched over HTTPS but not yet GPG-verified
+# against Node's release keys (Phase 9 hardening). A wrong NODE_VERSION fails the
+# build loudly (404 / checksum mismatch) — it never silently misbehaves.
+ARG NODE_VERSION=20.18.1
+RUN curl -fsSLO --proto '=https' --tlsv1.2 \
+        "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.gz" && \
+    curl -fsSL --proto '=https' --tlsv1.2 \
+        "https://nodejs.org/dist/v${NODE_VERSION}/SHASUMS256.txt" -o SHASUMS256.txt && \
+    grep " node-v${NODE_VERSION}-linux-x64.tar.gz\$" SHASUMS256.txt | sha256sum -c - && \
+    tar -xzf "node-v${NODE_VERSION}-linux-x64.tar.gz" -C /usr/local --strip-components=1 --no-same-owner && \
+    rm "node-v${NODE_VERSION}-linux-x64.tar.gz" SHASUMS256.txt && \
     node --version && npm --version
 
 # pdfjs-dist (Mozilla PDF.js) — pin v3.x for the legacy CommonJS build without DOM polyfill

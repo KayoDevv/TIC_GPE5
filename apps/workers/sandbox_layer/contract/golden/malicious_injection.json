@@ -25,6 +25,7 @@
   "_meta": {
     "anomaly_score": 0.1,
     "duration_s": 6.82,
-    "error": null
+    "error": null,
+    "prompt_injection_filtered": 0
   }
 }

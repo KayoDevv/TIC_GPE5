@@ -1,0 +1,22 @@
+# DEV-ONLY — exposes MinIO on a fixed NodePort so the validator/feeder running on
+# the VM host can upload samples. The base `minio` Service (tenant.yaml) stays
+# ClusterIP; prod has NO host-facing MinIO. This is a SEPARATE service, NOT part
+# of the base kustomization — applied by `make dev-expose`, removed by `dev-teardown`.
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio-ext
+  namespace: minio
+  labels:
+    app: minio
+    charon.io/env: dev
+spec:
+  type: NodePort
+  selector:
+    app: minio
+  ports:
+    - name: api
+      port: 9000
+      targetPort: 9000
+      nodePort: 32090
+      protocol: TCP

@@ -85,7 +85,7 @@ def _compute_filter_depth(filters: Any) -> int:
     ``pikepdf.Name``.  Only filters in ``_ENCODING_FILTERS`` contribute.
     """
     if isinstance(filters, pikepdf.Array):
-        return sum(1 for f in filters if str(f) in _ENCODING_FILTERS)  # type: ignore
+        return sum(1 for f in filters if str(f) in _ENCODING_FILTERS)
     return 1 if str(filters) in _ENCODING_FILTERS else 0
 
 
@@ -229,7 +229,7 @@ def _extract_object_signals(
                 queue.append(value)
 
         elif isinstance(obj, pikepdf.Array):
-            for item in obj:  # type: ignore[attr-defined]
+            for item in obj:
                 queue.append(item)
 
 

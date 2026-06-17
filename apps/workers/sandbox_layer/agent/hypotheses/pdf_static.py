@@ -42,12 +42,22 @@ _TRACKED_KEYWORDS = (
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _run_pdfid(pdf_path: Path) -> str:
-    """Run pdfid and return its output. '' if absent/timeout."""
+_PDFID_TIMEOUT_S = 30
+
+# Sentinel: the probe TIMED OUT (the sample defeated the tool) — distinct from
+# "" (tool absent). A timeout is the sample's doing and must surface as an
+# indicator, never be silently converted into "no signal" (cf. the fb87d8a7
+# miss: pdfid + qpdf all choked on a pathological PDF -> score 0.0 -> benign).
+_PROBE_TIMEOUT = None
+
+
+def _run_pdfid(pdf_path: Path) -> str | None:
+    """Run pdfid. Returns its output, '' if the tool is absent, or
+    _PROBE_TIMEOUT (None) if the sample made it hang past the timeout."""
     try:
         result = subprocess.run(
             ["pdfid", str(pdf_path)],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, text=True, timeout=_PDFID_TIMEOUT_S,
         )
         return result.stdout + result.stderr
     except FileNotFoundError:
@@ -55,7 +65,7 @@ def _run_pdfid(pdf_path: Path) -> str:
         return ""
     except subprocess.TimeoutExpired:
         log.warning("pdfid timed out on %s", pdf_path.name)
-        return ""
+        return _PROBE_TIMEOUT
 
 
 def _parse_pdfid_output(output: str) -> dict[str, int]:
@@ -145,6 +155,20 @@ def evaluate_static(pdf_path: Path) -> HypothesisResult:
     Signature: (Path) → HypothesisResult.
     """
     output = _run_pdfid(pdf_path)
+    if output is _PROBE_TIMEOUT:
+        # The sample defeated the probe — a legitimate PDF never makes a
+        # regex counter grind for 30s. Inconclusive => escalate (0.2 through
+        # the 0.30 hypothesis weight = 0.06, needs_more_context band), never
+        # claim benign on an observation we failed to make (D1).
+        return HypothesisResult(
+            value=False,
+            score=0.2,
+            evidence=[Evidence(
+                source="runtime_signals",
+                field_path="pdf_static.probe_timeout",
+                value=f"pdfid hung past {_PDFID_TIMEOUT_S}s — pathological PDF structure, static probe defeated",
+            )],
+        )
     if not output:
         return HypothesisResult(value=False, score=0.0, evidence=[])
 

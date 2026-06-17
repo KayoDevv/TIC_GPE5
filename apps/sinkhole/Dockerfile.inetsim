@@ -1,0 +1,72 @@
+# ghcr-image: inetsim-sinkhole:v1.0.0
+# D2 sinkhole — INetSim responder for malware detonation.
+#
+# Replaces the NXDOMAIN dead-end: resolves EVERY DNS query to the sinkhole's own
+# IP and answers HTTP/HTTPS with fake content, so a C2-keyed sample keeps running
+# and reveals its behaviour (captured into RuntimeSignals.network).
+#
+# Runs NON-ROOT on HIGH ports (5353/8080/8443); the K8s Service maps the well-known
+# 53/80/443 onto them, so no privileged-port capability is needed. The live config
+# is mounted from a ConfigMap at /etc/inetsim/inetsim.conf (single source of truth).
+#
+# Build:
+#   docker build -t ghcr.io/kayodevv/inetsim-sinkhole:v1.0.0 \
+#                -f apps/sinkhole/Dockerfile.inetsim apps/sinkhole
+#
+# NB (validate on the VM): INetSim is not in Debian main — it ships via the
+# inetsim.org apt repo. Exact Perl dependency package names may need adjusting
+# at first build; this list covers INetSim 1.3.2's documented requirements.
+
+FROM debian:12-slim
+
+ENV DEBIAN_FRONTEND=noninteractive
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+ARG INETSIM_UID=10003
+
+# Perl runtime + INetSim's documented module dependencies (Net::Server is the
+# hard requirement; IO::Socket::SSL enables https; IPC::Shareable / Digest::SHA
+# are used by the service workers).
+# hadolint ignore=DL3008
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    perl \
+    libnet-server-perl \
+    libipc-shareable-perl \
+    libio-socket-ssl-perl \
+    libdigest-sha-perl \
+    libnet-dns-perl \
+    ca-certificates \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# INetSim from the upstream tarball (canonical distribution).
+ARG INETSIM_VERSION=1.3.2
+RUN curl -fsSL --proto '=https' --tlsv1.2 \
+    "https://www.inetsim.org/downloads/inetsim-${INETSIM_VERSION}.tar.gz" \
+    -o /tmp/inetsim.tar.gz && \
+    mkdir -p /opt && tar -xzf /tmp/inetsim.tar.gz -C /opt && \
+    mv "/opt/inetsim-${INETSIM_VERSION}" /opt/inetsim && \
+    rm /tmp/inetsim.tar.gz
+
+# Non-root user. data-dir is the shipped /opt/inetsim/data (read-only at runtime
+# is fine — it holds service templates). log-dir/report-dir/pidfile go to
+# /var/log/inetsim, backed by a writable emptyDir in the Deployment (the default
+# pidfile /var/run/inetsim.pid is not writable under non-root + read-only rootfs).
+# Create the `inetsim` GROUP explicitly with gid = uid, so gid 10003 has a NAME
+# (INetSim resolves getgrgid on its logfile group and rejects an unnamed group).
+RUN groupadd --system --gid "${INETSIM_UID}" inetsim && \
+    useradd --system --uid "${INETSIM_UID}" --gid "${INETSIM_UID}" \
+            --no-create-home --shell /usr/sbin/nologin inetsim && \
+    mkdir -p /var/log/inetsim /etc/inetsim && \
+    chown -R "${INETSIM_UID}:${INETSIM_UID}" /var/log/inetsim /opt/inetsim
+
+USER 10003
+WORKDIR /opt/inetsim
+
+# Config is mounted from the ConfigMap at /etc/inetsim/inetsim.conf.
+ENTRYPOINT ["/opt/inetsim/inetsim", \
+            "--config=/etc/inetsim/inetsim.conf", \
+            "--data-dir=/opt/inetsim/data", \
+            "--log-dir=/var/log/inetsim", \
+            "--report-dir=/var/log/inetsim", \
+            "--pidfile=/var/log/inetsim/inetsim.pid"]

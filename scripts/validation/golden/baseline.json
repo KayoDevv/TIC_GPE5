@@ -1,0 +1,228 @@
+{
+  "run_id": "run_OpusV1.4",
+  "frozen_at": "2026-06-10T05:57:00+00:00",
+  "thresholds": {
+    "suspicious": 0.04,
+    "malicious": 0.15
+  },
+  "samples": {
+    "205064af53c802ca95a0f902096c0e1f2684081b73c3f6e4005a1af9f778c6aa": {
+      "label": "malicious",
+      "reps": 2,
+      "errors": 0,
+      "scores": [
+        0.21,
+        0.21
+      ],
+      "mean": 0.21,
+      "band": "malicious"
+    },
+    "24f411581702fea968f554264a629a80aa5a03a2a959733063391575256edcc7": {
+      "label": "benign",
+      "reps": 2,
+      "errors": 0,
+      "scores": [
+        0.045,
+        0.045
+      ],
+      "mean": 0.045,
+      "band": "needs_more_context"
+    },
+    "2663227a94ec8a81892a02f5697fc15c578571cdee96407adb5c60a60236c76f": {
+      "label": "benign",
+      "reps": 2,
+      "errors": 0,
+      "scores": [
+        0.06,
+        0.06
+      ],
+      "mean": 0.06,
+      "band": "needs_more_context"
+    },
+    "26e2b47fbd8090cc78078bd76f4df43a4d33af913600a31bb9209bccefcaa24f": {
+      "label": "malicious",
+      "reps": 1,
+      "errors": 0,
+      "scores": [
+        0.045
+      ],
+      "mean": 0.045,
+      "band": "needs_more_context"
+    },
+    "3540d90b68a408f9b1bec3ff7fc194976e9f78f5393ca2a35953ecddca531495": {
+      "label": "malicious",
+      "reps": 1,
+      "errors": 0,
+      "scores": [
+        0.075
+      ],
+      "mean": 0.075,
+      "band": "needs_more_context"
+    },
+    "3a4baaf5bf4afa4593974315448f23b0a3755df7349a2878a8c7b45c56bebfcf": {
+      "label": "malicious",
+      "reps": 2,
+      "errors": 0,
+      "scores": [
+        0.24,
+        0.24
+      ],
+      "mean": 0.24,
+      "band": "malicious"
+    },
+    "43e0ea508637a7cebb3d04942339490318a097778c60211cdbb08c5e6fbc1784": {
+      "label": "benign",
+      "reps": 2,
+      "errors": 0,
+      "scores": [
+        0.045,
+        0.045
+      ],
+      "mean": 0.045,
+      "band": "needs_more_context"
+    },
+    "546b44e5a1a21dee42f6afc6049289ec03dd38d3e7569bd7ba990f512f474cce": {
+      "label": "malicious",
+      "reps": 2,
+      "errors": 0,
+      "scores": [
+        0.24,
+        0.24
+      ],
+      "mean": 0.24,
+      "band": "malicious"
+    },
+    "60b30efa1048900833d1758440247fe8ac85a3134f2327388dcb24e07d814c89": {
+      "label": "benign",
+      "reps": 2,
+      "errors": 0,
+      "scores": [
+        0.075,
+        0.075
+      ],
+      "mean": 0.075,
+      "band": "needs_more_context"
+    },
+    "8142d80d44ea5525c3c311d58db022a87bc0267a28c7f251839991e8b267edf2": {
+      "label": "malicious",
+      "reps": 1,
+      "errors": 0,
+      "scores": [
+        0.045
+      ],
+      "mean": 0.045,
+      "band": "needs_more_context"
+    },
+    "8314f1034854548baf26f9912f79c6207299cb0520b31ed25af64889bd1500bc": {
+      "label": "benign",
+      "reps": 2,
+      "errors": 0,
+      "scores": [
+        0.06,
+        0.06
+      ],
+      "mean": 0.06,
+      "band": "needs_more_context"
+    },
+    "8aae82dfe337761e498f8509c66b54f7ffb59896606869739f22f6b8a07ab64c": {
+      "label": "malicious",
+      "reps": 2,
+      "errors": 0,
+      "scores": [
+        0.21,
+        0.21
+      ],
+      "mean": 0.21,
+      "band": "malicious"
+    },
+    "a7df71330d79df5856f2229f74f3391017e161527cff5146caf9374072aab0c4": {
+      "label": "malicious",
+      "reps": 2,
+      "errors": 0,
+      "scores": [
+        0.24,
+        0.24
+      ],
+      "mean": 0.24,
+      "band": "malicious"
+    },
+    "b260bba790c2da55a7e0795f356fcd9b70743686c55250f0ef1cc993c4d1abac": {
+      "label": "benign",
+      "reps": 2,
+      "errors": 0,
+      "scores": [
+        0.045,
+        0.045
+      ],
+      "mean": 0.045,
+      "band": "needs_more_context"
+    },
+    "b6a6a779c7b549618c2b3288e96e37809235c55761000cf6c3eb1a6429769003": {
+      "label": "malicious",
+      "reps": 1,
+      "errors": 0,
+      "scores": [
+        0.075
+      ],
+      "mean": 0.075,
+      "band": "needs_more_context"
+    },
+    "baffee8dbb99d2c7b061378e685f8b8a191be2c0de75e878b83db5a8981e39f9": {
+      "label": "malicious",
+      "reps": 2,
+      "errors": 0,
+      "scores": [
+        0.18,
+        0.18
+      ],
+      "mean": 0.18,
+      "band": "malicious"
+    },
+    "c17063ab7ddcd08bebea70e93a4424330b4a512592c1a7a25bbb19edf95a704c": {
+      "label": "malicious",
+      "reps": 2,
+      "errors": 0,
+      "scores": [
+        0.24,
+        0.24
+      ],
+      "mean": 0.24,
+      "band": "malicious"
+    },
+    "d0552d4acdd6f0df66e3217e8fd685b69011f8ec4ffb4b57a884f97436002706": {
+      "label": "malicious",
+      "reps": 2,
+      "errors": 0,
+      "scores": [
+        0.09,
+        0.09
+      ],
+      "mean": 0.09,
+      "band": "needs_more_context"
+    },
+    "f26c584c7d0be0001b0dcfab895c511805c1dd8befcc5fe12ca83c5c13b46c7b": {
+      "label": "malicious",
+      "reps": 2,
+      "errors": 0,
+      "scores": [
+        0.24,
+        0.24
+      ],
+      "mean": 0.24,
+      "band": "malicious"
+    },
+    "fb87d8a7807626279bae04d56ba01ce1401917f6b0e7a74a335208a940221ddd": {
+      "label": "malicious",
+      "reps": 2,
+      "errors": 0,
+      "scores": [
+        0.0,
+        0.0
+      ],
+      "mean": 0.0,
+      "band": "benign",
+      "accepted": "out_of_scope"
+    }
+  },
+  "extended_at": "2026-06-11T04:38:20+00:00"
+}

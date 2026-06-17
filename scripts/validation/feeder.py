@@ -145,6 +145,7 @@ async def feed(
     max_inflight: int,
     db_dir: Path,
     rate_per_s: float | None,
+    label_source: str = "unspecified",
 ) -> None:
     samples = discover_corpus(corpus_root)
     if not samples:
@@ -192,7 +193,7 @@ async def feed(
         for path, label in samples:
             sha256 = sha256_of(path)
             size = path.stat().st_size
-            db.register_sample(conn_f, sha256, label, str(path), size)
+            db.register_sample(conn_f, sha256, label, str(path), size, label_source)
 
             for rep in range(repetitions):
                 if db.already_sent(conn_f, run_id, sha256, rep):
@@ -276,6 +277,10 @@ def main() -> None:
     p.add_argument("--max-inflight", type=int, default=30, help="Cap on jobs awaiting a result")
     p.add_argument("--db-dir", type=Path, default=DEFAULT_DB_DIR, help="DB folder (default: validation/)")
     p.add_argument("--rate", type=float, default=None, help="Max throughput msg/s (default: unlimited)")
+    p.add_argument("--label-source", default="unspecified",
+                   choices=["academic_groundtruth", "av_consensus", "synthetic", "unspecified"],
+                   help="Provenance of the labels (anti-circularity M2). 'av_consensus' is "
+                        "excluded from the independence figure in the report.")
     args = p.parse_args()
 
     if args.repetitions < 1:
@@ -290,6 +295,7 @@ def main() -> None:
         max_inflight=args.max_inflight,
         db_dir=args.db_dir.resolve(),
         rate_per_s=args.rate,
+        label_source=args.label_source,
     ))
 
 

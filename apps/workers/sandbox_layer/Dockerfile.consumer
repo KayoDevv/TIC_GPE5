@@ -1,4 +1,4 @@
-# ghcr-image: charon-sandbox-consumer:v1.0.0
+# ghcr-image: charon-sandbox-consumer:v1.1.0
 # K8s consumer image — Kafka dispatcher → batch/v1 Job
 # Receives file.requested messages and creates one Job per sample.
 #

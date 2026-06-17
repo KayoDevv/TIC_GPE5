@@ -17,33 +17,31 @@ Pipeline:
 
 from __future__ import annotations
 
-import argparse
 import json
-import logging
 import os
 import resource
 import subprocess
 import sys
-import tempfile
 import threading
 import time
-import uuid
-from datetime import datetime, timezone
-from pathlib import Path
-
 import urllib.request
-from aiokafka import AIOKafkaProducer
-import asyncio
+from pathlib import Path
 
 # Add the current directory to the path for local imports
 sys.path.insert(0, str(Path(__file__).parent))
 
+from agent_runtime import EMAIL_CONTEXT, TIMEOUT_S, get_logger, now_iso, publish, run_cli
 from models import MemoryObservables, NetworkObservables, RuntimeSignals
 from snapshot import compute_diff, take_snapshot
-from strace_collector import extract_sleep_cumulated, parse_strace_log
+from strace_collector import extract_evasion_tells, extract_sleep_cumulated, parse_strace_log
 from memory import collect_memory_observables
 from core.report import build_elf_summary, build_iocs, build_result_event
-from core.scoring import compute_anomaly_score
+from core.scoring import (
+    compute_anomaly_score,
+    execution_liveness,
+    guarded_verdict,
+    low_observability_alert,
+)
 import hypotheses.persistence as h_persistence
 import hypotheses.c2 as h_c2
 import hypotheses.injection as h_injection
@@ -52,25 +50,11 @@ import hypotheses.evasion as h_evasion
 import hypotheses.propagation as h_propagation
 import hypotheses.lolbins as h_lolbins
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(name)s] %(levelname)s %(message)s",
-    stream=sys.stdout,
-)
-log = logging.getLogger("agent")
-
-# ---------------------------------------------------------------------------
-# Config
-# ---------------------------------------------------------------------------
-
-KAFKA_BOOTSTRAP = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka.kafka.svc.cluster.local:9092")
-TOPIC_OUT       = os.getenv("KAFKA_TOPIC_OUT", "sandbox_layer.result")
-MINIO_ENDPOINT  = os.getenv("MINIO_ENDPOINT", "minio.minio.svc.cluster.local:9000")
-EMAIL_CONTEXT   = json.loads(os.getenv("EMAIL_CONTEXT_JSON", "{}"))
-TIMEOUT_S       = int(os.getenv("SANDBOX_TIMEOUT_S", "120"))
+log = get_logger("agent")
 
 # ---------------------------------------------------------------------------
 # Pipeline v2 — weights and orchestration parameters
+# (shared Kafka/MinIO/EMAIL/TIMEOUT config is in agent_runtime, imported above)
 # ---------------------------------------------------------------------------
 
 # Default weights (calibrated in Phase 7, re-calibrable via SANDBOX_WEIGHTS_JSON).
@@ -139,10 +123,6 @@ _EARLY_EXIT_AFTER = "propagation"
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
 
 def _download_sample(s3_url: str, dest: Path) -> None:
     log.info("Downloading sample from %s", s3_url[:80])
@@ -243,24 +223,74 @@ def _behavior_summary(hyp_results: dict, anomaly_score: float, duration_s: float
 
 
 # ---------------------------------------------------------------------------
+# Pipeline steps
+# ---------------------------------------------------------------------------
+
+def _detonate_elf(
+    sample_path: Path, work_dir: Path,
+) -> tuple[MemoryObservables, int | None, float, bool, Path]:
+    """Strace the sample directly + parallel /proc forensics, RLIMIT_NPROC-capped.
+
+    Returns (memory, exit_code, execution_duration_s, timeout_triggered, trace_log_path).
+    """
+    trace_log_path = work_dir / "trace.log"
+    strace_cmd = (
+        f"strace -f -tt -e trace=all -o {trace_log_path} "
+        f"{sample_path} > {work_dir}/stdout.log 2>{work_dir}/stderr.log; "
+        f"echo $? > {work_dir}/exit_code"
+    )
+    log.info("Running strace + sample (timeout=%ds)", TIMEOUT_S)
+
+    # Thread for memory forensics during execution
+    memory_result: list[MemoryObservables] = [MemoryObservables()]
+    def _collect_memory():
+        memory_result[0] = collect_memory_observables(
+            str(sample_path), max_snapshots=5, interval_s=0.5
+        )
+    mem_thread = threading.Thread(target=_collect_memory, daemon=True)
+    mem_thread.start()
+
+    def _set_rlimits():
+        # Cap process count inside the sandbox via RLIMIT_NPROC.
+        resource.setrlimit(resource.RLIMIT_NPROC, (256, 256))
+
+    timeout_triggered = False
+    exec_start = time.time()
+    try:
+        subprocess.run(["sh", "-c", strace_cmd], timeout=TIMEOUT_S, preexec_fn=_set_rlimits)
+    except subprocess.TimeoutExpired:
+        log.warning("Sample timed out after %ds", TIMEOUT_S)
+        timeout_triggered = True
+    execution_duration_s = time.time() - exec_start
+
+    mem_thread.join(timeout=10)
+    memory = memory_result[0]
+
+    exit_code = None
+    ec_path = work_dir / "exit_code"
+    if ec_path.exists():
+        try:
+            exit_code = int(ec_path.read_text().strip())
+        except ValueError:
+            pass
+    return memory, exit_code, execution_duration_s, timeout_triggered, trace_log_path
+
+
+def _parse_trace(trace_log_path: Path):
+    """Parse the strace log → (syscalls, sleep_cumulated_s, evasion_tells)."""
+    trace_log = trace_log_path.read_text(errors="replace") if trace_log_path.exists() else ""
+    syscalls = parse_strace_log(trace_log)
+    sleep_cumulated = extract_sleep_cumulated(trace_log)
+    evasion_tells = extract_evasion_tells(trace_log)
+    return syscalls, sleep_cumulated, evasion_tells
+
+
+# ---------------------------------------------------------------------------
 # Main pipeline
 # ---------------------------------------------------------------------------
 
-async def _publish(job_id: str, event: dict) -> None:
-    producer = AIOKafkaProducer(
-        bootstrap_servers=KAFKA_BOOTSTRAP,
-        value_serializer=lambda v: json.dumps(v).encode("utf-8"),
-    )
-    await producer.start()
-    try:
-        await producer.send_and_wait(TOPIC_OUT, value=event)
-        log.info("Published to %s job_id=%s", TOPIC_OUT, job_id)
-    finally:
-        await producer.stop()
-
-
 def run_analysis(job_id: str, s3_url: str) -> None:
-    started_at = _now_iso()
+    started_at = now_iso()
     t0 = time.time()
 
     # Working directory in /out (emptyDir volume)
@@ -282,63 +312,17 @@ def run_analysis(job_id: str, s3_url: str) -> None:
         log.info("Taking snapshot BEFORE")
         snapshot_before = take_snapshot(relative_ts_s=0.0)
 
-        # 3. Launch strace + sample + memory forensics in parallel
-        trace_log_path = work_dir / "trace.log"
-        strace_cmd = (
-            f"strace -f -tt -e trace=all -o {trace_log_path} "
-            f"{sample_path} > {work_dir}/stdout.log 2>{work_dir}/stderr.log; "
-            f"echo $? > {work_dir}/exit_code"
-        )
-        log.info("Running strace + sample (timeout=%ds)", TIMEOUT_S)
-
-        # Thread for memory forensics during execution
-        memory_result: list[MemoryObservables] = [MemoryObservables()]
-        def _collect_memory():
-            memory_result[0] = collect_memory_observables(
-                str(sample_path), max_snapshots=5, interval_s=0.5
-            )
-
-        mem_thread = threading.Thread(target=_collect_memory, daemon=True)
-        mem_thread.start()
-
-        def _set_rlimits():
-            # Cap process count inside the sandbox via RLIMIT_NPROC.
-            resource.setrlimit(resource.RLIMIT_NPROC, (256, 256))
-
-        exec_start = time.time()
-        try:
-            subprocess.run(
-                ["sh", "-c", strace_cmd],
-                timeout=TIMEOUT_S,
-                preexec_fn=_set_rlimits,
-            )
-        except subprocess.TimeoutExpired:
-            log.warning("Sample timed out after %ds", TIMEOUT_S)
-            timeout_triggered = True
-        execution_duration_s = time.time() - exec_start
-
-        mem_thread.join(timeout=10)
-        memory = memory_result[0]
-
-        # Read exit code
-        exit_code = None
-        ec_path = work_dir / "exit_code"
-        if ec_path.exists():
-            try:
-                exit_code = int(ec_path.read_text().strip())
-            except ValueError:
-                pass
+        # 3. Detonate (strace + sample, /proc forensics in parallel)
+        (memory, exit_code, execution_duration_s, detonation_timeout,
+         trace_log_path) = _detonate_elf(sample_path, work_dir)
+        timeout_triggered = timeout_triggered or detonation_timeout
 
         # 4. Snapshot AFTER
         log.info("Taking snapshot AFTER")
         snapshot_after = take_snapshot(relative_ts_s=execution_duration_s)
 
         # 5. Parse strace
-        trace_log = ""
-        if trace_log_path.exists():
-            trace_log = trace_log_path.read_text(errors="replace")
-        syscalls = parse_strace_log(trace_log)
-        sleep_cumulated = extract_sleep_cumulated(trace_log)
+        syscalls, sleep_cumulated, evasion_tells = _parse_trace(trace_log_path)
 
         # 6. Diff
         diff = compute_diff(
@@ -353,6 +337,7 @@ def run_analysis(job_id: str, s3_url: str) -> None:
             execution_duration_s=execution_duration_s,
             sleep_cumulated_s=sleep_cumulated,
             exit_code=exit_code,
+            evasion_tells=evasion_tells,
         )
 
         log.info(
@@ -372,13 +357,43 @@ def run_analysis(job_id: str, s3_url: str) -> None:
         iocs = _iocs_from_hypotheses(hyp_results, memory)
         behavior_summary = _behavior_summary(hyp_results, anomaly_score, execution_duration_s)
 
+        # D1 guard — "benign" is only allowed when a normal execution was
+        # actually observed (M4 liveness); silence escalates, never washes.
+        total_syscalls = sum(s.call_count for s in syscalls)
+        liveness_ok, liveness_note = execution_liveness(total_syscalls, exit_code)
+        verdict, guard_reason = guarded_verdict(
+            anomaly_score, THRESHOLD_MAL, THRESHOLD_SUS,
+            liveness_ok=liveness_ok,
+        )
+
         positives = [k for k, r in hyp_results.items() if r.value]
         log.info(
-            "Hypotheses done: anomaly=%.2f positive=%s early_exit=%s",
+            "Hypotheses done: anomaly=%.2f verdict=%s guard=%s positive=%s early_exit=%s",
             anomaly_score,
+            verdict,
+            guard_reason,
             positives,
             early_exit,
         )
+
+        # D-obs — greppable verdict line + beacon on the probable-miss signature.
+        low_obs = low_observability_alert(
+            verdict=verdict, anomaly_score=anomaly_score,
+            duration_s=execution_duration_s, n_iocs=len(iocs), liveness_ok=liveness_ok,
+        )
+        log.info(
+            "SANDBOX_VERDICT path=elf verdict=%s score=%.3f guard=%s liveness=%s "
+            "dur=%.2fs syscalls=%d iocs=%d low_obs=%s",
+            verdict, anomaly_score, guard_reason, liveness_ok,
+            execution_duration_s, total_syscalls, len(iocs), low_obs,
+        )
+        if low_obs:
+            log.warning(
+                "SANDBOX_LOW_OBSERVABILITY path=elf reason=%s verdict=%s score=%.3f "
+                "dur=%.2fs syscalls=%d iocs=%d — probable miss, do not trust silently",
+                low_obs, verdict, anomaly_score, execution_duration_s,
+                total_syscalls, len(iocs),
+            )
 
     except Exception as exc:
         log.exception("Analysis failed: %s", exc)
@@ -390,8 +405,13 @@ def run_analysis(job_id: str, s3_url: str) -> None:
         early_exit = False
         hypothesis_timings_ms = {}
         hyp_results = {}
+        # A failed analysis observed nothing — it must never read as benign.
+        verdict = "error"
+        guard_reason = "analysis_error"
+        liveness_ok, liveness_note = False, "analysis failed"
+        low_obs = None  # the error path is already surfaced via log.exception
 
-    ended_at = _now_iso()
+    ended_at = now_iso()
     duration_s = time.time() - t0
 
     # 8. Build SandboxLayerResultEvent (GPE-ETNA contract)
@@ -408,10 +428,17 @@ def run_analysis(job_id: str, s3_url: str) -> None:
         pipeline_version="v2",
         hypothesis_timings_ms=hypothesis_timings_ms,
         hyp_results=hyp_results,
-        meta_extra={"early_exit": early_exit},
+        verdict=verdict,
+        meta_extra={
+            "early_exit": early_exit,
+            "liveness_ok": liveness_ok,
+            "liveness": liveness_note,
+            "verdict_guard": guard_reason,
+            "low_observability": low_obs,
+        },
     )
 
-    asyncio.run(_publish(job_id, event))
+    publish(job_id, event, log)
 
 
 # ---------------------------------------------------------------------------
@@ -419,14 +446,7 @@ def run_analysis(job_id: str, s3_url: str) -> None:
 # ---------------------------------------------------------------------------
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Sandbox analysis agent")
-    parser.add_argument("--job-id", required=True)
-    parser.add_argument("--s3-url", required=True)
-    args = parser.parse_args()
-
-    log.info("Agent started: job_id=%s", args.job_id)
-    run_analysis(args.job_id, args.s3_url)
-    log.info("Agent done: job_id=%s", args.job_id)
+    run_cli("Sandbox analysis agent", "Agent", log, run_analysis)
 
 
 if __name__ == "__main__":

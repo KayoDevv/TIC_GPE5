@@ -82,6 +82,35 @@ SINKHOLE_DNS_IP = os.getenv("SANDBOX_DNS_IP", "").strip() or None
 #            charon-seccomp.json is distributed to all nodes (seccomp-distributor).
 SECCOMP_TYPE    = os.getenv("SANDBOX_SECCOMP_TYPE", "RuntimeDefault").strip()
 SECCOMP_PROFILE = os.getenv("SANDBOX_SECCOMP_PROFILE", "charon-seccomp.json").strip()
+#
+# B.5 (P0a) — Egress gate: an initContainer that blocks the pod until the egress
+#            NetworkPolicy is PROVABLY enforced, closing the Calico startup race
+#            (~1-3s where the sample could exfiltrate before the policy is
+#            programmed). It probes an address OUTSIDE the allowed egress and only
+#            proceeds once that probe is consistently BLOCKED; if egress is still
+#            reachable at the deadline it FAILS the pod (fail-closed — never detonate
+#            with open egress). The probe runs OUR code, not the sample (the sample's
+#            container starts only after this gate exits 0). "host:port", empty disables.
+EGRESS_GATE     = os.getenv("SANDBOX_EGRESS_GATE", "1.1.1.1:443").strip()
+
+# Probe executed by the egress-gate initContainer (python3 ships in the agent image).
+_EGRESS_GATE_SCRIPT = """
+import os, socket, sys, time
+host, _, port = os.environ["GATE_TARGET"].partition(":")
+target = (host, int(port)); required = 3; deadline = time.time() + 30; streak = 0
+while time.time() < deadline:
+    try:
+        socket.create_connection(target, timeout=2).close()  # reachable => egress OPEN
+        streak = 0
+        print("egress-gate: still reachable, waiting for NetworkPolicy...", flush=True)
+    except OSError:
+        streak += 1
+        if streak >= required:
+            print("egress-gate: blocked (policy enforced) -> detonate", flush=True)
+            sys.exit(0)
+    time.sleep(1)
+sys.exit("egress-gate FAIL-CLOSED: %s still reachable after deadline" % (target,))
+"""
 
 # Endpoints injected into the analysis pods (may differ from the consumer's
 # when the consumer runs outside the cluster, e.g. local dev outside K3s).
@@ -161,6 +190,115 @@ def _load_k8s() -> k8s_client.BatchV1Api:
     return k8s_client.BatchV1Api()
 
 
+def _egress_gate_init(job_image: str) -> list | None:
+    """P0a — init container that blocks detonation until the egress NetworkPolicy is proven enforced.
+
+    Same image (python3), strict securityContext, no volumes; expects the egress
+    probe to FAIL (no egress allowed). None when the gate is disabled.
+    """
+    if not EGRESS_GATE:
+        return None
+    return [k8s_client.V1Container(
+        name="egress-gate",
+        image=job_image,
+        image_pull_policy="IfNotPresent",
+        command=["python3", "-c", _EGRESS_GATE_SCRIPT],
+        env=[k8s_client.V1EnvVar(name="GATE_TARGET", value=EGRESS_GATE)],
+        resources=k8s_client.V1ResourceRequirements(
+            requests={"cpu": "50m", "memory": "32Mi"},
+            limits={"cpu": "200m", "memory": "64Mi"},
+        ),
+        security_context=k8s_client.V1SecurityContext(
+            run_as_user=RUN_AS_USER,
+            run_as_group=RUN_AS_USER,
+            run_as_non_root=(RUN_AS_USER != 0),
+            allow_privilege_escalation=False,
+            read_only_root_filesystem=True,
+            capabilities=k8s_client.V1Capabilities(drop=["ALL"]),
+            seccomp_profile=k8s_client.V1SeccompProfile(type="RuntimeDefault"),
+        ),
+    )]
+
+
+def _analysis_container(
+    job_image: str, agent_cmd: list[str], job_id: str, s3_url: str, email_context: dict,
+) -> "k8s_client.V1Container":
+    """The detonation container.
+
+    Hardening (audit 2026-04-30, Tranches A+B): non-root (RUN_AS_USER), cap-drop
+    ALL + only SYS_PTRACE (strace), no_new_privs, read-only rootfs, seccomp
+    (Localhost charon profile or RuntimeDefault). Writable temp via the tmpfs
+    mounts (RO rootfs). Resources requests 500m/512Mi, limits 2000m/2Gi.
+    """
+    return k8s_client.V1Container(
+        name="analysis",
+        image=job_image,
+        image_pull_policy="IfNotPresent",
+        command=agent_cmd,
+        args=["--job-id", job_id, "--s3-url", s3_url],
+        env=[
+            k8s_client.V1EnvVar(name="KAFKA_BOOTSTRAP_SERVERS", value=AGENT_KAFKA_BOOTSTRAP),
+            k8s_client.V1EnvVar(name="KAFKA_TOPIC_OUT", value=TOPIC_OUT),
+            k8s_client.V1EnvVar(name="MINIO_ENDPOINT", value=AGENT_MINIO_ENDPOINT),
+            k8s_client.V1EnvVar(name="EMAIL_CONTEXT_JSON", value=json.dumps(email_context)),
+        ],
+        resources=k8s_client.V1ResourceRequirements(
+            requests={"cpu": "500m", "memory": "512Mi"},
+            limits={"cpu": "2000m", "memory": "2Gi", "ephemeral-storage": "2Gi"},
+        ),
+        security_context=k8s_client.V1SecurityContext(
+            run_as_user=RUN_AS_USER,
+            run_as_group=RUN_AS_USER,
+            run_as_non_root=(RUN_AS_USER != 0),
+            allow_privilege_escalation=False,
+            read_only_root_filesystem=True,
+            capabilities=k8s_client.V1Capabilities(drop=["ALL"], add=["SYS_PTRACE"]),
+            seccomp_profile=(
+                k8s_client.V1SeccompProfile(type="Localhost", localhost_profile=SECCOMP_PROFILE)
+                if SECCOMP_TYPE == "Localhost"
+                else k8s_client.V1SeccompProfile(type="RuntimeDefault")
+            ),
+        ),
+        volume_mounts=[
+            k8s_client.V1VolumeMount(name="scratch", mount_path="/out"),
+            k8s_client.V1VolumeMount(name="tmp", mount_path="/tmp"),
+            k8s_client.V1VolumeMount(name="var-tmp", mount_path="/var/tmp"),
+        ],
+    )
+
+
+def _pod_volumes() -> list:
+    """Scratch /out (1Gi) + tmpfs /tmp (256Mi) and /var/tmp (64Mi) — the RO rootfs needs writable temp."""
+    return [
+        k8s_client.V1Volume(name="scratch", empty_dir=k8s_client.V1EmptyDirVolumeSource(size_limit="1Gi")),
+        k8s_client.V1Volume(name="tmp", empty_dir=k8s_client.V1EmptyDirVolumeSource(medium="Memory", size_limit="256Mi")),
+        k8s_client.V1Volume(name="var-tmp", empty_dir=k8s_client.V1EmptyDirVolumeSource(medium="Memory", size_limit="64Mi")),
+    ]
+
+
+def _pod_dns():
+    """Sinkhole DNS (Tranche B-V7): detach from cluster DNS, point to the in-ns sinkhole.
+
+    Returns (dns_policy, dns_config). (None, None) when no sinkhole is configured.
+    External names then return NXDOMAIN; *.svc.cluster.local still resolves via
+    the sinkhole's upstream forward.
+    """
+    if not SINKHOLE_DNS_IP:
+        return None, None
+    return "None", k8s_client.V1PodDNSConfig(
+        nameservers=[SINKHOLE_DNS_IP],
+        searches=[
+            f"{K8S_NAMESPACE}.svc.cluster.local",
+            "svc.cluster.local",
+            "cluster.local",
+        ],
+        options=[
+            k8s_client.V1PodDNSConfigOption(name="ndots", value="2"),
+            k8s_client.V1PodDNSConfigOption(name="single-request-reopen"),
+        ],
+    )
+
+
 def _create_analysis_job(
     batch_api: k8s_client.BatchV1Api,
     job_id: str,
@@ -196,6 +334,8 @@ def _create_analysis_job(
         agent_cmd   = ["python3", "/opt/agent/run_pdf_analysis.py"]
         file_type_label = "pdf"
 
+    dns_policy, dns_config = _pod_dns()
+
     job = k8s_client.V1Job(
         api_version="batch/v1",
         kind="Job",
@@ -223,151 +363,18 @@ def _create_analysis_job(
                 spec=k8s_client.V1PodSpec(
                     restart_policy="Never",
                     automount_service_account_token=False,
-                    # fsGroup=10001 makes K8s chgrp the volume mounts (/tmp,
-                    # /var/tmp, /out emptyDirs) so UID 10001 (agent) can write
-                    # to them. Without this, the volumes default to root:root
-                    # and the sample cannot create files in WATCHED_PATHS.
-                    security_context=k8s_client.V1PodSecurityContext(
-                        fs_group=10001,
-                    ),
-                    # Hardening Tranche B — V3 (audit 2026-04-30):
-                    # RuntimeClass = gvisor en prod (userspace kernel sandbox).
-                    # None = falls back to runc (current default).
+                    # P0a — egress gate must pass BEFORE the analysis container, so
+                    # the sample never executes while egress is open.
+                    init_containers=_egress_gate_init(job_image),
+                    # fsGroup=10001 so UID 10001 (agent) can write the emptyDir mounts.
+                    security_context=k8s_client.V1PodSecurityContext(fs_group=10001),
                     runtime_class_name=RUNTIME_CLASS,
-                    # Hardening Tranche B — V7: sinkhole DNS. dnsPolicy=None
-                    # detaches the pod from the cluster's default DNS, dnsConfig
-                    # explicitly points to the in-namespace sinkhole-dns service.
-                    # External names return NXDOMAIN; *.svc.cluster.local still
-                    # resolves through the sinkhole's upstream forward.
-                    dns_policy="None" if SINKHOLE_DNS_IP else None,
-                    dns_config=(
-                        k8s_client.V1PodDNSConfig(
-                            nameservers=[SINKHOLE_DNS_IP],
-                            searches=[
-                                f"{K8S_NAMESPACE}.svc.cluster.local",
-                                "svc.cluster.local",
-                                "cluster.local",
-                            ],
-                            options=[
-                                k8s_client.V1PodDNSConfigOption(
-                                    name="ndots", value="2"),
-                                k8s_client.V1PodDNSConfigOption(
-                                    name="single-request-reopen"),
-                            ],
-                        ) if SINKHOLE_DNS_IP else None
-                    ),
+                    dns_policy=dns_policy,
+                    dns_config=dns_config,
                     containers=[
-                        k8s_client.V1Container(
-                            name="analysis",
-                            image=job_image,
-                            image_pull_policy="IfNotPresent",
-                            command=agent_cmd,
-                            args=[
-                                "--job-id", job_id,
-                                "--s3-url", s3_url,
-                            ],
-                            env=[
-                                k8s_client.V1EnvVar(
-                                    name="KAFKA_BOOTSTRAP_SERVERS",
-                                    value=AGENT_KAFKA_BOOTSTRAP,
-                                ),
-                                k8s_client.V1EnvVar(
-                                    name="KAFKA_TOPIC_OUT",
-                                    value=TOPIC_OUT,
-                                ),
-                                k8s_client.V1EnvVar(
-                                    name="MINIO_ENDPOINT",
-                                    value=AGENT_MINIO_ENDPOINT,
-                                ),
-                                k8s_client.V1EnvVar(
-                                    name="EMAIL_CONTEXT_JSON",
-                                    value=json.dumps(email_context),
-                                ),
-                            ],
-                            resources=k8s_client.V1ResourceRequirements(
-                                requests={"cpu": "500m", "memory": "512Mi"},
-                                limits={
-                                    "cpu": "2000m",
-                                    "memory": "2Gi",
-                                    "ephemeral-storage": "2Gi",
-                                },
-                            ),
-                            # Hardening (audit 2026-04-30) — combined Tranches A + B:
-                            #   Tranche A:
-                            #     seccomp           → RuntimeDefault (Tranche A) or
-                            #                         Localhost charon-seccomp.json (Tranche B)
-                            #     readOnlyRootFs    → agent /opt/agent/* immutable at runtime
-                            #     allowPrivEsc      → no_new_privs, blocks setuid escalation
-                            #     caps drop=ALL     → no CAP_SYS_ADMIN/MODULE/etc.
-                            #     caps add=SYS_PTRACE → strace requirement only
-                            #   Tranche B:
-                            #     runAsUser=10001   → agent runs as non-root `agent`
-                            #                         (Dockerfile.agent creates the user)
-                            #     SYS_PTRACE on file (setcap) + ambient cap propagation
-                            #                         allow strace to work as non-root
-                            security_context=k8s_client.V1SecurityContext(
-                                run_as_user=RUN_AS_USER,
-                                run_as_group=RUN_AS_USER,
-                                run_as_non_root=(RUN_AS_USER != 0),
-                                allow_privilege_escalation=False,
-                                read_only_root_filesystem=True,
-                                capabilities=k8s_client.V1Capabilities(
-                                    drop=["ALL"],
-                                    add=["SYS_PTRACE"],
-                                ),
-                                seccomp_profile=(
-                                    k8s_client.V1SeccompProfile(
-                                        type="Localhost",
-                                        localhost_profile=SECCOMP_PROFILE,
-                                    )
-                                    if SECCOMP_TYPE == "Localhost"
-                                    else k8s_client.V1SeccompProfile(
-                                        type="RuntimeDefault",
-                                    )
-                                ),
-                            ),
-                            volume_mounts=[
-                                k8s_client.V1VolumeMount(
-                                    name="scratch",
-                                    mount_path="/out",
-                                ),
-                                # Hardening Tranche A — V6:
-                                # read-only rootfs → /tmp must stay writable for
-                                # Python tempfile, gcc temp, pip cache, etc. tmpfs in
-                                # memory (256Mi) counted in the pod's memory limit.
-                                k8s_client.V1VolumeMount(
-                                    name="tmp",
-                                    mount_path="/tmp",
-                                ),
-                                k8s_client.V1VolumeMount(
-                                    name="var-tmp",
-                                    mount_path="/var/tmp",
-                                ),
-                            ],
-                        )
+                        _analysis_container(job_image, agent_cmd, job_id, s3_url, email_context),
                     ],
-                    volumes=[
-                        k8s_client.V1Volume(
-                            name="scratch",
-                            empty_dir=k8s_client.V1EmptyDirVolumeSource(
-                                size_limit="1Gi"
-                            ),
-                        ),
-                        k8s_client.V1Volume(
-                            name="tmp",
-                            empty_dir=k8s_client.V1EmptyDirVolumeSource(
-                                medium="Memory",
-                                size_limit="256Mi",
-                            ),
-                        ),
-                        k8s_client.V1Volume(
-                            name="var-tmp",
-                            empty_dir=k8s_client.V1EmptyDirVolumeSource(
-                                medium="Memory",
-                                size_limit="64Mi",
-                            ),
-                        ),
-                    ],
+                    volumes=_pod_volumes(),
                 ),
             ),
         ),

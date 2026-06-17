@@ -21,6 +21,7 @@ from collections import defaultdict
 from pathlib import Path
 
 from . import db
+from .stats import fmt_rate
 
 # Verdict bands — aligned with run_pdf_analysis._verdict_band.
 # The sandbox is a tie-breaker: it only says "malicious" with a strong signal,
@@ -177,27 +178,37 @@ def section_distribution(rows: list[dict]) -> str:
 # Section C — accuracy (labels required)
 # ---------------------------------------------------------------------------
 
-def section_justness(rows: list[dict], susp_threshold: float, mal_threshold: float) -> str:
-    out = ["## C. Accuracy (vs labels) — 3-band verdict\n"]
+def _aggregate_labelled(
+    rows: list[dict],
+) -> tuple[dict[tuple[str, str], list[float]], dict[tuple[str, str], str], set[tuple[str, str]]]:
+    """Dedup labelled rows by (run_id, sha256), averaging reps.
 
-    # Deduplicate by (run_id, sha256), averaging the repetitions
+    M2 anti-circularity: samples labelled by AV consensus are split off into
+    `av_excluded` (a metric scored on the same AV the sandbox imitates is
+    circular). Returns (groups, label_of, av_excluded).
+    """
     groups: dict[tuple[str, str], list[float]] = defaultdict(list)
     label_of: dict[tuple[str, str], str] = {}
+    av_excluded: set[tuple[str, str]] = set()
     for r in rows:
-        if r["anomaly_score"] is None or r["label"] in (None, "unknown"):
-            continue
-        if r["label"] not in ("benign", "malicious"):
+        if r["anomaly_score"] is None or r["label"] not in ("benign", "malicious"):
             continue
         key = (r["run_id"], r["sha256"])
+        if r.get("label_source") == "av_consensus":
+            av_excluded.add(key)
+            continue
         groups[key].append(r["anomaly_score"])
         label_of[key] = r["label"]
+    return groups, label_of, av_excluded
 
-    if not groups:
-        out.append("_No sample labelled `benign` or `malicious` received — section skipped._\n")
-        return "\n".join(out)
 
-    # 3-column (prediction) × 2-row (ground truth) matrix.
-    # m[actual][predicted] = count
+def _confusion_matrix(
+    groups: dict[tuple[str, str], list[float]],
+    label_of: dict[tuple[str, str], str],
+    susp_threshold: float,
+    mal_threshold: float,
+) -> tuple[dict, list[tuple[str, float]], list[tuple[str, float]]]:
+    """3-band confusion matrix m[actual][predicted] + FP / miss example lists."""
     m = {a: {"benign": 0, "needs_more_context": 0, "malicious": 0} for a in ("benign", "malicious")}
     fp_examples: list[tuple[str, float]] = []      # benign predicted malicious (true error)
     miss_examples: list[tuple[str, float]] = []     # malicious predicted benign (true miss)
@@ -210,15 +221,20 @@ def section_justness(rows: list[dict], susp_threshold: float, mal_threshold: flo
             fp_examples.append((key[1], avg))
         elif actual == "malicious" and band == "benign":
             miss_examples.append((key[1], avg))
+    return m, fp_examples, miss_examples
 
+
+def _format_accuracy(
+    m: dict,
+    av_excluded: set,
+    fp_examples: list[tuple[str, float]],
+    miss_examples: list[tuple[str, float]],
+    susp_threshold: float,
+    mal_threshold: float,
+) -> list[str]:
+    """Render the §C markdown (matrix + Wilson-CI metrics + caveats) from the matrix."""
     nb = sum(m["benign"].values())
     nm = sum(m["malicious"].values())
-
-    # Honest metrics for a tie-breaker:
-    #  - confident precision : when the sandbox SAYS malicious, is it right?
-    #  - confident recall    : share of malicious classified malicious directly
-    #  - escalation rate      : malicious/benign sent back to the LLM (needs_more_context)
-    #  - misses               : malicious wrongly classified benign (the real failure)
     tp = m["malicious"]["malicious"]
     fp = m["benign"]["malicious"]
     miss = m["malicious"]["benign"]
@@ -228,9 +244,9 @@ def section_justness(rows: list[dict], susp_threshold: float, mal_threshold: flo
 
     precision = _safe_div(tp, tp + fp)
     recall_strict = _safe_div(tp, nm)
-    recall_caught = _safe_div(tp + esc_mal, nm)   # confirmed OR escalated (never classified benign)
     f1 = _safe_div(2 * precision * recall_strict, precision + recall_strict)
 
+    out = []
     out.append(f"Bands: **benign** < {susp_threshold} ≤ **needs_more_context** < {mal_threshold} ≤ **malicious**\n")
     out.append("**3-band matrix:**\n")
     out.append("| truth \\ predicted | benign | needs_more_context | malicious |")
@@ -238,12 +254,23 @@ def section_justness(rows: list[dict], susp_threshold: float, mal_threshold: flo
     out.append(f"| **benign** (N={nb})    | {tn} ✅ | {esc_ben} (→LLM) | {fp} ❌ FP |")
     out.append(f"| **malicious** (N={nm}) | {miss} ❌ miss | {esc_mal} (→LLM) | {tp} ✅ |\n")
 
-    out.append(f"- **Confident precision**: **{precision:.3f}**  (when the sandbox says *malicious*, out of {tp + fp})")
-    out.append(f"- **Confident recall**: **{recall_strict:.3f}**  (malicious classified *malicious* directly)")
-    out.append(f"- **Recall with escalation**: **{recall_caught:.3f}**  (malicious *confirmed or escalated to the LLM*, never washed)")
-    out.append(f"- **Confident F1**: **{f1:.3f}**")
-    out.append(f"- **Misses** (malicious washed to benign): **{miss}/{nm}**  ← the only real security failure")
-    out.append(f"- **LLM escalation**: {esc_mal} malicious + {esc_ben} benign → resolved with the email_context\n")
+    # P0c/P0d — every rate carries a Wilson 95% CI + N. A point estimate on a
+    # small corpus is not a result; precision 1.0 on a handful of positives has
+    # a wide interval and must be read as such.
+    out.append(f"- **Confident precision**: {fmt_rate(tp, tp + fp)}  (when the sandbox says *malicious*)")
+    out.append(f"- **Confident recall**: {fmt_rate(tp, nm)}  (malicious classified *malicious* directly)")
+    out.append(f"- **Recall with escalation**: {fmt_rate(tp + esc_mal, nm)}  (confirmed *or* escalated, never washed)")
+    out.append(f"- **False-negative rate (sandbox layer)**: {fmt_rate(miss, nm)}  ← malicious washed to benign — the only real security failure")
+    out.append(f"- **Confident F1**: **{f1:.3f}** _(point estimate — composite, no single CI)_")
+    out.append(f"- **LLM escalation**: {esc_mal} malicious + {esc_ben} benign → resolved with the email_context")
+    out.append("\n> **End-to-end (post-LLM) accuracy is NOT measured here.** The figures above are the "
+               "**sandbox layer in isolation**; the LLM Layer that resolves the escalated band does not yet "
+               "exist. The false-negative rate is therefore a sandbox-layer floor, not the system's.")
+    if av_excluded:
+        out.append(f"> **Label independence (M2):** {len(av_excluded)} sample(s) with `av_consensus` labels "
+                   f"were **excluded** from the figures above — scoring against the same AV the sandbox "
+                   f"imitates would be circular. Independent labels only (academic / synthetic / unspecified).")
+    out.append("")
 
     if fp_examples:
         out.append("**False positives (benign predicted malicious):**")
@@ -255,7 +282,23 @@ def section_justness(rows: list[dict], susp_threshold: float, mal_threshold: flo
         for sha, sc in sorted(miss_examples, key=lambda x: x[1])[:5]:
             out.append(f"- `{sha[:16]}`  score={sc:.3f}")
         out.append("")
+    return out
 
+
+def section_justness(rows: list[dict], susp_threshold: float, mal_threshold: float) -> str:
+    out = ["## C. Accuracy (vs labels) — 3-band verdict\n"]
+
+    groups, label_of, av_excluded = _aggregate_labelled(rows)
+    if not groups:
+        msg = "_No independently-labelled `benign`/`malicious` sample received — section skipped._"
+        if av_excluded:
+            msg += (f"\n\n_({len(av_excluded)} sample(s) excluded as `av_consensus` — "
+                    f"circular labels, see M2.)_")
+        out.append(msg + "\n")
+        return "\n".join(out)
+
+    m, fp_examples, miss_examples = _confusion_matrix(groups, label_of, susp_threshold, mal_threshold)
+    out += _format_accuracy(m, av_excluded, fp_examples, miss_examples, susp_threshold, mal_threshold)
     return "\n".join(out)
 
 

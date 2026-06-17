@@ -42,30 +42,31 @@ Multi-layer pipeline (defense-in-depth):
 
 from __future__ import annotations
 
-import argparse
-import asyncio
-import json
-import logging
 import os
 import subprocess
 import sys
 import threading
 import time
 import urllib.request
-from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
 
-from aiokafka import AIOKafkaProducer
-
 sys.path.insert(0, str(Path(__file__).parent))
+
+from agent_runtime import EMAIL_CONTEXT, TIMEOUT_S, get_logger, now_iso, publish, run_cli
 
 from models import MemoryObservables, NetworkObservables, RuntimeSignals
 from snapshot import compute_diff, take_snapshot
-from strace_collector import extract_sleep_cumulated, parse_strace_log
+from strace_collector import extract_evasion_tells, extract_sleep_cumulated, parse_strace_log
 from memory import collect_memory_observables
+from core.messages import PDF_ERROR_SUMMARY, PDF_GUARD_NEEDS_CONTEXT
 from core.report import build_pdf_narrative, build_iocs, build_result_event
-from core.scoring import compute_anomaly_score
+from core.scoring import (
+    compute_anomaly_score,
+    execution_liveness,
+    guarded_verdict,
+    low_observability_alert,
+)
 import hypotheses.persistence as h_persistence
 import hypotheses.c2 as h_c2
 import hypotheses.injection as h_injection
@@ -78,23 +79,14 @@ from hypotheses.stream_entropy import evaluate_static as entropy_evaluate
 from hypotheses.embedded_magic import evaluate_static as embedded_evaluate
 from hypotheses.pdf_uri import evaluate_static as uri_evaluate
 from hypotheses.pdf_anomaly import evaluate_static as anomaly_evaluate
+from hypotheses._types import HypothesisResult
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(name)s] %(levelname)s %(message)s",
-    stream=sys.stdout,
-)
-log = logging.getLogger("pdf-agent")
+log = get_logger("pdf-agent")
 
 # ---------------------------------------------------------------------------
-# Config
+# Config (PDF-specific; the shared Kafka/MinIO/EMAIL/TIMEOUT config is in
+# agent_runtime, imported above)
 # ---------------------------------------------------------------------------
-
-KAFKA_BOOTSTRAP = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka.kafka.svc.cluster.local:9092")
-TOPIC_OUT       = os.getenv("KAFKA_TOPIC_OUT", "sandbox_layer.result")
-MINIO_ENDPOINT  = os.getenv("MINIO_ENDPOINT", "minio.minio.svc.cluster.local:9000")
-EMAIL_CONTEXT   = json.loads(os.getenv("EMAIL_CONTEXT_JSON", "{}"))
-TIMEOUT_S       = int(os.getenv("SANDBOX_TIMEOUT_S", "120"))
 
 # SSRF protection — restrict sample download to known MinIO endpoints.
 # Override via env var ALLOWED_DOWNLOAD_HOSTS="host1,host2,...".
@@ -123,7 +115,7 @@ PDF_WEIGHTS: dict[str, float] = {
     "evasion_attempted":     0.08,
     "propagation":           0.10,
     # Format-specific static — complementary signal, never dominant
-    # Remplacer par docx_static, lnk_static, etc. selon le format entrant
+    # Swap for docx_static, lnk_static, etc. depending on the incoming format
     "pdf_static_indicators": 0.30,
 }
 
@@ -160,10 +152,6 @@ def _ioc_type(hyp_name: str, ev) -> str:
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
 def _download_sample(s3_url: str, dest: Path) -> None:
     log.info("Downloading PDF sample from %s", s3_url[:80])
 
@@ -191,7 +179,7 @@ def _compute_anomaly_score(hyp_results: dict) -> float:
     return compute_anomaly_score(hyp_results, PDF_WEIGHTS)
 
 
-# Seuils de verdict PDF — config. La logique des 3 bandes vit dans core/scoring.
+# PDF verdict thresholds — config. The 3-band logic lives in core/scoring.
 _VERDICT_MALICIOUS = 0.15
 _VERDICT_SUSPICIOUS = 0.04
 
@@ -204,20 +192,145 @@ def _build_narrative(hyp_results: dict, anomaly_score: float, duration_s: float)
 
 
 # ---------------------------------------------------------------------------
-# Publish
+# Pipeline steps (each owns one numbered stage of run_pdf_analysis)
 # ---------------------------------------------------------------------------
 
-async def _publish(job_id: str, event: dict) -> None:
-    producer = AIOKafkaProducer(
-        bootstrap_servers=KAFKA_BOOTSTRAP,
-        value_serializer=lambda v: json.dumps(v).encode("utf-8"),
+def _static_layer(sample_path: Path) -> tuple[HypothesisResult, float]:
+    """5 static probes over the raw bytes, aggregated by MAX (one positive is enough).
+
+    Returns (pdf_static_indicators result, timing_ms). Evidence is merged.
+    """
+    log.info("Running multi-probe static analysis")
+    t_static = time.monotonic()
+    pdfid_result    = pdf_static_evaluate(sample_path)
+    entropy_result  = entropy_evaluate(sample_path)
+    embedded_result = embedded_evaluate(sample_path)
+    uri_result      = uri_evaluate(sample_path)
+    anomaly_result  = anomaly_evaluate(sample_path)
+
+    all_evidence = (
+        list(pdfid_result.evidence)
+        + list(entropy_result.evidence)
+        + list(embedded_result.evidence)
+        + list(uri_result.evidence)
+        + list(anomaly_result.evidence)
     )
-    await producer.start()
+    static_score = max(
+        pdfid_result.score, entropy_result.score, embedded_result.score,
+        uri_result.score, anomaly_result.score,
+    )
+    result = HypothesisResult(
+        value=static_score >= 0.1,
+        score=round(static_score, 3),
+        evidence=all_evidence,
+    )
+    timing_ms = round((time.monotonic() - t_static) * 1000, 1)
+    log.info(
+        "Static probes: pdfid=%.3f entropy=%.3f embedded=%.3f uri=%.3f anomaly=%.3f → combined=%.3f (%d evidence)",
+        pdfid_result.score, entropy_result.score, embedded_result.score,
+        uri_result.score, anomaly_result.score, result.score, len(all_evidence),
+    )
+    return result, timing_ms
+
+
+def _detonate(
+    sample_path: Path, work_dir: Path,
+) -> tuple[MemoryObservables, int | None, float, bool, Path, Path]:
+    """Two straced detonations (mutool draw, then node+PDF.js) + parallel /proc forensics.
+
+    Returns (memory, exit_code, execution_duration_s, timeout_triggered,
+    trace_mutool_path, trace_pdfjs_path). exit_code is mutool's (layer A reference);
+    pdfjs exit != 0 is common on malformed PDFs (itself a signal).
+    """
+    trace_mutool_path = work_dir / "trace_mutool.log"
+    trace_pdfjs_path  = work_dir / "trace_pdfjs.log"
+    per_step_timeout = max(TIMEOUT_S // 2, 30)
+    timeout_triggered = False
+
+    # Layer A — mutool draw straced (renders pages, exercises zlib/JPEG/JBIG2 → mupdf CVEs).
+    mutool_cmd = [
+        "strace", "-f", "-tt", "-e", "trace=all", "-o", str(trace_mutool_path),
+        "mutool", "draw", "-o", "/dev/null", str(sample_path),
+    ]
+    log.info("[layer A] strace + mutool draw (timeout=%ds)", per_step_timeout)
+
+    # Memory forensics in parallel (mutool process)
+    memory_result: list[MemoryObservables] = [MemoryObservables()]
+    def _collect_memory():
+        memory_result[0] = collect_memory_observables("mutool", max_snapshots=5, interval_s=0.5)
+    mem_thread = threading.Thread(target=_collect_memory, daemon=True)
+    mem_thread.start()
+
+    exec_start = time.time()
+    exit_code_mutool: int | None = None
     try:
-        await producer.send_and_wait(TOPIC_OUT, value=event)
-        log.info("Published to %s job_id=%s", TOPIC_OUT, job_id)
-    finally:
-        await producer.stop()
+        with open(work_dir / "stdout_mutool.log", "wb") as out_f, \
+             open(work_dir / "stderr_mutool.log", "wb") as err_f:
+            r = subprocess.run(mutool_cmd, stdout=out_f, stderr=err_f,
+                               timeout=per_step_timeout, check=False)
+        exit_code_mutool = r.returncode
+    except subprocess.TimeoutExpired:
+        log.warning("[layer A] mutool timed out after %ds", per_step_timeout)
+        timeout_triggered = True
+
+    mem_thread.join(timeout=10)
+    memory = memory_result[0]
+
+    # Layer B — node + PDF.js straced (runs the PDF's embedded JS via PDF.js).
+    pdfjs_cmd = [
+        "strace", "-f", "-tt", "-e", "trace=all", "-o", str(trace_pdfjs_path),
+        "node", "/opt/agent/pdf_runner.js", str(sample_path),
+    ]
+    log.info("[layer B] strace + node pdf_runner.js (timeout=%ds)", per_step_timeout)
+    exit_code_pdfjs: int | None = None
+    try:
+        with open(work_dir / "stdout_pdfjs.log", "wb") as out_f, \
+             open(work_dir / "stderr_pdfjs.log", "wb") as err_f:
+            r = subprocess.run(pdfjs_cmd, stdout=out_f, stderr=err_f,
+                               timeout=per_step_timeout, check=False)
+        exit_code_pdfjs = r.returncode
+    except subprocess.TimeoutExpired:
+        log.warning("[layer B] pdf_runner.js timed out after %ds", per_step_timeout)
+        timeout_triggered = True
+
+    execution_duration_s = time.time() - exec_start
+
+    exit_code = exit_code_mutool
+    if exit_code is not None:
+        (work_dir / "exit_code").write_text(str(exit_code))
+    log.info("Exec done: mutool exit=%s pdfjs exit=%s duration=%.1fs",
+             exit_code_mutool, exit_code_pdfjs, execution_duration_s)
+    return (memory, exit_code, execution_duration_s, timeout_triggered,
+            trace_mutool_path, trace_pdfjs_path)
+
+
+def _parse_traces(trace_mutool_path: Path, trace_pdfjs_path: Path):
+    """Parse the UNION of both straces so a signal from any layer fires the hypotheses.
+
+    Returns (syscalls, sleep_cumulated_s, evasion_tells).
+    """
+    trace_mutool = trace_mutool_path.read_text(errors="replace") if trace_mutool_path.exists() else ""
+    trace_pdfjs  = trace_pdfjs_path.read_text(errors="replace")  if trace_pdfjs_path.exists()  else ""
+    trace_combined = trace_mutool + "\n" + trace_pdfjs
+    syscalls = parse_strace_log(trace_combined)
+    sleep_cumulated = extract_sleep_cumulated(trace_combined)
+    evasion_tells = extract_evasion_tells(trace_combined)
+    log.info("Trace sizes: mutool=%d bytes pdfjs=%d bytes → %d syscalls in union",
+             len(trace_mutool), len(trace_pdfjs), len(syscalls))
+    return syscalls, sleep_cumulated, evasion_tells
+
+
+def _run_behavioural(diff, signals, memory) -> tuple[dict, dict[str, float]]:
+    """Run the 7 behavioural hypotheses on the (union) signals. Returns (results, timings_ms)."""
+    results: dict = {}
+    timings_ms: dict[str, float] = {}
+    for name, module in _BEHAVIORAL_PIPELINE:
+        t_hyp = time.monotonic()
+        results[name] = module.evaluate(diff, signals, memory)
+        timings_ms[name] = round((time.monotonic() - t_hyp) * 1000, 1)
+        log.debug("[pipeline] %s -> value=%s score=%.3f (%.0fms)",
+                  name, results[name].value, results[name].score, timings_ms[name])
+    return results, timings_ms
 
 
 # ---------------------------------------------------------------------------
@@ -225,7 +338,7 @@ async def _publish(job_id: str, event: dict) -> None:
 # ---------------------------------------------------------------------------
 
 def run_pdf_analysis(job_id: str, s3_url: str) -> None:
-    started_at = _now_iso()
+    started_at = now_iso()
     t0 = time.time()
 
     work_dir = Path("/out") / job_id[:8]
@@ -241,151 +354,27 @@ def run_pdf_analysis(job_id: str, s3_url: str) -> None:
         # 1. Download
         _download_sample(s3_url, sample_path)
 
-        # 2. Multi-probe static layer (before execution — none triggers anything)
-        #    Five independent probes look at different aspects of the file:
-        #      a) pdfid          → combinatorial rules on PDF structure
-        #      b) stream_entropy → local encrypted/obfuscated payload (generic)
-        #      c) embedded_magic → embedded executables (generic)
-        #      d) pdf_uri        → URI actions to fileshare/exe/bare IP (phishing)
-        #      e) pdf_anomaly    → structural anomalies (broken xref, obj/page ratio)
-        #    The retained score is the MAX — a single positive signal is enough to alert.
-        log.info("Running multi-probe static analysis")
-        t_static = time.monotonic()
-        pdfid_result    = pdf_static_evaluate(sample_path)
-        entropy_result  = entropy_evaluate(sample_path)
-        embedded_result = embedded_evaluate(sample_path)
-        uri_result      = uri_evaluate(sample_path)
-        anomaly_result  = anomaly_evaluate(sample_path)
-
-        # Aggregation: take the max score + merge the evidence
-        all_evidence = (
-            list(pdfid_result.evidence)
-            + list(entropy_result.evidence)
-            + list(embedded_result.evidence)
-            + list(uri_result.evidence)
-            + list(anomaly_result.evidence)
-        )
-        static_score = max(
-            pdfid_result.score,
-            entropy_result.score,
-            embedded_result.score,
-            uri_result.score,
-            anomaly_result.score,
-        )
-        from hypotheses._types import HypothesisResult as _HR
-        pdf_static_result = _HR(
-            value=static_score >= 0.1,
-            score=round(static_score, 3),
-            evidence=all_evidence,
-        )
-
-        hypothesis_timings_ms["pdf_static_indicators"] = round(
-            (time.monotonic() - t_static) * 1000, 1
-        )
-        hyp_results["pdf_static_indicators"] = pdf_static_result
-        log.info(
-            "Static probes: pdfid=%.3f entropy=%.3f embedded=%.3f uri=%.3f anomaly=%.3f → combined=%.3f (%d evidence)",
-            pdfid_result.score, entropy_result.score, embedded_result.score,
-            uri_result.score, anomaly_result.score, pdf_static_result.score, len(all_evidence),
-        )
+        # 2. Static layer (5 probes over the raw bytes, before execution)
+        static_result, static_ms = _static_layer(sample_path)
+        hyp_results["pdf_static_indicators"] = static_result
+        hypothesis_timings_ms["pdf_static_indicators"] = static_ms
 
         # 3. Snapshot BEFORE
         log.info("Taking snapshot BEFORE")
         snapshot_before = take_snapshot(relative_ts_s=0.0)
 
-        # 4. DYNAMIC LAYER A — mutool draw straced
-        # Renders the PDF pages, triggers parser bugs, exercises the
-        # decompression code (zlib, JPEG, JBIG2) → catches mupdf CVEs.
-        # No PDF JS execution (mutool draw does not do it).
-        trace_mutool_path = work_dir / "trace_mutool.log"
-        trace_pdfjs_path  = work_dir / "trace_pdfjs.log"
-
-        per_step_timeout = max(TIMEOUT_S // 2, 30)
-
-        mutool_cmd = [
-            "strace", "-f", "-tt", "-e", "trace=all", "-o", str(trace_mutool_path),
-            "mutool", "draw", "-o", "/dev/null", str(sample_path),
-        ]
-        log.info("[layer A] strace + mutool draw (timeout=%ds)", per_step_timeout)
-
-        # Memory forensics in parallel (mutool process)
-        memory_result: list[MemoryObservables] = [MemoryObservables()]
-        def _collect_memory():
-            memory_result[0] = collect_memory_observables(
-                "mutool", max_snapshots=5, interval_s=0.5
-            )
-
-        mem_thread = threading.Thread(target=_collect_memory, daemon=True)
-        mem_thread.start()
-
-        exec_start = time.time()
-        exit_code_mutool: int | None = None
-        try:
-            with open(work_dir / "stdout_mutool.log", "wb") as out_f, \
-                 open(work_dir / "stderr_mutool.log", "wb") as err_f:
-                r = subprocess.run(
-                    mutool_cmd, stdout=out_f, stderr=err_f,
-                    timeout=per_step_timeout, check=False,
-                )
-            exit_code_mutool = r.returncode
-        except subprocess.TimeoutExpired:
-            log.warning("[layer A] mutool timed out after %ds", per_step_timeout)
-            timeout_triggered = True
-
-        mem_thread.join(timeout=10)
-        memory = memory_result[0]
-
-        # 4-bis. DYNAMIC LAYER B — Node + PDF.js straced
-        # Executes the PDF's embedded JavaScript (extraction via PDF.js,
-        # execution in a Node vm with a stubbed Adobe context).
-        # Catches JS-based polymorphs invisible to the static layer
-        # AND to mutool (which does not run the JS).
-        pdfjs_cmd = [
-            "strace", "-f", "-tt", "-e", "trace=all", "-o", str(trace_pdfjs_path),
-            "node", "/opt/agent/pdf_runner.js", str(sample_path),
-        ]
-        log.info("[layer B] strace + node pdf_runner.js (timeout=%ds)", per_step_timeout)
-
-        exit_code_pdfjs: int | None = None
-        try:
-            with open(work_dir / "stdout_pdfjs.log", "wb") as out_f, \
-                 open(work_dir / "stderr_pdfjs.log", "wb") as err_f:
-                r = subprocess.run(
-                    pdfjs_cmd, stdout=out_f, stderr=err_f,
-                    timeout=per_step_timeout, check=False,
-                )
-            exit_code_pdfjs = r.returncode
-        except subprocess.TimeoutExpired:
-            log.warning("[layer B] pdf_runner.js timed out after %ds", per_step_timeout)
-            timeout_triggered = True
-
-        execution_duration_s = time.time() - exec_start
-
-        # Exit code retained for the report: we take mutool (layer A) as the
-        # reference; the pdfjs exit is often != 0 on malformed PDFs (a signal itself).
-        exit_code = exit_code_mutool
-        if exit_code is not None:
-            (work_dir / "exit_code").write_text(str(exit_code))
-        log.info(
-            "Exec done: mutool exit=%s pdfjs exit=%s duration=%.1fs",
-            exit_code_mutool, exit_code_pdfjs, execution_duration_s,
-        )
+        # 4. Dynamic detonation (mutool + node/PDF.js, straced)
+        (memory, exit_code, execution_duration_s, detonation_timeout,
+         trace_mutool_path, trace_pdfjs_path) = _detonate(sample_path, work_dir)
+        timeout_triggered = timeout_triggered or detonation_timeout
 
         # 5. Snapshot AFTER
         log.info("Taking snapshot AFTER")
         snapshot_after = take_snapshot(relative_ts_s=execution_duration_s)
 
-        # 6. Parse strace — UNION of the two traces (layer A + layer B)
-        # The 7 behavioural hypotheses see the union of syscalls, so a signal
-        # caught by any layer makes the hypothesis fire.
-        trace_mutool = trace_mutool_path.read_text(errors="replace") if trace_mutool_path.exists() else ""
-        trace_pdfjs  = trace_pdfjs_path.read_text(errors="replace")  if trace_pdfjs_path.exists()  else ""
-        trace_combined = trace_mutool + "\n" + trace_pdfjs
-        syscalls = parse_strace_log(trace_combined)
-        sleep_cumulated = extract_sleep_cumulated(trace_combined)
-        log.info(
-            "Trace sizes: mutool=%d bytes pdfjs=%d bytes → %d syscalls in union",
-            len(trace_mutool), len(trace_pdfjs), len(syscalls),
+        # 6. Parse strace — union of both layers
+        syscalls, sleep_cumulated, evasion_tells = _parse_traces(
+            trace_mutool_path, trace_pdfjs_path
         )
 
         # 7. Diff
@@ -401,6 +390,7 @@ def run_pdf_analysis(job_id: str, s3_url: str) -> None:
             execution_duration_s=execution_duration_s,
             sleep_cumulated_s=sleep_cumulated,
             exit_code=exit_code,
+            evasion_tells=evasion_tells,
         )
 
         log.info(
@@ -411,29 +401,33 @@ def run_pdf_analysis(job_id: str, s3_url: str) -> None:
             len(memory.suspicious_regions),
         )
 
-        # 8. Behavioural hypotheses (reused as-is on mutool's syscalls — if
-        #    mutool is exploited, the C2/injection signals appear exactly like
-        #    for a malicious ELF)
-        for name, module in _BEHAVIORAL_PIPELINE:
-            t_hyp = time.monotonic()
-            hyp_results[name] = module.evaluate(diff, signals, memory)
-            hypothesis_timings_ms[name] = round(
-                (time.monotonic() - t_hyp) * 1000, 1
-            )
-            log.debug(
-                "[pipeline] %s -> value=%s score=%.3f (%.0fms)",
-                name,
-                hyp_results[name].value,
-                hyp_results[name].score,
-                hypothesis_timings_ms[name],
-            )
+        # 8. Behavioural hypotheses (union signals — a mutool exploit surfaces
+        #    the same C2/injection signals as a malicious ELF)
+        beh_results, beh_timings = _run_behavioural(diff, signals, memory)
+        hyp_results.update(beh_results)
+        hypothesis_timings_ms.update(beh_timings)
 
         anomaly_score = _compute_anomaly_score(hyp_results)
         verdict, behavior_summary = _build_narrative(hyp_results, anomaly_score, execution_duration_s)
 
+        # D1 guard — "benign" is only allowed when the render actually
+        # happened (M4 liveness); an unobserved/crashed render escalates.
+        total_syscalls = sum(s.call_count for s in syscalls)
+        liveness_ok, liveness_note = execution_liveness(total_syscalls, exit_code)
+        guarded, guard_reason = guarded_verdict(
+            anomaly_score, _VERDICT_MALICIOUS, _VERDICT_SUSPICIOUS,
+            liveness_ok=liveness_ok,
+        )
+        if guarded != verdict:
+            verdict = guarded
+            behavior_summary = PDF_GUARD_NEEDS_CONTEXT.format(
+                score=anomaly_score, liveness=liveness_note,
+            )
+
         log.info(
-            "Analysis done: verdict=%s anomaly=%.3f positive=%s",
-            verdict, anomaly_score, [k for k, r in hyp_results.items() if r.value],
+            "Analysis done: verdict=%s guard=%s anomaly=%.3f positive=%s",
+            verdict, guard_reason, anomaly_score,
+            [k for k, r in hyp_results.items() if r.value],
         )
 
     except Exception as exc:
@@ -441,15 +435,33 @@ def run_pdf_analysis(job_id: str, s3_url: str) -> None:
         error_msg = str(exc)
         anomaly_score = 0.0
         verdict = "error"
-        behavior_summary = f"Verdict sandbox : ERROR — l'analyse a échoué ({exc})."
+        behavior_summary = PDF_ERROR_SUMMARY.format(exc=exc)
         timeout_triggered = False
         hypothesis_timings_ms = {}
         hyp_results = {}
+        liveness_ok, liveness_note, guard_reason = False, "analysis failed", "analysis_error"
 
-    ended_at = _now_iso()
+    ended_at = now_iso()
     duration_s = time.time() - t0
 
     iocs = build_iocs(hyp_results, _HYP_TO_MITRE, _ioc_type)
+
+    # D-obs — greppable verdict line + beacon on the probable-miss signature.
+    low_obs = low_observability_alert(
+        verdict=verdict, anomaly_score=anomaly_score,
+        duration_s=duration_s, n_iocs=len(iocs), liveness_ok=liveness_ok,
+    )
+    log.info(
+        "SANDBOX_VERDICT path=pdf verdict=%s score=%.3f guard=%s liveness=%s "
+        "dur=%.2fs iocs=%d low_obs=%s",
+        verdict, anomaly_score, guard_reason, liveness_ok, duration_s, len(iocs), low_obs,
+    )
+    if low_obs:
+        log.warning(
+            "SANDBOX_LOW_OBSERVABILITY path=pdf reason=%s verdict=%s score=%.3f "
+            "iocs=%d — probable miss, do not trust silently",
+            low_obs, verdict, anomaly_score, len(iocs),
+        )
 
     event = build_result_event(
         job_id=job_id,
@@ -465,10 +477,16 @@ def run_pdf_analysis(job_id: str, s3_url: str) -> None:
         hypothesis_timings_ms=hypothesis_timings_ms,
         hyp_results=hyp_results,
         verdict=verdict,
-        meta_extra={"file_type": "pdf"},
+        meta_extra={
+            "file_type": "pdf",
+            "liveness_ok": liveness_ok,
+            "liveness": liveness_note,
+            "verdict_guard": guard_reason,
+            "low_observability": low_obs,
+        },
     )
 
-    asyncio.run(_publish(job_id, event))
+    publish(job_id, event, log)
 
 
 # ---------------------------------------------------------------------------
@@ -476,14 +494,7 @@ def run_pdf_analysis(job_id: str, s3_url: str) -> None:
 # ---------------------------------------------------------------------------
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="PDF sandbox analysis agent")
-    parser.add_argument("--job-id", required=True)
-    parser.add_argument("--s3-url", required=True)
-    args = parser.parse_args()
-
-    log.info("PDF Agent started: job_id=%s", args.job_id)
-    run_pdf_analysis(args.job_id, args.s3_url)
-    log.info("PDF Agent done: job_id=%s", args.job_id)
+    run_cli("PDF sandbox analysis agent", "PDF Agent", log, run_pdf_analysis)
 
 
 if __name__ == "__main__":

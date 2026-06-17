@@ -1,4 +1,4 @@
-# ghcr-image: ubuntu-sandbox:v1.0.0
+# ghcr-image: ubuntu-sandbox:v1.2.0
 # Hardened guest image for ELF sample execution — ubuntu-sandbox:v1
 # Runs in a batch/v1 K8s Job with cap SYS_PTRACE.
 # Contains the analysis agent (run_analysis.py) + Python deps.
