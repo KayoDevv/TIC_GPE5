@@ -12,7 +12,7 @@ from llm_layer.guard import (
     scan_text,
     untrusted_fields,
 )
-from llm_layer.models import ModelDecision, SandboxResultIn
+from llm_layer.models import ModelDecision, SandboxResultIn, timed_out
 
 # --------------------------- config --------------------------------------- #
 
@@ -73,6 +73,13 @@ def test_sandbox_result_in_defaults_meta_when_absent():
 def test_model_decision_schema_is_json_schema():
     schema = ModelDecision.guided_json_schema()
     assert schema["properties"]["is_malicious"]["type"] == "boolean"
+
+
+def test_timed_out_reads_analysis_trust():
+    assert timed_out(make_report(timeout=True)) is True
+    assert timed_out(make_report(timeout=False)) is False
+    no_trust = make_report().model_copy(update={"analysis_trust": None})
+    assert timed_out(no_trust) is False
 
 
 # --------------------------- guard ---------------------------------------- #

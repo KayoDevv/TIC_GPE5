@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 
 from zt_shared.models.events import LlmLayerResultEvent
 
-from llm_layer.models import ModelDecision, SandboxResultIn
+from llm_layer.models import ModelDecision, SandboxResultIn, timed_out
 
 _DEFAULT_CONFIDENCE = 50
 _TIMEOUT_CONFIDENCE_CAP = 40
@@ -54,7 +54,7 @@ def build_result(
     explanation = decision.explanation_text
 
     # Partial evidence must not back a confident "clean".
-    if report.timeout_triggered and not decision.is_malicious:
+    if timed_out(report) and not decision.is_malicious:
         confidence = min(confidence, _TIMEOUT_CONFIDENCE_CAP)
         explanation = (
             "The sandbox timed out, so this assessment is based on partial "

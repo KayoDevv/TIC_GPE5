@@ -103,7 +103,10 @@ def validate(payload: dict) -> None:
 
     _assert_injection_safe(payload)
 
-    print(f"OK ({len(payload['iocs'])} IoCs, summary={len(payload['behavior_summary'])} chars, injection-safe)")
+    print(
+        f"OK ({len(payload['iocs'])} IoCs, "
+        f"summary={len(payload['behavior_summary'])} chars, injection-safe)"
+    )
 
 
 def main() -> None:
