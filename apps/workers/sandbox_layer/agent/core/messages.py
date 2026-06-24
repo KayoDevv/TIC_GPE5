@@ -1,21 +1,14 @@
 """Product-facing message content — the single designated home for French.
 
-CHARON's output language is French: the per-signal explanations and the
-behaviour-summary text are shown to French end-users (the extension's UI panel)
-and fed to the LLM Layer, and their exact wording is pinned by the golden tests
-(tests/test_golden_core.py).
-
-This module is an i18n content table, NOT logic. Code and comments everywhere
-else in the codebase — including in this file — are English (CONTRIBUTING.md
-§1). Product-facing strings live here and only here; never inline them in a
-logic module. To translate the product later, swap this table.
+CHARON's output is French (UI panel + LLM input); wording is pinned by the golden
+tests (tests/test_golden_core.py). This is an i18n content table, NOT logic —
+everywhere else (incl. this file's comments) is English per CONTRIBUTING.md §1.
+Never inline product strings in a logic module; swap this table to translate.
 """
 
 from __future__ import annotations
 
-# Rule-key -> plain-language explanation. The key is the last segment of an
-# evidence field_path (see core.report.explain_signal). Values are the French
-# product output (see module docstring).
+# Rule-key (last segment of an evidence field_path) -> French explanation.
 SIGNAL_EXPLAIN: dict[str, str] = {
     # Disguise / structure
     "missing_pdf_magic":        "Le fichier prétend être un PDF mais son entête est d'un autre type (HTML/script) — déguisement caractéristique d'évasion",

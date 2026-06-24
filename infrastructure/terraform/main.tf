@@ -1,12 +1,6 @@
-# Charon — Terraform root.
-#
-# Make/TF boundary (see docs/terraform-frontier.md): Terraform owns the
-# COMPARTMENTS (namespaces/RBAC/netpol/RuntimeClass/VAP) and the ENGINE (Helm
-# KEDA+Kafka, MinIO). The Makefile keeps the HULL (host, k3s, CNI, runsc
-# binary, image build/import) and the CARGO (workers via kustomize).
-#
-# T1 = foundation: providers + state backend + namespaces (this file +
-# namespaces.tf). RBAC/netpol/helm/minio land in T2/T3.
+# Charon — Terraform root. Make/TF ownership boundary: see docs/terraform-frontier.md.
+# TF owns namespaces/RBAC/netpol/RuntimeClass + the Helm engine; Make keeps the host,
+# k3s, CNI, image build/import, and the kustomize workers.
 
 terraform {
   required_version = ">= 1.6"
@@ -22,11 +16,9 @@ terraform {
     }
   }
 
-  # State stored in MinIO via its S3-compatible API. Chicken/egg assumed: the
-  # `terraform-state` bucket is created ONCE by `make tf-bootstrap-state` (mc)
-  # BEFORE the first `terraform init`. Endpoint = MinIO dev NodePort (32090);
-  # MinIO is NOT real AWS -> all AWS-specific checks are skipped. Single-node
-  # dev: 127.0.0.1 is enough.
+  # State in MinIO (S3 API). The `terraform-state` bucket is created once by
+  # `make tf-bootstrap-state` before init. Endpoint = MinIO dev NodePort; not real
+  # AWS, so the AWS-specific checks below are skipped.
   backend "s3" {
     bucket = "terraform-state"
     key    = "charon/terraform.tfstate"
@@ -48,8 +40,7 @@ terraform {
   }
 }
 
-# k3s writes its kubeconfig here (see `make setup-kubeconfig`). Single-node:
-# no context alias, use the current one.
+# k3s kubeconfig (see `make setup-kubeconfig`).
 provider "kubernetes" {
   config_path = pathexpand(var.kubeconfig_path)
 }

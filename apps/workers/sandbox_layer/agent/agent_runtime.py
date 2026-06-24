@@ -1,14 +1,9 @@
-"""Shared scaffolding for the two analysis agents (run_analysis + run_pdf_analysis).
+"""Shared scaffolding for the ELF and PDF agents: the Kafka/MinIO runtime config,
+the result publisher, the UTC timestamp helper, logging, and the CLI entry point.
 
-Holds the parts that are byte-for-byte identical between the ELF and PDF agents:
-the Kafka/MinIO runtime config, the result publisher, the UTC timestamp helper,
-logging setup, and the CLI entry point. Format-specific logic — download/SSRF
-guards, scoring weights, IOC typing, and the detonation pipeline itself — stays
-in each agent (that is what legitimately differs).
-
-The only import-time side effect is reading the environment config below, exactly
-as before — just in one place instead of two. This module does I/O (Kafka,
-argv); it is deliberately NOT under core/ (which stays pure and golden-tested).
+Format-specific logic (download/SSRF guards, weights, IOC typing, the detonation
+pipeline) stays in each agent. This module does I/O (Kafka, argv) — deliberately
+NOT under core/, which stays pure and golden-tested.
 """
 
 from __future__ import annotations

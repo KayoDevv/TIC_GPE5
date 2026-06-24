@@ -1,18 +1,6 @@
-# Bitnami Kafka Helm chart values — Bitnami pivot of 2026-05-13.
-#
-# Why Bitnami instead of Strimzi:
-#   - Strimzi 0.40/0.46 crash on init on K3s v1.35 (Vert.x event loop blocked
-#     > 9s while discovering K8s 1.35 APIs missing from their compat matrix).
-#   - Bitnami chart = standard StatefulSet + Service, no operator, no exotic
-#     API discovery → universal compatibility.
-#
-# KRaft combined mode (the controller-0 pod is BOTH controller AND broker).
-# No Zookeeper → less RAM, fewer pods, faster startup.
-#
-# Chart version: 31.0.0 (Kafka 3.7.1, see Makefile KAFKA_CHART_VERSION)
-# Usage:
-#   helm upgrade --install kafka bitnami/kafka -n kafka --version 31.0.0 \
-#     -f infrastructure/k8s-manifests/applications/kafka/values.yaml
+# Bitnami Kafka values (pivot off Strimzi 2026-05-13: Strimzi crashed on K3s v1.35
+# API discovery; Bitnami = plain StatefulSet, universal). KRaft combined mode
+# (controller-0 is both controller and broker, no Zookeeper). Chart 31.0.0 (Kafka 3.7.1).
 
 # ─────────────────────────────────────────────────────────────────────
 # Image: bitnamilegacy/kafka (free registry with all tags)
@@ -98,7 +86,7 @@ extraConfig: |
 # ─────────────────────────────────────────────────────────────────────
 # Automatic provisioning of the 6 topics (replaces scripts/kafka-init.sh).
 # Mirrors the scripts/kafka-init.sh config exactly: 3 partitions, retention
-# 3600000ms (1h). Exception: minio.events = 1 partition.
+# 3600000ms (1h).
 # ─────────────────────────────────────────────────────────────────────
 provisioning:
   enabled: true
@@ -138,11 +126,6 @@ provisioning:
         retention.ms: "3600000"
     - name: verdict.result
       partitions: 3
-      replicationFactor: 1
-      config:
-        retention.ms: "3600000"
-    - name: minio.events
-      partitions: 1
       replicationFactor: 1
       config:
         retention.ms: "3600000"

@@ -1,19 +1,10 @@
-# Charon cluster namespaces — single owner: Terraform.
+# Charon cluster namespaces — single owner: Terraform. Labels mirror the original
+# kustomize manifests so a post-import `terraform plan` is empty.
 #
-# Labels reproduce the original kustomize manifests EXACTLY
-# (applications/*/namespace.yaml) so that `terraform plan` shows 0 changes
-# after import. Once imported AND the empty plan is verified, the namespace.yaml
-# files are removed from the kustomize bases (anti-double-ownership).
-#
-# NOTE: kafka/minio only carry `name: <ns>` (referenced by the netpols via
-# namespaceSelector). sandbox/sinkhole carry part-of=charon + PSA=privileged
-# (INTENTIONAL — the Jobs add CAP_SYS_PTRACE, outside the baseline/restricted
-# allow-list; the real hardening lives in the pods' securityContext).
-#
-# Import note: K8s auto-adds the `kubernetes.io/metadata.name` label, which the
-# hashicorp/kubernetes provider ignores on read (>= v2.18) — so it is NOT
-# declared here. If `plan` still reports a diff after import, see
-# docs/terraform-frontier.md (verification step) to align with reality.
+# kafka/minio carry only `name: <ns>` (netpol namespaceSelector). sandbox/sinkhole
+# carry PSA=privileged INTENTIONALLY — the analysis Jobs add CAP_SYS_PTRACE (outside
+# the baseline/restricted allow-list); real hardening is in the pod securityContext.
+# The auto `kubernetes.io/metadata.name` label is omitted (provider ignores it on read).
 
 locals {
   # PSA labels shared by sandbox + sinkhole (privileged is INTENTIONAL).

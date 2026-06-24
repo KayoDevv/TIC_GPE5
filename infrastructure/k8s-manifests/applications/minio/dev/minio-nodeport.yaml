@@ -1,7 +1,5 @@
-# DEV-ONLY — exposes MinIO on a fixed NodePort so the validator/feeder running on
-# the VM host can upload samples. The base `minio` Service (tenant.yaml) stays
-# ClusterIP; prod has NO host-facing MinIO. This is a SEPARATE service, NOT part
-# of the base kustomization — applied by `make dev-expose`, removed by `dev-teardown`.
+# DEV-ONLY NodePort so the host validator/feeder can upload samples. Separate from
+# the ClusterIP base `minio` Service; applied by `make dev-expose`, removed by teardown.
 apiVersion: v1
 kind: Service
 metadata:

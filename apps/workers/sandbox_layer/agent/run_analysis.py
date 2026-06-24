@@ -1,18 +1,10 @@
-"""Analysis agent — runs inside the ubuntu-sandbox:v1 K8s pod.
+"""ELF analysis agent — runs inside the ubuntu-sandbox:v1 K8s pod.
 
-Receives --job-id and --s3-url as CLI arguments.
-Environment variables: KAFKA_BOOTSTRAP_SERVERS, KAFKA_TOPIC_OUT,
-                       MINIO_ENDPOINT, EMAIL_CONTEXT_JSON.
+Args: --job-id, --s3-url. Env: KAFKA_BOOTSTRAP_SERVERS, KAFKA_TOPIC_OUT,
+MINIO_ENDPOINT, EMAIL_CONTEXT_JSON.
 
-Pipeline:
-    1. Download the sample from MinIO (presigned URL)
-    2. Snapshot BEFORE
-    3. Run strace + sample (subprocess, we are inside the container)
-    4. /proc memory forensics in parallel (thread)
-    5. Snapshot AFTER
-    6. 7 hypotheses → anomaly_score
-    7. Build SandboxLayerResultEvent
-    8. Publish to sandbox_layer.result
+Pipeline: download → snapshot → strace+sample (with parallel /proc memory
+forensics) → snapshot → 7 hypotheses → anomaly_score → build event → publish.
 """
 
 from __future__ import annotations
@@ -52,13 +44,8 @@ import hypotheses.lolbins as h_lolbins
 
 log = get_logger("agent")
 
-# ---------------------------------------------------------------------------
-# Pipeline v2 — weights and orchestration parameters
-# (shared Kafka/MinIO/EMAIL/TIMEOUT config is in agent_runtime, imported above)
-# ---------------------------------------------------------------------------
-
-# Default weights (calibrated in Phase 7, re-calibrable via SANDBOX_WEIGHTS_JSON).
-# Sum = 1.0. Rebalanced to include H7 LOLBins.
+# Weights and orchestration (shared Kafka/MinIO config is in agent_runtime).
+# Sum = 1.0; override via SANDBOX_WEIGHTS_JSON.
 DEFAULT_WEIGHTS: dict[str, float] = {
     "persistence_detected": 0.25,
     "c2_communication":     0.20,
@@ -71,16 +58,12 @@ DEFAULT_WEIGHTS: dict[str, float] = {
 
 
 def _load_weights() -> dict[str, float]:
-    """Load weights from SANDBOX_WEIGHTS_JSON if set, else DEFAULT_WEIGHTS.
-
-    Allows re-calibration via calibrate_weights.py without rebuilding the image.
-    """
+    """Weights from SANDBOX_WEIGHTS_JSON if set (re-calibrate without a rebuild), else defaults."""
     raw = os.getenv("SANDBOX_WEIGHTS_JSON")
     if not raw:
         return DEFAULT_WEIGHTS.copy()
     try:
         loaded: dict[str, float] = json.loads(raw)
-        # Ensure all expected keys are present
         for k, v in DEFAULT_WEIGHTS.items():
             loaded.setdefault(k, v)
         return loaded
@@ -94,17 +77,11 @@ WEIGHTS = _load_weights()
 THRESHOLD_MAL = float(os.getenv("SANDBOX_THRESHOLD_MAL", "0.40"))
 THRESHOLD_SUS = float(os.getenv("SANDBOX_THRESHOLD_SUS", "0.15"))
 
-# Early-exit: if the partial score (after H7, before H3) exceeds this threshold,
-# H3 (code_injection, the most RAM-expensive hypothesis) is skipped.
-#
-# Threshold calibrated against the sum of the first 5 hypotheses' weights:
-#   evasion(0.05) + encryption(0.10) + c2(0.20) + lolbins(0.15) + propagation(0.05) = 0.55 max
-# A threshold of 0.45 means: "80%+ of the signal available before H3 is positive".
-# Only H3 is skipped — H1 (persistence) stays because its RAM cost is moderate.
+# Early-exit: if the partial score before H3 (code_injection, the most RAM-hungry
+# hypothesis) already exceeds this, skip H3. 0.45 ≈ 80% of the 0.55 reachable by then.
 EARLY_EXIT_THRESHOLD = float(os.getenv("SANDBOX_EARLY_EXIT_THRESHOLD", "0.45"))
 
-# Optimized execution order — descending RAM ROI (expert council 2026-04-29).
-# Format: (result_key, module)
+# Execution order: ascending RAM cost, so the priciest (H3) runs last and can be skipped.
 _HYPOTHESIS_PIPELINE: list[tuple[str, object]] = [
     ("evasion_attempted",    h_evasion),      # H5 — near-free
     ("file_encryption",      h_encryption),   # H4 — low
@@ -115,9 +92,7 @@ _HYPOTHESIS_PIPELINE: list[tuple[str, object]] = [
     ("code_injection",       h_injection),    # H3 — most expensive -> last
 ]
 
-# Name of the last hypothesis after which early-exit is evaluated
-# (before H3 — the most expensive one)
-_EARLY_EXIT_AFTER = "propagation"
+_EARLY_EXIT_AFTER = "propagation"  # early-exit is evaluated right after this (just before H3)
 
 
 # ---------------------------------------------------------------------------

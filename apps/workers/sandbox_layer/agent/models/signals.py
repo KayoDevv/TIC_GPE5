@@ -19,12 +19,10 @@ from .constants import (
 
 
 class SyscallSummary(BaseModel):
-    """Aggregated summary of one syscall — no raw events (too large).
+    """Aggregated summary of one syscall (no raw events — too large).
 
     Collected via strace -f -tt -e trace=all (SYS_PTRACE cap required).
     sample_args: the first few argument occurrences, truncated.
-    Interesting syscalls include: openat, connect, clone, ptrace, execve, mmap,
-    mprotect, write, unlink.
     """
 
     model_config = ConfigDict(frozen=True)

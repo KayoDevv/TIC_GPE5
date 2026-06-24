@@ -1,12 +1,9 @@
 """Pure core — D4 prompt-injection neutralization at the output boundary.
 
-The fields the sandbox emits (email_context, IOC values, behaviour-summary
-fragments) are attacker-influenced and get concatenated into the LLM Layer's
-prompt downstream. We strip the chat-template control tokens that can flip the
-model out of its data context (`<|im_start|>`, `[INST]`, a `\\n\\nHuman:`
-boundary) — the only sequences that switch roles. No intent detection (brittle);
-ordinary prose passes through. Neutralised tokens become a visible `[filtered]`
-marker since the fields are UI-facing. No I/O — golden-tested (tests/test_sanitize.py).
+The sandbox's attacker-influenced fields (email_context, IOC text, behaviour
+summary) feed the LLM Layer's prompt. We strip only the chat-template control
+tokens that can switch the model's role (`<|im_start|>`, `[INST]`, `\\n\\nHuman:`);
+no intent detection. Neutralised tokens become a visible `[filtered]` marker. No I/O.
 """
 
 from __future__ import annotations
@@ -15,10 +12,8 @@ import re
 
 FILTERED = "[filtered]"
 
-# Each pattern matches a control token that can switch an LLM's role/turn.
-# Order does not matter (single pass, alternation). Kept literal where a family
-# uses fixed tokens; the pipe-delimited form is generalised so future
-# Llama-family special tokens we did not enumerate are still caught.
+# Control tokens that can switch an LLM's role/turn (single-pass alternation).
+# The <|...|> form is generalised to catch un-enumerated Llama-family tokens.
 _TOKEN_PATTERNS = [
     r"<\|[^|>\n]{0,40}\|>",        # Llama-3 / ChatML: <|...|> (eot_id, im_start, ...)
     r"\[/?INST\]",                  # Llama-2 / Mistral instruction markers

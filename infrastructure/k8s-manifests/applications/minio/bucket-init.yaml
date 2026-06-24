@@ -1,9 +1,4 @@
-# Initialization Job for the sandbox-reports bucket + Kafka notification.
-# Idempotent: can be re-applied without breaking an existing bucket.
-#
-# Creates:
-#   - Bucket `sandbox-reports`
-#   - charon ARN notification → Kafka topic minio.events on PUT events
+# Idempotent init Job: creates the `sandbox-reports` bucket. Safe to re-apply.
 ---
 apiVersion: batch/v1
 kind: Job
@@ -46,15 +41,8 @@ spec:
               # Create bucket (no-op if already present)
               mc mb -p local/sandbox-reports || true
 
-              # Kafka notification (no-op if the ARN is already configured)
-              mc event add local/sandbox-reports arn:minio:sqs::charon:kafka \
-                --event put --suffix .pdf,.exe,.elf 2>&1 | grep -v "already exists" || true
-
-              # Final listing for the log
               echo "=== Buckets ==="
               mc ls local
-              echo "=== Events on sandbox-reports ==="
-              mc event list local/sandbox-reports
           resources:
             requests: {cpu: 50m, memory: 64Mi}
             limits: {cpu: 200m, memory: 128Mi}
