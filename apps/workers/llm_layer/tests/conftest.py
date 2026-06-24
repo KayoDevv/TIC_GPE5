@@ -19,9 +19,11 @@ def make_report(
     body_text: str = "Please find attached your payment receipt.",
     sender: str = "billing@example.com",
     iocs: list[Ioc] | None = None,
+    verdict: str | None = None,
 ) -> SandboxResultIn:
     return SandboxResultIn(
         job_id=JOB_ID,
+        verdict=verdict,
         iocs=iocs if iocs is not None else [
             Ioc(type="ip", value="203.0.113.10", mitre_tactic="TA0011",
                 description="outbound beacon"),

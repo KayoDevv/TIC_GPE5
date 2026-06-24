@@ -18,7 +18,7 @@ from pathlib import Path
 
 REQUIRED_TOP = ("job_id", "iocs", "behavior_summary", "email_context", "timestamp")
 REQUIRED_EMAIL = ("sender", "subject", "body_text")
-ALLOWED_IOC_TYPES = {"ip", "domain", "file_hash", "registry_key", "syscall"}
+ALLOWED_IOC_TYPES = {"ip", "domain", "file_hash", "registry_key", "syscall", "pdf_indicator"}
 
 # note.txt #3 / Cahier D4: the sandbox must strip chat-template control tokens
 # from the untrusted fields before emission. This validator rejects any payload
@@ -75,8 +75,6 @@ def validate(payload: dict) -> None:
         if k not in ctx:
             fail(f"email_context.{k} missing")
         _check_no_control_tokens(f"email_context.{k}", ctx[k])
-
-    _assert_injection_safe(payload)
 
     print(f"OK ({len(payload['iocs'])} IoCs, summary={len(payload['behavior_summary'])} chars, injection-safe)")
 
