@@ -73,8 +73,9 @@ class SandboxSignal(BaseModel):
 
 class SandboxLayerResultEvent(BaseModel):
     job_id: UUID
-    verdict: Optional[Literal["benign", "needs_more_context", "malicious", "error"]] = (
-        Field(default=None, description="3-band sandbox verdict; the LLM resolves needs_more_context")
+    verdict: Optional[Literal["benign", "needs_more_context", "malicious", "error"]] = Field(
+        default=None,
+        description="3-band sandbox verdict; the LLM resolves needs_more_context",
     )
     anomaly_score: Optional[float] = Field(default=None, ge=0.0, le=1.0)
     analysis_trust: Optional[AnalysisTrust] = None
