@@ -18,17 +18,17 @@ from llm_layer.models import ModelDecision
 from llm_layer.prompt_builder import Prompt
 
 
+# Retriable: timeout, connection error, or HTTP 5xx.
 class TransientLLMError(RuntimeError):
-    """Retriable: timeout, connection error, or HTTP 5xx."""
+    pass
 
 
+# Non-retriable: HTTP 4xx or malformed completion envelope.
 class PermanentLLMError(RuntimeError):
-    """Non-retriable: HTTP 4xx or malformed completion envelope."""
+    pass
 
 
 class LLMClient:
-    """Thin async wrapper around the chat-completions endpoint."""
-
     def __init__(
         self,
         inference: InferenceParams,
@@ -67,7 +67,6 @@ class LLMClient:
         return body
 
     async def complete(self, endpoint: Endpoint, prompt: Prompt) -> str:
-        """Call ``endpoint`` and return the assistant ``content`` string."""
         headers = {"Content-Type": "application/json"}
         if endpoint.api_key:
             headers["Authorization"] = f"Bearer {endpoint.api_key}"

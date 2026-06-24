@@ -10,7 +10,6 @@ python = "^3.11"
 # Canonical Kafka events + Pydantic models + Kafka helpers (monorepo path dep).
 zt-shared = { path = "../../../packages/core", develop = true }
 httpx = "^0.28"
-tenacity = "^9.1"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3"

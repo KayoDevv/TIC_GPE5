@@ -54,7 +54,6 @@ def _wrap_untrusted(payload: dict[str, object]) -> str:
 
 
 def build_prompt(report: SandboxResultIn) -> Prompt:
-    """Assemble the strict two-message prompt from a (guarded) sandbox report."""
     system = _SYSTEM_PROMPT.format(
         schema=json.dumps(ModelDecision.guided_json_schema(), ensure_ascii=False),
         open=OPEN_TAG,

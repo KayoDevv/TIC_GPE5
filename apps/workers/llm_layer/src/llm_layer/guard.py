@@ -45,12 +45,12 @@ _CONTROL_TOKENS: tuple[str, ...] = (
 _PREFIX_RE = re.compile(r"\n\s*\n\s*(human|assistant|system)\s*:", re.IGNORECASE)
 
 
+# Raised when a raw control token survived in an untrusted field (sandbox regressed).
 class SandboxInputRegression(ValueError):
-    """A raw control token survived in an untrusted field (sandbox regressed)."""
+    pass
 
 
 def untrusted_fields(report: SandboxResultIn) -> dict[str, str]:
-    """The exact set of fields the sandbox guarantees to have sanitised."""
     fields: dict[str, str] = {
         "email_context.sender": str(report.email_context.sender),
         "email_context.subject": report.email_context.subject,
@@ -64,7 +64,6 @@ def untrusted_fields(report: SandboxResultIn) -> dict[str, str]:
 
 
 def scan_text(text: str) -> list[str]:
-    """Return the raw control markers found in ``text`` (empty if clean)."""
     if not text:
         return []
     lowered = text.lower()
@@ -75,7 +74,6 @@ def scan_text(text: str) -> list[str]:
 
 
 def scan_control_tokens(report: SandboxResultIn) -> None:
-    """Raise :class:`SandboxInputRegression` if any untrusted field is poisoned."""
     violations: list[str] = []
     for where, text in untrusted_fields(report).items():
         violations.extend(f"{where}: {h}" for h in scan_text(text))
@@ -87,5 +85,4 @@ def scan_control_tokens(report: SandboxResultIn) -> None:
 
 
 def neutralise_envelope(text: str) -> str:
-    """Stop untrusted text from closing or reopening the data envelope."""
     return text.replace(OPEN_TAG, "[filtered]").replace(CLOSE_TAG, "[filtered]")

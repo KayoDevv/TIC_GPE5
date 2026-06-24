@@ -18,8 +18,9 @@ from llm_layer.models import ModelDecision
 _FENCE_RE = re.compile(r"```(?:json)?\s*(.*?)\s*```", re.DOTALL | re.IGNORECASE)
 
 
+# Raised when model content cannot be parsed into a valid ModelDecision.
 class ResponseParseError(ValueError):
-    """Model content could not be parsed into a valid ModelDecision."""
+    pass
 
 
 def _candidates(content: str) -> Iterator[str]:
@@ -33,7 +34,6 @@ def _candidates(content: str) -> Iterator[str]:
 
 
 def parse_model_output(content: str) -> ModelDecision:
-    """Return a validated :class:`ModelDecision` or raise ``ResponseParseError``."""
     if not content or not content.strip():
         raise ResponseParseError("empty model content")
 

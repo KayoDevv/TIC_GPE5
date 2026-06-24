@@ -46,7 +46,6 @@ def build_result(
     *,
     now: datetime | None = None,
 ) -> LlmLayerResultEvent:
-    """Apply the LLM-side rules and produce the wire event."""
     confidence = (
         decision.confidence_score
         if decision.confidence_score is not None
@@ -79,12 +78,8 @@ def degraded_result(
     reason: str,
     now: datetime | None = None,
 ) -> LlmLayerResultEvent:
-    """Cautious fallback when the LLM cannot produce a usable decision.
-
-    Flags the sample (``is_malicious=True``) at zero confidence: a precautionary
-    signal, not a confident verdict. The Verdict Engine, which prioritises the
-    ML/Sandbox layers, makes the final call.
-    """
+    # Precautionary fallback: flag (is_malicious=True) at zero confidence -- a
+    # signal, not a verdict. The Verdict Engine (ML/Sandbox first) makes the call.
     explanation = (
         "Automated semantic analysis could not be completed for this file "
         f"({reason}). As a precaution it is flagged for review; open it only if "

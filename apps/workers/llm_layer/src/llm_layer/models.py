@@ -29,16 +29,12 @@ class SandboxMeta(BaseModel):
 
 
 class SandboxResultIn(SandboxLayerResultEvent):  # type: ignore[misc]
-    """Canonical sandbox event + optional ``_meta`` pass-through."""
-
     model_config = ConfigDict(populate_by_name=True)
 
     meta: SandboxMeta = Field(default_factory=SandboxMeta, alias="_meta")
 
 
 class ModelDecision(BaseModel):
-    """Constrained model output -> maps onto LlmLayerResultEvent."""
-
     model_config = ConfigDict(extra="forbid")
 
     is_malicious: bool = Field(
@@ -54,5 +50,4 @@ class ModelDecision(BaseModel):
 
     @staticmethod
     def guided_json_schema() -> dict[str, Any]:
-        """JSON Schema passed to vLLM as ``guided_json``."""
         return ModelDecision.model_json_schema()
