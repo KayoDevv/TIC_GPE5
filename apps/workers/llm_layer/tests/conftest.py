@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from uuid import UUID
 
-from zt_shared.models.events import Ioc
+from zt_shared.models.events import AnalysisTrust, Ioc
 
 from llm_layer.models import SandboxMeta, SandboxResultIn
 
@@ -30,7 +30,7 @@ def make_report(
         ],
         behavior_summary=behavior_summary,
         email_context={"sender": sender, "subject": "Your receipt", "body_text": body_text},
-        timeout_triggered=timeout,
+        analysis_trust=AnalysisTrust(timeout_triggered=timeout),
         timestamp=NOW,
         _meta=SandboxMeta(prompt_injection_filtered=prompt_injection_filtered),
     )

@@ -33,6 +33,12 @@ class SandboxResultIn(SandboxLayerResultEvent):  # type: ignore[misc]
 
     meta: SandboxMeta = Field(default_factory=SandboxMeta, alias="_meta")
 
+    @property
+    def timeout_triggered(self) -> bool:
+        # Derived from analysis_trust now that the sandbox no longer duplicates it
+        # at the top level; absent trust means no observed timeout.
+        return bool(self.analysis_trust and self.analysis_trust.timeout_triggered)
+
 
 class ModelDecision(BaseModel):
     model_config = ConfigDict(extra="forbid")

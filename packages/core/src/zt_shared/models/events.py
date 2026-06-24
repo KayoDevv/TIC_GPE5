@@ -67,7 +67,6 @@ class SandboxSignal(BaseModel):
     score: Optional[float] = Field(
         default=None, description="null when the hypothesis was skipped (early-exit)"
     )
-    weight: float
     fired: bool
     evaluated: bool
 
@@ -89,7 +88,6 @@ class SandboxLayerResultEvent(BaseModel):
     email_context: EmailContext = Field(
         description="Pass-through of the email context from the request for the LLM Layer"
     )
-    timeout_triggered: bool = False
     timestamp: datetime
 
 
