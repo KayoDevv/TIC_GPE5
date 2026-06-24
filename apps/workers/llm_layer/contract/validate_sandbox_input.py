@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import re
 import sys
+from collections.abc import Iterator
 from pathlib import Path
 
 REQUIRED_TOP = ("job_id", "iocs", "behavior_summary", "email_context", "timestamp")
@@ -49,6 +50,30 @@ def _check_no_control_tokens(where: str, text: str) -> None:
         fail(f"raw conversational prefix survived in {where} (sandbox regression)")
 
 
+def _iter_strings(value: object) -> Iterator[str]:
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict):
+        for item in value.values():
+            yield from _iter_strings(item)
+    elif isinstance(value, list):
+        for item in value:
+            yield from _iter_strings(item)
+
+
+def _assert_injection_safe(payload: dict) -> None:
+    # Whole-payload sweep backing the "injection-safe" claim end to end: no string
+    # anywhere in the event -- including fields the per-field checks above do not
+    # enumerate -- may carry a raw chat-template control token or turn prefix.
+    for text in _iter_strings(payload):
+        low = text.lower()
+        for tok in CONTROL_TOKENS:
+            if tok.lower() in low:
+                fail(f"raw control token {tok!r} survived in payload (sandbox regression)")
+        if _PREFIX_RE.search(text):
+            fail("raw conversational prefix survived in payload (sandbox regression)")
+
+
 def validate(payload: dict) -> None:
     for k in REQUIRED_TOP:
         if k not in payload:
@@ -75,6 +100,8 @@ def validate(payload: dict) -> None:
         if k not in ctx:
             fail(f"email_context.{k} missing")
         _check_no_control_tokens(f"email_context.{k}", ctx[k])
+
+    _assert_injection_safe(payload)
 
     print(f"OK ({len(payload['iocs'])} IoCs, summary={len(payload['behavior_summary'])} chars, injection-safe)")
 
