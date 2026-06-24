@@ -23,10 +23,10 @@ test:
 	$(call skip,"$(SERVICE_NAME)","no tests")
 
 lint:
-	$(call skip,"$(SERVICE_NAME)","single file, no linter")
+	$(call skip,"$(SERVICE_NAME)","no linter (single file)")
 
 format:
-	$(call skip,"$(SERVICE_NAME)","single file, no formatter")
+	$(call skip,"$(SERVICE_NAME)","no formatter (single file)")
 
 typecheck:
 	$(call skip,"$(SERVICE_NAME)","no type checker")
