@@ -20,6 +20,7 @@ from datetime import datetime, timezone
 
 from zt_shared.models.events import LlmLayerResultEvent
 
+from llm_layer.guard import sanitize_explanation
 from llm_layer.models import ModelDecision, SandboxResultIn, timed_out
 
 _DEFAULT_CONFIDENCE = 50
@@ -51,7 +52,7 @@ def build_result(
         if decision.confidence_score is not None
         else _DEFAULT_CONFIDENCE
     )
-    explanation = decision.explanation_text
+    explanation = sanitize_explanation(decision.explanation_text)
 
     # Partial evidence must not back a confident "clean".
     if timed_out(report) and not decision.is_malicious:

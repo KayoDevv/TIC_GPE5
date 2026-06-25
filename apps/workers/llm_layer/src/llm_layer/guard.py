@@ -19,6 +19,7 @@ Two responsibilities, kept separate on purpose:
 from __future__ import annotations
 
 import re
+import unicodedata
 
 from llm_layer.models import SandboxResultIn
 
@@ -86,3 +87,22 @@ def scan_control_tokens(report: SandboxResultIn) -> None:
 
 def neutralise_envelope(text: str) -> str:
     return text.replace(OPEN_TAG, "[filtered]").replace(CLOSE_TAG, "[filtered]")
+
+
+_MAX_EXPLANATION_CHARS = 2000
+
+
+def sanitize_explanation(text: str) -> str:
+    # LLM-generated from attacker-influenced input and rendered to users downstream:
+    # strip control/non-printable chars (log & terminal-escape injection, zero-width
+    # tricks), neutralise chat-template tokens + turn prefixes (so it cannot poison a
+    # downstream model), and bound the length. The consumer MUST still output-encode
+    # it for its render context (HTML-escape in the UI) -- that is context-specific.
+    cleaned = "".join(
+        ch for ch in text
+        if ch in ("\n", "\t") or (ord(ch) >= 0x20 and unicodedata.category(ch)[0] != "C")
+    )
+    for token in _CONTROL_TOKENS:
+        cleaned = cleaned.replace(token, "[filtered]")
+    cleaned = _PREFIX_RE.sub(" ", cleaned)
+    return cleaned[:_MAX_EXPLANATION_CHARS]
