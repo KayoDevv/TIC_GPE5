@@ -19,15 +19,13 @@ spec:
         app: inetsim
     spec:
       automountServiceAccountToken: false
-      # INetSim requires its logfiles to be group-owned by `inetsim` (gid 10003).
-      # fsGroup makes the kubelet set that group on the mounted volumes, so files
-      # created by the root main process inherit gid 10003.
+      # INetSim logfiles must be group-owned by `inetsim` (gid 10003); fsGroup sets
+      # that on the mounted volumes so root-created files inherit it.
       securityContext:
         fsGroup: 10003
       containers:
         - name: inetsim
-          # Built locally + imported into containerd (never pulled): see
-          # `make build-sinkhole import-images`. GHCR is archive only.
+          # Built locally + imported into containerd (never pulled); GHCR is archive only.
           image: ghcr.io/kayodevv/inetsim-sinkhole:v1.0.0
           imagePullPolicy: IfNotPresent
           ports:
@@ -37,9 +35,8 @@ spec:
           resources:
             requests: {cpu: "50m", memory: "64Mi"}
             limits: {cpu: "300m", memory: "256Mi"}
-          # INetSim must START as root (inetd-style), then drops each service to
-          # `inetsim` (service_run_as_user in the ConfigMap). So: root + ONLY the
-          # two caps needed to drop privileges, everything else removed.
+          # INetSim starts as root (inetd-style) then drops to `inetsim`; keep only
+          # SETUID/SETGID to drop privileges, drop everything else.
           securityContext:
             runAsUser: 0
             runAsGroup: 0

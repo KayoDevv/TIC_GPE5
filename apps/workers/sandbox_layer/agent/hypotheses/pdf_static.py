@@ -1,20 +1,9 @@
 """Static PDF hypothesis — structure analysis via pdfid (Didier Stevens).
 
-v3 strategy: **combinatorial** rules instead of per-keyword weights.
-A single keyword is often too ambiguous:
-  - `/OpenAction` alone  → 99% of legitimate PDFs (auto-open page 1)
-  - `/AcroForm`  alone   → any interactive form
-  - `/JS`        alone   → present in PDF CVs, invoices, etc.
-  - `/Launch`    alone   → almost always malicious (rare in legit)
-
-Combinations are far more discriminating:
-  - `/JS` + `/OpenAction` → JS auto-executed on load = classic malware pattern
-  - `/EmbeddedFile` + `/JS` or `/Launch` → dropper pattern
-  - `/JBIG2Decode` + `/Colors` → CVE-2009-0658 pattern (Acrobat integer overflow)
-
-Signature: (Path) → HypothesisResult — same as the other static probes.
-
-Weight in the PDF anomaly_score: 0.30 (multi-probe MAX upstream).
+Combinatorial rules, not per-keyword weights: a lone keyword is ambiguous
+(`/OpenAction`, `/JS`, `/AcroForm` are common in benign PDFs), but combinations
+discriminate — `/JS`+`/OpenAction` = auto-exec malware, `/EmbeddedFile`+`/Launch`
+= dropper, `/JBIG2Decode`+`/Colors` = CVE-2009-0658. Weight 0.30 (MAX upstream).
 """
 
 from __future__ import annotations

@@ -1,12 +1,8 @@
-"""Pure core — narrative / behavioural-summary assembly (Layer 4).
+"""Pure core — narrative / behavioural-summary assembly (Layer 4). No I/O.
 
-Turns hypothesis results into human-readable text (LLM + UI). No I/O. Two
-variants: PDF (3-band verdict + indicators explained in plain language) and ELF
-(behavioural summary). Tested via tests/test_golden_core.py.
-
-NB: the product output language is French. The user-facing CONTENT (per-signal
-explanations, narrative text) lives in core.messages, not here — this module
-holds only the assembly logic. Code and comments here are English.
+Turns hypothesis results into human-readable text for the LLM + UI (PDF: 3-band
+verdict + indicators; ELF: behavioural summary). The French user-facing CONTENT
+lives in core.messages; this module holds only the assembly logic.
 """
 
 from __future__ import annotations

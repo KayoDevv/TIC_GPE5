@@ -1,13 +1,7 @@
-# NetworkPolicies — single owner: Terraform (T2). Migrated from the per-app
-# kustomize manifests (sandbox/kafka/sinkhole networkpolicy.yaml, removed from
-# kustomize). Enforced by Calico.
-#
-# OUT OF SCOPE (stays in Make): `consumer-apiserver-egress`. The K3s
-# kube-apiserver is host-networked (not a pod), so it is matched by an ipBlock
-# of the NODE IP, which is host-specific and discovered at deploy time. It
-# remains the single host-specific netpol, applied by `make netpol-apiserver`
-# from consumer-apiserver-egress.yaml.tmpl. NetworkPolicies are additive, so
-# keeping it in Make does not conflict with the rules below.
+# NetworkPolicies — single owner: Terraform, enforced by Calico.
+# OUT OF SCOPE (stays in Make): consumer-apiserver-egress — the host-networked
+# kube-apiserver is matched by the node IP (host-specific), applied by
+# `make netpol-apiserver`. NetworkPolicies are additive, so it doesn't conflict.
 
 # ── sandbox namespace ─────────────────────────────────────────────────────────
 
@@ -123,9 +117,8 @@ resource "kubernetes_network_policy_v1" "watcher_egress" {
   }
 }
 
-# Analysis Jobs: egress limited to Kafka (results), MinIO (sample download), DNS
-# (in-cluster lookups) and the D2 sinkhole (INetSim) — and nothing else. A
-# malicious sample can reach the fake world but never the real Internet.
+# Analysis Jobs: egress only to Kafka, MinIO, DNS and the D2 sinkhole — never the
+# real Internet (the sample reaches the fake world only).
 resource "kubernetes_network_policy_v1" "analysis_egress" {
   metadata {
     name      = "analysis-egress"
@@ -172,9 +165,8 @@ resource "kubernetes_network_policy_v1" "analysis_egress" {
         port     = "53"
       }
     }
-    # D2 sinkhole (INetSim) — and ONLY the sinkhole. Ports are INetSim's
-    # CONTAINER ports (5353/8080): Calico evaluates egress AFTER the Service
-    # DNAT, so the destination is the POD:targetPort, not 53/80.
+    # D2 sinkhole only. Ports are INetSim CONTAINER ports (5353/8080): Calico
+    # evaluates egress AFTER Service DNAT, so dest = pod:targetPort, not 53/80.
     egress {
       to {
         namespace_selector {
@@ -198,9 +190,8 @@ resource "kubernetes_network_policy_v1" "analysis_egress" {
 }
 
 # ── kafka namespace ───────────────────────────────────────────────────────────
-# Closes the "verdict forgery" path: deny by default, then allow only the
-# sandbox namespace (clients) + intra-namespace traffic (Bitnami provisioning
-# Jobs, controller quorum).
+# Closes the "verdict forgery" path: deny-all, then allow only the legitimate
+# clients (sandbox + minio namespaces) + intra-namespace (Bitnami Jobs, quorum).
 
 resource "kubernetes_network_policy_v1" "kafka_deny_all" {
   metadata {
@@ -284,11 +275,9 @@ resource "kubernetes_network_policy_v1" "kafka_allow" {
 }
 
 # ── sinkhole namespace ────────────────────────────────────────────────────────
-# The sinkhole reaches NOTHING (deny egress) so a compromised responder cannot
-# pivot. Replies to inbound traffic still flow (stateful). Ingress is
-# deliberately NOT identity-restricted (gVisor SNATs the source pod identity to
-# the node IP, so an ingress selector would silently drop the analysis Jobs;
-# confinement is enforced on the sandbox egress side anyway).
+# Deny egress so a compromised responder can't pivot (replies still flow, stateful).
+# Ingress is NOT identity-restricted: gVisor SNATs the source to the node IP, so an
+# ingress selector would silently drop the Jobs; confinement is on the egress side.
 resource "kubernetes_network_policy_v1" "sinkhole_deny_egress" {
   metadata {
     name      = "sinkhole-deny-egress"

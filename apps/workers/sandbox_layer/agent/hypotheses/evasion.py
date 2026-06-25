@@ -1,25 +1,9 @@
 """Hypothesis 5 — Evasion attempted.
 
-Detects anti-sandbox / anti-analysis behavior:
-- Early exit (< 5 s) with very few syscalls (probable sandbox detection)
-- Long cumulated sleep (> 60 s) — common stalling tactic
-- ptrace(PTRACE_TRACEME, ...) — anti-debug self-attach
-- uname/sysinfo + read on /sys/class/dmi/* (VM fingerprinting)
-- Total absence of meaningful syscall activity
-- Anti-analysis probes (D1bis): TracerPid read, container fingerprint — the
-  probe itself is the confession.
-
-Heuristic:
-    score = 0.40 * sleep_cumulated > 60s
-          + 0.30 * early_exit_low_syscalls
-          + 0.30 * traceme_observed
-          + 0.20 * vm_fingerprinting_files
-          + 0.80 * contentless_execution     (D1 — silence != benign)
-          + 0.50 * tracerpid_read             (D1bis)
-          + 0.40 * container_fingerprint      (D1bis)
-    capped at 1.0.
-
-Pure function. Phase 4.
+Detects anti-sandbox / anti-analysis behaviour: early exit with few syscalls,
+long cumulated sleep (stalling), ptrace(TRACEME) self-attach, VM/container
+fingerprinting, contentless execution (D1 — silence != benign), TracerPid read
+(D1bis). Per-tell weights are the named constants below. Pure function.
 """
 
 from __future__ import annotations
@@ -42,8 +26,7 @@ _VM_FINGERPRINT_PATHS = (
     "/sys/devices/virtual/dmi/",
 )
 
-# Per-tell weights (summed, capped at 1.0). See the module docstring for the
-# rationale behind each value; arch_prctl was dropped (environmental).
+# Per-tell weights (summed, capped at 1.0); arch_prctl was dropped (environmental).
 W_SLEEP_STALL          = 0.40
 W_TRACEME              = 0.30
 W_VM_FINGERPRINT       = 0.40

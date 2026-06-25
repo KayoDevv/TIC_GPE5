@@ -1,16 +1,8 @@
-# MinIO standalone StatefulSet — pivot away from the MinIO Operator Tenant (2026-05-13).
-#
-# Why the pivot:
-#   - The GPE-NYX VM has an x86-64-v1 CPU (baseline, no SSE4.2)
-#   - MinIO after 2023-03 is built with GOAMD64=v2 → crashes "Fatal glibc error: CPU does not support x86-64-v2"
-#   - We must pin MinIO RELEASE.2023-01-25 (last v1-compatible build)
-#   - But MinIO Operator v5 no longer supports that image (compat matrix)
-#
-# Solution: a plain StatefulSet with standalone MinIO. Simpler, no Operator.
-# Same behavior as docker-compose but in-cluster.
-#
-# Phase 9 hardening: reconfigure the VM with host-passthrough CPU to expose
-# SSE4.2+ and migrate to the MinIO Operator + a recent MinIO.
+# MinIO standalone StatefulSet (pivoted off the MinIO Operator, 2026-05-13).
+# The GPE-NYX VM is x86-64-v1 (no SSE4.2); MinIO builds after 2023-03 use GOAMD64=v2
+# and crash ("CPU does not support x86-64-v2"), so the image is pinned to the last
+# v1-compatible build (RELEASE.2023-01-25), which Operator v5 won't manage — hence a
+# plain StatefulSet. Phase 9: host-passthrough CPU → Operator + recent MinIO.
 ---
 # Credentials Secret (Phase 9 hardening: External Secrets Operator + Vault)
 apiVersion: v1
@@ -62,19 +54,6 @@ spec:
           envFrom:
             - secretRef:
                 name: minio-creds
-          env:
-            # Kafka notification target — active from MinIO startup,
-            # pushed to the minio.events topic (consumed by minio-watcher).
-            - name: MINIO_NOTIFY_KAFKA_ENABLE_charon
-              value: "on"
-            - name: MINIO_NOTIFY_KAFKA_BROKERS_charon
-              value: "kafka.kafka.svc.cluster.local:9092"
-            - name: MINIO_NOTIFY_KAFKA_TOPIC_charon
-              value: minio.events
-            - name: MINIO_NOTIFY_KAFKA_TLS_charon
-              value: "off"
-            - name: MINIO_NOTIFY_KAFKA_SASL_ENABLE_charon
-              value: "off"
           readinessProbe:
             httpGet:
               path: /minio/health/ready

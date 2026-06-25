@@ -23,15 +23,10 @@ def verdict_band(
     malicious_threshold: float,
     suspicious_threshold: float,
 ) -> str:
-    """Classify the score into 3 bands.
+    """Classify the score into 3 bands (malicious / needs_more_context / benign).
 
-    malicious            if score >= malicious_threshold
-    needs_more_context   if score >= suspicious_threshold
-    benign               otherwise
-
-    The sandbox is a tie-breaker: it only rules "malicious" on a strong signal,
-    "benign" only in the total absence of signal, and sends the whole ambiguous
-    middle to the LLM (which does have the sending context) via "needs_more_context".
+    The sandbox is a tie-breaker: "malicious" only on strong signal, "benign" only
+    on no signal; the ambiguous middle → "needs_more_context" for the LLM to judge.
     """
     if anomaly_score >= malicious_threshold:
         return "malicious"

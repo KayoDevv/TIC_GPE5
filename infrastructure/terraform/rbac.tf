@@ -1,10 +1,6 @@
-# Sandbox RBAC — single owner: Terraform (T2). Migrated from
-# k8s-manifests/applications/sandbox/rbac.yaml (removed from kustomize).
-#
-# Least-privilege split:
-#   - sandbox-consumer  : may CREATE Jobs + read pods/logs (dispatcher).
-#   - sandbox-analysis  : detonation Jobs, NO API rights (token not mounted).
-#   - sandbox-watcher   : minio-watcher, NO API rights (token not mounted).
+# Sandbox RBAC — least-privilege split:
+#   sandbox-consumer : CREATE Jobs + read pods/logs (dispatcher)
+#   sandbox-analysis / sandbox-watcher : NO API rights (token not mounted)
 
 resource "kubernetes_service_account_v1" "consumer" {
   metadata {
@@ -13,8 +9,7 @@ resource "kubernetes_service_account_v1" "consumer" {
   }
 }
 
-# No K8s API rights: token explicitly not mounted (defence in depth — if the
-# detonation/watcher pod is compromised it cannot talk to the API server).
+# Token not mounted: a compromised detonation/watcher pod can't reach the API server.
 resource "kubernetes_service_account_v1" "analysis" {
   metadata {
     name      = "sandbox-analysis"

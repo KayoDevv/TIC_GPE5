@@ -1,10 +1,7 @@
-# Engine — single owner: Terraform (T3). KEDA + Kafka Helm releases.
-# MinIO is deliberately NOT here: it stays kustomize/Make-owned (it hosts the TF
-# state backend — TF must not own the store of its own state — and a hand-written
-# StatefulSet cannot be imported to a 0-diff plan). See docs/terraform-frontier.md.
-#
-# Kafka topics: the 6 topics are provisioned BY the Bitnami chart (values.yaml
-# `provisioning.topics`). No separate topic resource, no mongey/kafka provider.
+# Engine — KEDA + Kafka Helm releases. MinIO is deliberately NOT here: it hosts
+# the TF state backend (TF can't own the store of its own state) and a hand-written
+# StatefulSet won't import to a 0-diff plan — it stays kustomize/Make-owned.
+# Kafka topics are provisioned by the Bitnami chart (values.yaml), no extra provider.
 
 resource "helm_release" "keda" {
   name       = "keda"
@@ -29,9 +26,8 @@ resource "helm_release" "kafka" {
   wait             = true
   timeout          = 600
 
-  # Prod values always; dev externalAccess (NodePort) layered ON TOP only when
-  # var.kafka_dev_external_access is set. `make dev-expose` flips that variable
-  # instead of running `helm upgrade` behind Terraform's back (single owner).
+  # Prod values always; dev NodePort layered on top via var.kafka_dev_external_access
+  # (make dev-expose flips it instead of a separate helm upgrade — single owner).
   values = concat(
     [file("${path.module}/../k8s-manifests/applications/kafka/values.yaml")],
     var.kafka_dev_external_access ? [file("${path.module}/../k8s-manifests/applications/kafka/values-dev.yaml")] : []

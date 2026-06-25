@@ -1,39 +1,16 @@
-"""Intermediate data models — the sandbox pipeline's central contract.
+"""Intermediate data models — the sandbox pipeline's source-of-truth contract,
+exchanged between collection, the behavioural hypotheses, the memory-forensics
+runner, and the report builder.
 
-This package is the **source of truth** for all the types exchanged between:
-    - the linux_docker backend (collection)
-    - the behavioural hypotheses (Layer 2)
-    - the /proc memory forensics runner (Layer 3)
-    - the report builder (Layer 4)
+Split into focused submodules (snapshot / signals / memory / constants); this
+`__init__` re-exports every public name so `from models import X` keeps working.
 
-Split into submodules (focused files rather than a ~500-line god file):
-    - models/snapshot.py   → SnapshotState, SnapshotDiff + FS/process/socket primitives
-    - models/signals.py    → RuntimeSignals + syscall/inotify/network observables
-    - models/memory.py     → MemoryObservables + RWX regions, hooks, pslist
-    - models/constants.py  → anti-volumetry caps + watched paths
+Design constraints: all models frozen; timestamps relative to t=0; no raw bytes;
+strings truncated before ingestion (anti prompt-injection + volumetry); syscalls
+aggregated, inotify capped; watched FS = /etc /home /tmp /var /opt /root.
 
-This `__init__` RE-EXPORTS every public name: `from models import X` keeps working
-identically for all consumers (hypotheses, snapshot, strace_collector, run_*.py,
-tests). No imports to change anywhere else.
-
-Design principles (from the expert-council brainstorm):
-    - All models are **frozen** (immutable after creation).
-    - Timestamps are **relative to t=0 (start of execution)**, never absolute.
-    - No raw bytes embedded (security + volumetry).
-    - Strings truncated before ingestion (anti LLM-prompt-injection).
-    - Syscalls: aggregated (SyscallSummary), not raw (millions of events possible).
-    - inotify: capped at MAX_INOTIFY_EVENTS.
-    - Watched filesystem: /etc /home /tmp /var /opt /root only.
-
-Model hierarchy:
-
-    SnapshotState  (before) ─┐
-                              ├──► SnapshotDiff ──┐
-    SnapshotState  (after)  ─┘                    ├──► HypothesisResult (× N)
-    RuntimeSignals ───────────────────────────────┤
-    MemoryObservables ────────────────────────────┘
-
-    HypothesisResult × N ──► anomaly_score ──► core/report.py
+Flow: SnapshotDiff + RuntimeSignals + MemoryObservables → HypothesisResult ×N →
+anomaly_score → core/report.py.
 """
 
 from __future__ import annotations

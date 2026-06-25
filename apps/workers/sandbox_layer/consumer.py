@@ -1,18 +1,7 @@
-"""sandbox-consumer — Kafka → K8s Job dispatcher.
+"""sandbox-consumer — Kafka file.requested → one K8s Job per sample.
 
-Consumes file.requested, validates the payload, creates 1 batch/v1 Job per sample.
-The actual analysis (strace + snapshots + hypotheses + publish) happens in the
-Job pod (ubuntu-sandbox:v1 / agent/run_analysis.py).
-
-Environment variables (injected by consumer-deployment.yaml):
-    KAFKA_BOOTSTRAP_SERVERS   default: kafka.kafka.svc.cluster.local:9092
-    KAFKA_TOPIC_IN            default: file.requested
-    KAFKA_GROUP_ID            default: charon-sandbox-v1
-    K8S_NAMESPACE             default: sandbox
-    SANDBOX_JOB_IMAGE         default: ghcr.io/kayodevv/ubuntu-sandbox:v1
-    SANDBOX_TIMEOUT_S         default: 180
-    MINIO_ENDPOINT            default: minio.minio.svc.cluster.local:9000
-    KAFKA_TOPIC_OUT           default: sandbox_layer.result
+Detonation (strace + snapshots + hypotheses + publish) runs in the Job pod
+(agent/run_*.py). Config via the env vars in the constants block below.
 """
 
 from __future__ import annotations
@@ -62,38 +51,18 @@ PDF_JOB_IMAGE   = os.getenv("SANDBOX_PDF_JOB_IMAGE", "ghcr.io/kayodevv/ubuntu-pd
 TIMEOUT_S       = int(os.getenv("SANDBOX_TIMEOUT_S", "180"))
 MINIO_ENDPOINT  = os.getenv("MINIO_ENDPOINT", "minio.minio.svc.cluster.local:9000")
 
-# Hardening Tranche B (audit 2026-04-30) — all configurable so dev can opt-out.
-#
-# B.1 (V3) — RuntimeClass: empty string disables (default = runc).
-#            Set to "gvisor" in prod overlay to enable userspace kernel sandboxing.
-RUNTIME_CLASS   = os.getenv("SANDBOX_RUNTIME_CLASS", "").strip() or None
-#
-# B.2 (V5) — Non-root user: 0 = run as root (legacy), 10001 = run as `agent`.
-#            The Dockerfile creates `agent` UID=10001. Setting RUN_AS_USER=10001
-#            requires the image to be rebuilt with the hardened Dockerfile.
-RUN_AS_USER     = int(os.getenv("SANDBOX_RUN_AS_USER", "10001"))
-#
-# B.3 (V7) — Sinkhole DNS: ClusterIP of sinkhole-dns service in this namespace.
-#            Empty string disables and falls back to default cluster DNS.
-SINKHOLE_DNS_IP = os.getenv("SANDBOX_DNS_IP", "").strip() or None
-#
-# B.4 (V2 strict) — Seccomp profile: "Localhost" + custom JSON, or "RuntimeDefault".
-#            Tranche A applies RuntimeDefault by default; set to "Localhost" once
-#            charon-seccomp.json is distributed to all nodes (seccomp-distributor).
-SECCOMP_TYPE    = os.getenv("SANDBOX_SECCOMP_TYPE", "RuntimeDefault").strip()
+# Pod hardening knobs (env-overridable so dev can opt out).
+RUNTIME_CLASS   = os.getenv("SANDBOX_RUNTIME_CLASS", "").strip() or None  # "gvisor" in prod, else runc
+RUN_AS_USER     = int(os.getenv("SANDBOX_RUN_AS_USER", "10001"))          # 0 = root (legacy); image ships UID 10001
+SINKHOLE_DNS_IP = os.getenv("SANDBOX_DNS_IP", "").strip() or None         # detach analysis pods to the sinkhole resolver
+SECCOMP_TYPE    = os.getenv("SANDBOX_SECCOMP_TYPE", "RuntimeDefault").strip()  # or "Localhost" + charon-seccomp.json
 SECCOMP_PROFILE = os.getenv("SANDBOX_SECCOMP_PROFILE", "charon-seccomp.json").strip()
-#
-# B.5 (P0a) — Egress gate: an initContainer that blocks the pod until the egress
-#            NetworkPolicy is PROVABLY enforced, closing the Calico startup race
-#            (~1-3s where the sample could exfiltrate before the policy is
-#            programmed). It probes an address OUTSIDE the allowed egress and only
-#            proceeds once that probe is consistently BLOCKED; if egress is still
-#            reachable at the deadline it FAILS the pod (fail-closed — never detonate
-#            with open egress). The probe runs OUR code, not the sample (the sample's
-#            container starts only after this gate exits 0). "host:port", empty disables.
+
+# Egress gate (P0a): initContainer that holds the pod until egress is PROVABLY
+# blocked, then detonates — fail-closed against the Calico startup race where a
+# sample could exfiltrate before the NetworkPolicy is programmed. "host:port", empty disables.
 EGRESS_GATE     = os.getenv("SANDBOX_EGRESS_GATE", "1.1.1.1:443").strip()
 
-# Probe executed by the egress-gate initContainer (python3 ships in the agent image).
 _EGRESS_GATE_SCRIPT = """
 import os, socket, sys, time
 host, _, port = os.environ["GATE_TARGET"].partition(":")
@@ -112,9 +81,8 @@ while time.time() < deadline:
 sys.exit("egress-gate FAIL-CLOSED: %s still reachable after deadline" % (target,))
 """
 
-# Endpoints injected into the analysis pods (may differ from the consumer's
-# when the consumer runs outside the cluster, e.g. local dev outside K3s).
-# Default = same values as the consumer itself.
+# Endpoints injected into analysis pods — default to the consumer's own
+# (override when the consumer runs outside the cluster).
 AGENT_KAFKA_BOOTSTRAP = os.getenv("AGENT_KAFKA_BOOTSTRAP_SERVERS", KAFKA_BOOTSTRAP)
 AGENT_MINIO_ENDPOINT  = os.getenv("AGENT_MINIO_ENDPOINT", MINIO_ENDPOINT)
 
@@ -123,11 +91,7 @@ AGENT_MINIO_ENDPOINT  = os.getenv("AGENT_MINIO_ENDPOINT", MINIO_ENDPOINT)
 # ---------------------------------------------------------------------------
 
 def _detect_file_type(s3_url: str) -> str:
-    """Detect the file type via magic bytes (HTTP Range request bytes=0-7).
-
-    Returns "elf", "pdf", or "unknown".
-    Timeout 10s — does not block the dispatch if MinIO is slow.
-    """
+    """Detect file type via magic bytes (HTTP Range 0-7): "elf", "pdf", or "unknown"."""
     try:
         req = urllib.request.Request(s3_url, headers={"Range": "bytes=0-7"})
         with urllib.request.urlopen(req, timeout=10) as resp:
@@ -148,14 +112,7 @@ def _detect_file_type(s3_url: str) -> str:
 # ---------------------------------------------------------------------------
 
 def _load_k8s() -> k8s_client.BatchV1Api:
-    """Load the K8s config.
-
-    Resolution order:
-    1. K8S_API_SERVER defined → standard token + CA, host overridden (override
-       via overlay: e.g. https://kubernetes.default.svc:443).
-    2. Standard in-cluster environment variables ("normal" K8s cluster).
-    3. Local kubeconfig (dev outside the cluster, e.g. make run-consumer).
-    """
+    """Load K8s config: K8S_API_SERVER override → in-cluster → local kubeconfig."""
     api_server = os.getenv("K8S_API_SERVER")
     if api_server:
         # In-cluster path with custom host (override from overlay).
@@ -191,11 +148,7 @@ def _load_k8s() -> k8s_client.BatchV1Api:
 
 
 def _egress_gate_init(job_image: str) -> list | None:
-    """P0a — init container that blocks detonation until the egress NetworkPolicy is proven enforced.
-
-    Same image (python3), strict securityContext, no volumes; expects the egress
-    probe to FAIL (no egress allowed). None when the gate is disabled.
-    """
+    """P0a egress-gate initContainer (see EGRESS_GATE). None when disabled."""
     if not EGRESS_GATE:
         return None
     return [k8s_client.V1Container(
@@ -223,13 +176,7 @@ def _egress_gate_init(job_image: str) -> list | None:
 def _analysis_container(
     job_image: str, agent_cmd: list[str], job_id: str, s3_url: str, email_context: dict,
 ) -> "k8s_client.V1Container":
-    """The detonation container.
-
-    Hardening (audit 2026-04-30, Tranches A+B): non-root (RUN_AS_USER), cap-drop
-    ALL + only SYS_PTRACE (strace), no_new_privs, read-only rootfs, seccomp
-    (Localhost charon profile or RuntimeDefault). Writable temp via the tmpfs
-    mounts (RO rootfs). Resources requests 500m/512Mi, limits 2000m/2Gi.
-    """
+    """Detonation container: non-root, cap-drop ALL + SYS_PTRACE only, RO rootfs, seccomp, tmpfs temp."""
     return k8s_client.V1Container(
         name="analysis",
         image=job_image,
@@ -277,12 +224,7 @@ def _pod_volumes() -> list:
 
 
 def _pod_dns():
-    """Sinkhole DNS (Tranche B-V7): detach from cluster DNS, point to the in-ns sinkhole.
-
-    Returns (dns_policy, dns_config). (None, None) when no sinkhole is configured.
-    External names then return NXDOMAIN; *.svc.cluster.local still resolves via
-    the sinkhole's upstream forward.
-    """
+    """Point analysis pods at the in-ns sinkhole resolver. (None, None) when unset."""
     if not SINKHOLE_DNS_IP:
         return None, None
     return "None", k8s_client.V1PodDNSConfig(
@@ -306,25 +248,11 @@ def _create_analysis_job(
     email_context: dict,
     file_type: str = "unknown",
 ) -> str:
-    """Create a batch/v1 K8s Job to analyze a sample.
-
-    Automatically selects the image and agent by file type:
-      "elf"      → ubuntu-sandbox:v1      + run_analysis.py
-      "pdf" / *  → ubuntu-pdf-sandbox:v1  + run_pdf_analysis.py
-
-    The PDF pipeline is the DEFAULT — including for "unknown" magic. Its static
-    layer (missing_pdf_magic, embedded_magic, entropy) is a format-agnostic byte
-    analyzer that flags disguised files (e.g. HTML/script dressed up as .pdf =
-    evasion). The ELF agent stays reserved for real ELF binaries (\\x7fELF),
-    which it alone knows how to execute.
-
-    Returns the name of the created Job.
-    """
+    """Create the batch/v1 Job. ELF → ELF agent; PDF and unknown → PDF agent
+    (its format-agnostic static layer flags files disguised as PDF). Returns the Job name."""
     short_id = job_id.replace("-", "")[:12]
     job_name = f"charon-{short_id}"
 
-    # ELF → ELF agent ; PDF AND unknown/disguised → PDF agent (general-purpose
-    # static layer that detects files lying about their format).
     if file_type == "elf":
         job_image   = JOB_IMAGE
         agent_cmd   = ["python3", "/opt/agent/run_analysis.py"]

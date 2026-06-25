@@ -1,12 +1,6 @@
-# DEV-ONLY Helm overlay for Kafka — re-enables the host-facing NodePort so the
-# validator/feeder running on the VM host can publish to file.requested and read
-# results. NEVER applied in prod (prod keeps externalAccess.enabled=false from
-# values.yaml → ClusterIP only, no LAN exposure).
-#
-# Usage (merged AFTER values.yaml, so it overrides):
-#   helm upgrade --install kafka bitnami/kafka -n kafka \
-#     -f applications/kafka/values.yaml -f applications/kafka/values-dev.yaml
-# Wired into `make dev-expose` / reverted by `make dev-teardown`.
+# DEV-ONLY Kafka NodePort overlay — re-enables host access for the validator/feeder.
+# NEVER in prod (prod keeps externalAccess.enabled=false → ClusterIP only).
+# Merged after values.yaml; wired into `make dev-expose` / reverted by `dev-teardown`.
 externalAccess:
   enabled: true
   autoDiscovery:

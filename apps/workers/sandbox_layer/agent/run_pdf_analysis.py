@@ -1,43 +1,13 @@
 """PDF analysis agent — runs inside the ubuntu-pdf-sandbox:v1 K8s pod.
 
-Receives --job-id and --s3-url as CLI arguments.
-Environment variables: KAFKA_BOOTSTRAP_SERVERS, KAFKA_TOPIC_OUT,
-                       MINIO_ENDPOINT, EMAIL_CONTEXT_JSON.
+Args: --job-id, --s3-url. Env: KAFKA_BOOTSTRAP_SERVERS, KAFKA_TOPIC_OUT,
+MINIO_ENDPOINT, EMAIL_CONTEXT_JSON.
 
-Multi-layer pipeline (defense-in-depth):
-
-    1. Download the sample from MinIO (presigned URL)
-
-    2. STATIC LAYER — orthogonal probes over the raw bytes:
-         a) pdfid (Didier Stevens) — combinatorial rules on PDF structure
-         b) stream_entropy v2 — localized entropy peak (hidden payload)
-         c) embedded_magic — ELF/PE/ZIP/etc. embedded at offset > 0
-       MAX aggregation → pdf_static_indicators (weight 0.30)
-
-    3. Snapshot BEFORE
-
-    4. DYNAMIC LAYER A — `strace -f mutool draw /sample.pdf`
-         Renders the pages, triggers parser bugs, exercises zlib/JPEG/JBIG2.
-         Catches mupdf CVEs, malicious files that exploit rendering.
-
-    4-bis. DYNAMIC LAYER B — `strace -f node /opt/agent/pdf_runner.js`
-         Extracts the PDF's JS via PDF.js, runs it in a Node vm with a stubbed
-         Adobe context. The app.launchURL / this.submitForm calls trigger REAL
-         network syscalls visible to strace.
-         Catches JS-based polymorphs invisible to the static and mutool layers.
-
-    5. Snapshot AFTER
-
-    6. Parse strace — UNION of the two traces (A ∪ B) so the 7 behavioural
-       hypotheses see any signal, regardless of the originating layer. No layer
-       removed, broadened perception.
-
-    7. 7 behavioural hypotheses (persistence, c2, injection, encryption,
-       evasion, propagation, lolbins) + pdf_static_indicators → anomaly_score
-
-    8. Build SandboxLayerResultEvent + IOCs
-
-    9. Publish to sandbox_layer.result
+Pipeline (defense-in-depth): download → static layer (pdfid + stream entropy +
+embedded magic, MAX → pdf_static_indicators) → snapshot → dynamic layer A
+(strace mutool draw) + B (strace node PDF.js JS runner) → snapshot → parse the
+UNION of both traces → 7 behavioural hypotheses + static → anomaly_score →
+build event + IOCs → publish to sandbox_layer.result.
 """
 
 from __future__ import annotations
@@ -83,30 +53,20 @@ from hypotheses._types import HypothesisResult
 
 log = get_logger("pdf-agent")
 
-# ---------------------------------------------------------------------------
-# Config (PDF-specific; the shared Kafka/MinIO/EMAIL/TIMEOUT config is in
-# agent_runtime, imported above)
-# ---------------------------------------------------------------------------
+# PDF-specific config (shared Kafka/MinIO config lives in agent_runtime).
 
-# SSRF protection — restrict sample download to known MinIO endpoints.
-# Override via env var ALLOWED_DOWNLOAD_HOSTS="host1,host2,...".
-# Post-Option-B (Kafka/MinIO in-cluster): only the K8s service endpoint is legit.
-# The host IP 172.16.249.133 has been removed — no more docker-compose host bridge.
+# SSRF guard — sample download is restricted to these hosts. Override with
+# ALLOWED_DOWNLOAD_HOSTS="h1,h2,...".
 _DEFAULT_ALLOWED_HOSTS = "minio.minio.svc.cluster.local"
 ALLOWED_DOWNLOAD_HOSTS = frozenset(
     h.strip() for h in os.getenv("ALLOWED_DOWNLOAD_HOSTS", _DEFAULT_ALLOWED_HOSTS).split(",")
     if h.strip()
 )
 
-# ---------------------------------------------------------------------------
-# PDF weights — rebalanced to include pdf_static_indicators (weight 0.30)
-# The runtime behaviours stay present but the static signal is strong for
-# evasive PDFs that trigger no suspicious syscalls.
-# ---------------------------------------------------------------------------
-
+# PDF weights — static indicator (0.30) complements the 7 behavioural ones,
+# which stay decisive for evasive PDFs that trigger no suspicious syscalls.
 PDF_WEIGHTS: dict[str, float] = {
-    # Behavioural — 7 hypotheses = 0.70 total
-    # Identical regardless of the file's source (embedded ELF, JS, etc.)
+    # 7 behavioural = 0.70
     "persistence_detected":  0.12,
     "c2_communication":      0.12,
     "code_injection":        0.10,
@@ -114,8 +74,7 @@ PDF_WEIGHTS: dict[str, float] = {
     "file_encryption":       0.08,
     "evasion_attempted":     0.08,
     "propagation":           0.10,
-    # Format-specific static — complementary signal, never dominant
-    # Swap for docx_static, lnk_static, etc. depending on the incoming format
+    # static, complementary (swap per format: docx_static, lnk_static, …)
     "pdf_static_indicators": 0.30,
 }
 
@@ -155,9 +114,7 @@ def _ioc_type(hyp_name: str, ev) -> str:
 def _download_sample(s3_url: str, dest: Path) -> None:
     log.info("Downloading PDF sample from %s", s3_url[:80])
 
-    # SSRF guard — reject file://, gopher://, internal metadata IPs, etc.
-    # An attacker who can inject on the Kafka topic must not be able to
-    # exfiltrate host secrets or pivot to internal services via this agent.
+    # SSRF guard: a forged Kafka topic must not let an attacker pivot via this fetch.
     parsed = urlparse(s3_url)
     if parsed.scheme not in ("http", "https"):
         raise ValueError(f"Refusing scheme {parsed.scheme!r} (only http/https allowed)")
