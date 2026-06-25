@@ -6,12 +6,13 @@ from pydantic import BaseModel, Field
 
 
 class EmailContext(BaseModel):
-    # Untrusted, attacker-controlled, and possibly injection-neutralised by the
-    # sandbox: kept as str (not EmailStr) so a malformed From cannot crash a
-    # consumer parsing the event.
+    # Untrusted, attacker-controlled, possibly injection-neutralised by the sandbox.
+    # sender stays str (not EmailStr) so a malformed From cannot crash a consumer;
+    # subject/body_text default to "" so a partial context does not fail ingestion
+    # (the LLM tolerates empty fields).
     sender: str
-    subject: str
-    body_text: str = Field(description="Email body content for the LLM")
+    subject: str = ""
+    body_text: str = Field(default="", description="Email body content for the LLM")
 
 
 class FileRequestedEvent(BaseModel):

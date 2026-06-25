@@ -18,7 +18,8 @@ from collections.abc import Iterator
 from pathlib import Path
 
 REQUIRED_TOP = ("job_id", "iocs", "behavior_summary", "email_context", "timestamp")
-REQUIRED_EMAIL = ("sender", "subject", "body_text")
+REQUIRED_EMAIL = ("sender",)
+OPTIONAL_EMAIL = ("subject", "body_text")
 ALLOWED_IOC_TYPES = {"ip", "domain", "file_hash", "registry_key", "syscall", "pdf_indicator"}
 
 # note.txt #3 / Cahier D4: the sandbox must strip chat-template control tokens
@@ -99,7 +100,9 @@ def validate(payload: dict) -> None:
     for k in REQUIRED_EMAIL:
         if k not in ctx:
             fail(f"email_context.{k} missing")
-        _check_no_control_tokens(f"email_context.{k}", ctx[k])
+    for k in (*REQUIRED_EMAIL, *OPTIONAL_EMAIL):
+        if k in ctx:
+            _check_no_control_tokens(f"email_context.{k}", ctx[k])
 
     _assert_injection_safe(payload)
 
