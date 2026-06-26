@@ -24,9 +24,20 @@ async def handle_ml_event(saga: VerdictSaga, event: MlLayerResultEvent) -> None:
     await saga.on_ml_result(str(event.job_id), score=event.risk_score)
 
 
+def _sandbox_timed_out(event: SandboxLayerResultEvent) -> bool:
+    # Contract v3 moved the flag into analysis_trust; fall back to the legacy
+    # top-level field so this consumer works across the v2 -> v3 migration.
+    trust = getattr(event, "analysis_trust", None)
+    if trust is not None:
+        return bool(trust.timeout_triggered)
+    return bool(getattr(event, "timeout_triggered", False))
+
+
 async def handle_sandbox_event(saga: VerdictSaga, event: SandboxLayerResultEvent) -> None:
     iocs = [ioc.model_dump() for ioc in event.iocs]
-    await saga.on_sandbox_result(str(event.job_id), iocs=iocs, timeout=event.timeout_triggered)
+    await saga.on_sandbox_result(
+        str(event.job_id), iocs=iocs, timeout=_sandbox_timed_out(event)
+    )
 
 
 async def handle_llm_event(saga: VerdictSaga, event: LlmLayerResultEvent) -> None:

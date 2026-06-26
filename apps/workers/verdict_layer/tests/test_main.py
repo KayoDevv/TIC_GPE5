@@ -1,5 +1,6 @@
 import asyncio
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
@@ -65,6 +66,21 @@ class TestHandleSandboxEvent:
         assert call.args[0] == str(job_id)
         assert call.kwargs["timeout"] is False
         assert len(call.kwargs["iocs"]) == 1
+
+
+class TestSandboxTimedOut:
+    """Reads timeout across the v2 (top-level) and v3 (analysis_trust) contracts."""
+
+    def test_reads_analysis_trust_when_present(self) -> None:
+        v3 = SimpleNamespace(analysis_trust=SimpleNamespace(timeout_triggered=True))
+        assert main._sandbox_timed_out(v3) is True
+
+    def test_falls_back_to_top_level_field(self) -> None:
+        v2 = SimpleNamespace(analysis_trust=None, timeout_triggered=True)
+        assert main._sandbox_timed_out(v2) is True
+
+    def test_defaults_false_when_neither_present(self) -> None:
+        assert main._sandbox_timed_out(SimpleNamespace(analysis_trust=None)) is False
 
 
 class TestHandleLlmEvent:
