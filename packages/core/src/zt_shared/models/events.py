@@ -2,13 +2,17 @@ from datetime import datetime
 from typing import Any, List, Literal, Optional
 from uuid import UUID
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, Field
 
 
 class EmailContext(BaseModel):
-    sender: EmailStr
-    subject: str
-    body_text: str = Field(description="Email body content for the LLM")
+    # Untrusted, attacker-controlled, possibly injection-neutralised by the sandbox.
+    # sender stays str (not EmailStr) so a malformed From cannot crash a consumer;
+    # subject/body_text default to "" so a partial context does not fail ingestion
+    # (the LLM tolerates empty fields).
+    sender: str
+    subject: str = ""
+    body_text: str = Field(default="", description="Email body content for the LLM")
 
 
 class FileRequestedEvent(BaseModel):
@@ -39,7 +43,9 @@ class MlLayerResultEvent(BaseModel):
 
 
 class Ioc(BaseModel):
-    type: Literal["ip", "domain", "file_hash", "registry_key", "syscall"]
+    type: Literal[
+        "ip", "domain", "file_hash", "registry_key", "syscall", "pdf_indicator"
+    ]
     value: str
     mitre_tactic: Optional[str] = Field(
         default=None, description="MITRE ATT&CK tactic (e.g. TA0011, TA0002)"
@@ -47,8 +53,36 @@ class Ioc(BaseModel):
     description: Optional[str] = None
 
 
+class AnalysisTrust(BaseModel):
+    liveness_ok: Optional[bool] = None
+    low_observability: Optional[str] = Field(
+        default=None,
+        description="Reason the run is a probable miss (no_liveness, quiet_benign), else null",
+    )
+    timeout_triggered: bool = False
+    error: Optional[str] = None
+
+
+class SandboxSignal(BaseModel):
+    name: str
+    score: Optional[float] = Field(
+        default=None, description="null when the hypothesis was skipped (early-exit)"
+    )
+    fired: bool
+    evaluated: bool
+
+
 class SandboxLayerResultEvent(BaseModel):
     job_id: UUID
+    verdict: Optional[Literal["benign", "needs_more_context", "malicious", "error"]] = Field(
+        default=None,
+        description="3-band sandbox verdict; the LLM resolves needs_more_context",
+    )
+    anomaly_score: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    analysis_trust: Optional[AnalysisTrust] = None
+    signals: List[SandboxSignal] = Field(
+        default_factory=list, description="Per-hypothesis breakdown"
+    )
     iocs: List[Ioc] = Field(description="List of Indicators of Compromise")
     behavior_summary: str = Field(
         description="Raw behavior summary for ingestion by the LLM"
@@ -56,7 +90,6 @@ class SandboxLayerResultEvent(BaseModel):
     email_context: EmailContext = Field(
         description="Pass-through of the email context from the request for the LLM Layer"
     )
-    timeout_triggered: bool = False
     timestamp: datetime
 
 

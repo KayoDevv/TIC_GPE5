@@ -64,7 +64,10 @@ spec:
             - name: SANDBOX_PDF_JOB_IMAGE
               value: "ghcr.io/kayodevv/ubuntu-pdf-sandbox:v1"
             - name: SANDBOX_TIMEOUT_S
-              value: "180"
+              value: "300"
+            # Hijack the sample's DNS to the sinkhole (split-DNS via hostAliases).
+            - name: SANDBOX_DNS_SERVICE
+              value: "sinkhole-dns.sinkhole.svc.cluster.local"
           resources:
             requests: {cpu: "100m", memory: "128Mi"}
             limits: {cpu: "500m", memory: "256Mi"}

@@ -25,9 +25,9 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from agent_runtime import EMAIL_CONTEXT, TIMEOUT_S, get_logger, now_iso, publish, run_cli
 
-from models import MemoryObservables, NetworkObservables, RuntimeSignals
+from models import MemoryObservables, RuntimeSignals
 from snapshot import compute_diff, take_snapshot
-from strace_collector import extract_evasion_tells, extract_sleep_cumulated, parse_strace_log
+from strace_collector import extract_evasion_tells, extract_network, extract_sleep_cumulated, parse_strace_log
 from memory import collect_memory_observables
 from core.messages import PDF_ERROR_SUMMARY, PDF_GUARD_NEEDS_CONTEXT
 from core.report import build_pdf_narrative, build_iocs, build_result_event
@@ -190,6 +190,18 @@ def _static_layer(sample_path: Path) -> tuple[HypothesisResult, float]:
     return result, timing_ms
 
 
+def _straced_run(cmd: list[str], work_dir: Path, name: str, label: str, timeout_s: int) -> tuple[int | None, bool]:
+    try:
+        with open(work_dir / f"stdout_{name}.log", "wb") as out_f, \
+             open(work_dir / f"stderr_{name}.log", "wb") as err_f:
+            completed = subprocess.run(cmd, stdout=out_f, stderr=err_f,
+                                       timeout=timeout_s, check=False)
+        return completed.returncode, False
+    except subprocess.TimeoutExpired:
+        log.warning("[%s] %s timed out after %ds", label, name, timeout_s)
+        return None, True
+
+
 def _detonate(
     sample_path: Path, work_dir: Path,
 ) -> tuple[MemoryObservables, int | None, float, bool, Path, Path]:
@@ -202,16 +214,19 @@ def _detonate(
     trace_mutool_path = work_dir / "trace_mutool.log"
     trace_pdfjs_path  = work_dir / "trace_pdfjs.log"
     per_step_timeout = max(TIMEOUT_S // 2, 30)
-    timeout_triggered = False
 
     # Layer A — mutool draw straced (renders pages, exercises zlib/JPEG/JBIG2 → mupdf CVEs).
     mutool_cmd = [
         "strace", "-f", "-tt", "-e", "trace=all", "-o", str(trace_mutool_path),
         "mutool", "draw", "-o", "/dev/null", str(sample_path),
     ]
-    log.info("[layer A] strace + mutool draw (timeout=%ds)", per_step_timeout)
+    # Layer B — node + PDF.js straced (runs the PDF's embedded JS via PDF.js).
+    pdfjs_cmd = [
+        "strace", "-f", "-tt", "-e", "trace=all", "-o", str(trace_pdfjs_path),
+        "node", "/opt/agent/pdf_runner.js", str(sample_path),
+    ]
 
-    # Memory forensics in parallel (mutool process)
+    # Memory forensics runs in parallel with layer A (mutool process).
     memory_result: list[MemoryObservables] = [MemoryObservables()]
     def _collect_memory():
         memory_result[0] = collect_memory_observables("mutool", max_snapshots=5, interval_s=0.5)
@@ -219,38 +234,16 @@ def _detonate(
     mem_thread.start()
 
     exec_start = time.time()
-    exit_code_mutool: int | None = None
-    try:
-        with open(work_dir / "stdout_mutool.log", "wb") as out_f, \
-             open(work_dir / "stderr_mutool.log", "wb") as err_f:
-            r = subprocess.run(mutool_cmd, stdout=out_f, stderr=err_f,
-                               timeout=per_step_timeout, check=False)
-        exit_code_mutool = r.returncode
-    except subprocess.TimeoutExpired:
-        log.warning("[layer A] mutool timed out after %ds", per_step_timeout)
-        timeout_triggered = True
+    log.info("[layer A] strace + mutool draw (timeout=%ds)", per_step_timeout)
+    exit_code_mutool, timed_out_a = _straced_run(mutool_cmd, work_dir, "mutool", "layer A", per_step_timeout)
 
     mem_thread.join(timeout=10)
     memory = memory_result[0]
 
-    # Layer B — node + PDF.js straced (runs the PDF's embedded JS via PDF.js).
-    pdfjs_cmd = [
-        "strace", "-f", "-tt", "-e", "trace=all", "-o", str(trace_pdfjs_path),
-        "node", "/opt/agent/pdf_runner.js", str(sample_path),
-    ]
     log.info("[layer B] strace + node pdf_runner.js (timeout=%ds)", per_step_timeout)
-    exit_code_pdfjs: int | None = None
-    try:
-        with open(work_dir / "stdout_pdfjs.log", "wb") as out_f, \
-             open(work_dir / "stderr_pdfjs.log", "wb") as err_f:
-            r = subprocess.run(pdfjs_cmd, stdout=out_f, stderr=err_f,
-                               timeout=per_step_timeout, check=False)
-        exit_code_pdfjs = r.returncode
-    except subprocess.TimeoutExpired:
-        log.warning("[layer B] pdf_runner.js timed out after %ds", per_step_timeout)
-        timeout_triggered = True
-
+    exit_code_pdfjs, timed_out_b = _straced_run(pdfjs_cmd, work_dir, "pdfjs", "layer B", per_step_timeout)
     execution_duration_s = time.time() - exec_start
+    timeout_triggered = timed_out_a or timed_out_b
 
     exit_code = exit_code_mutool
     if exit_code is not None:
@@ -264,7 +257,7 @@ def _detonate(
 def _parse_traces(trace_mutool_path: Path, trace_pdfjs_path: Path):
     """Parse the UNION of both straces so a signal from any layer fires the hypotheses.
 
-    Returns (syscalls, sleep_cumulated_s, evasion_tells).
+    Returns (syscalls, sleep_cumulated_s, evasion_tells, network).
     """
     trace_mutool = trace_mutool_path.read_text(errors="replace") if trace_mutool_path.exists() else ""
     trace_pdfjs  = trace_pdfjs_path.read_text(errors="replace")  if trace_pdfjs_path.exists()  else ""
@@ -272,9 +265,10 @@ def _parse_traces(trace_mutool_path: Path, trace_pdfjs_path: Path):
     syscalls = parse_strace_log(trace_combined)
     sleep_cumulated = extract_sleep_cumulated(trace_combined)
     evasion_tells = extract_evasion_tells(trace_combined)
-    log.info("Trace sizes: mutool=%d bytes pdfjs=%d bytes → %d syscalls in union",
-             len(trace_mutool), len(trace_pdfjs), len(syscalls))
-    return syscalls, sleep_cumulated, evasion_tells
+    network = extract_network(trace_combined)
+    log.info("Trace sizes: mutool=%d bytes pdfjs=%d bytes → %d syscalls, %d net flows",
+             len(trace_mutool), len(trace_pdfjs), len(syscalls), len(network.tcp_flows) + len(network.udp_flows))
+    return syscalls, sleep_cumulated, evasion_tells, network
 
 
 def _run_behavioural(diff, signals, memory) -> tuple[dict, dict[str, float]]:
@@ -330,7 +324,7 @@ def run_pdf_analysis(job_id: str, s3_url: str) -> None:
         snapshot_after = take_snapshot(relative_ts_s=execution_duration_s)
 
         # 6. Parse strace — union of both layers
-        syscalls, sleep_cumulated, evasion_tells = _parse_traces(
+        syscalls, sleep_cumulated, evasion_tells, network = _parse_traces(
             trace_mutool_path, trace_pdfjs_path
         )
 
@@ -343,7 +337,7 @@ def run_pdf_analysis(job_id: str, s3_url: str) -> None:
         signals = RuntimeSignals(
             syscalls_summary=syscalls,
             inotify_events=[],
-            network=NetworkObservables(),
+            network=network,
             execution_duration_s=execution_duration_s,
             sleep_cumulated_s=sleep_cumulated,
             exit_code=exit_code,
@@ -433,6 +427,7 @@ def run_pdf_analysis(job_id: str, s3_url: str) -> None:
         pipeline_version="v2-pdf",
         hypothesis_timings_ms=hypothesis_timings_ms,
         hyp_results=hyp_results,
+        weights=PDF_WEIGHTS,
         verdict=verdict,
         meta_extra={
             "file_type": "pdf",

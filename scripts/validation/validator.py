@@ -133,21 +133,23 @@ async def collect(
                         unknown += 1
                         continue
 
-                    # Score + error: read the STRUCTURED _meta fields first
-                    # (robust), with a regex fallback on the text for older
-                    # messages that exposed "anomaly_score=X" in plain text.
+                    # Score + error: top-level field first, then _meta (older
+                    # events), then a regex fallback on the text.
                     meta = payload.get("_meta") or {}
-                    score = meta.get("anomaly_score")
+                    trust = payload.get("analysis_trust") or {}
+                    score = payload.get("anomaly_score")
+                    if score is None:
+                        score = meta.get("anomaly_score")
                     if score is None:
                         score = parse_anomaly_score(payload.get("behavior_summary", ""))
-                    err = meta.get("error") or payload.get("error")
+                    err = trust.get("error") or meta.get("error") or payload.get("error")
                     is_error = bool(err)
                     ok = db.record_result(
                         conn_r,
                         job_id=job_id,
                         anomaly_score=score,
                         ioc_count=len(payload.get("iocs") or []),
-                        timeout_triggered=bool(payload.get("timeout_triggered")),
+                        timeout_triggered=bool(trust.get("timeout_triggered") or payload.get("timeout_triggered")),
                         behavior_summary=payload.get("behavior_summary", ""),
                         raw_result_json=json.dumps(payload, ensure_ascii=False),
                         error=err,

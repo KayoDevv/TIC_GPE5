@@ -18,14 +18,15 @@ import threading
 import time
 import urllib.request
 from pathlib import Path
+from urllib.parse import urlparse
 
 # Add the current directory to the path for local imports
 sys.path.insert(0, str(Path(__file__).parent))
 
 from agent_runtime import EMAIL_CONTEXT, TIMEOUT_S, get_logger, now_iso, publish, run_cli
-from models import MemoryObservables, NetworkObservables, RuntimeSignals
+from models import MemoryObservables, RuntimeSignals
 from snapshot import compute_diff, take_snapshot
-from strace_collector import extract_evasion_tells, extract_sleep_cumulated, parse_strace_log
+from strace_collector import extract_evasion_tells, extract_network, extract_sleep_cumulated, parse_strace_log
 from memory import collect_memory_observables
 from core.report import build_elf_summary, build_iocs, build_result_event
 from core.scoring import (
@@ -99,9 +100,28 @@ _EARLY_EXIT_AFTER = "propagation"  # early-exit is evaluated right after this (j
 # Helpers
 # ---------------------------------------------------------------------------
 
+# SSRF guard — download restricted to these hosts (override: ALLOWED_DOWNLOAD_HOSTS="h1,h2").
+ALLOWED_DOWNLOAD_HOSTS = frozenset(
+    h.strip() for h in os.getenv("ALLOWED_DOWNLOAD_HOSTS", "minio.minio.svc.cluster.local").split(",")
+    if h.strip()
+)
+
+
 def _download_sample(s3_url: str, dest: Path) -> None:
     log.info("Downloading sample from %s", s3_url[:80])
-    with urllib.request.urlopen(s3_url, timeout=60) as resp:
+
+    # SSRF guard: a forged Kafka topic must not let an attacker pivot via this fetch.
+    parsed = urlparse(s3_url)
+    if parsed.scheme not in ("http", "https"):
+        raise ValueError(f"Refusing scheme {parsed.scheme!r} (only http/https allowed)")
+    if not parsed.hostname:
+        raise ValueError("URL has no hostname")
+    if parsed.hostname not in ALLOWED_DOWNLOAD_HOSTS:
+        raise ValueError(
+            f"Host {parsed.hostname!r} not in ALLOWED_DOWNLOAD_HOSTS ({sorted(ALLOWED_DOWNLOAD_HOSTS)})"
+        )
+
+    with urllib.request.urlopen(s3_url, timeout=60) as resp:  # noqa: S310 (validated above)
         dest.write_bytes(resp.read())
     dest.chmod(0o755)
     log.info("Sample downloaded: %d bytes", dest.stat().st_size)
@@ -252,12 +272,14 @@ def _detonate_elf(
 
 
 def _parse_trace(trace_log_path: Path):
-    """Parse the strace log → (syscalls, sleep_cumulated_s, evasion_tells)."""
+    """Parse the strace log → (syscalls, sleep_cumulated_s, evasion_tells, network)."""
     trace_log = trace_log_path.read_text(errors="replace") if trace_log_path.exists() else ""
     syscalls = parse_strace_log(trace_log)
     sleep_cumulated = extract_sleep_cumulated(trace_log)
     evasion_tells = extract_evasion_tells(trace_log)
-    return syscalls, sleep_cumulated, evasion_tells
+    network = extract_network(trace_log)
+    log.info("network: %d tcp, %d udp flows", len(network.tcp_flows), len(network.udp_flows))
+    return syscalls, sleep_cumulated, evasion_tells, network
 
 
 # ---------------------------------------------------------------------------
@@ -297,7 +319,7 @@ def run_analysis(job_id: str, s3_url: str) -> None:
         snapshot_after = take_snapshot(relative_ts_s=execution_duration_s)
 
         # 5. Parse strace
-        syscalls, sleep_cumulated, evasion_tells = _parse_trace(trace_log_path)
+        syscalls, sleep_cumulated, evasion_tells, network = _parse_trace(trace_log_path)
 
         # 6. Diff
         diff = compute_diff(
@@ -308,7 +330,7 @@ def run_analysis(job_id: str, s3_url: str) -> None:
         signals = RuntimeSignals(
             syscalls_summary=syscalls,
             inotify_events=[],
-            network=NetworkObservables(),
+            network=network,
             execution_duration_s=execution_duration_s,
             sleep_cumulated_s=sleep_cumulated,
             exit_code=exit_code,
@@ -403,6 +425,7 @@ def run_analysis(job_id: str, s3_url: str) -> None:
         pipeline_version="v2",
         hypothesis_timings_ms=hypothesis_timings_ms,
         hyp_results=hyp_results,
+        weights=WEIGHTS,
         verdict=verdict,
         meta_extra={
             "early_exit": early_exit,

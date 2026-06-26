@@ -14,9 +14,15 @@ from models import (
     MemoryObservables,
     RuntimeSignals,
     SnapshotDiff,
+    SyscallSummary,
 )
 
 from hypotheses._types import Evidence, HypothesisResult
+
+
+def _find_syscall(signals: RuntimeSignals, name: str) -> SyscallSummary | None:
+    """The summary for one syscall by name, or None if the sample never called it."""
+    return next((s for s in signals.syscalls_summary if s.name == name), None)
 
 _VM_FINGERPRINT_PATHS = (
     "/sys/class/dmi/",
@@ -73,20 +79,14 @@ def evaluate(
     )
 
     # ptrace(PTRACE_TRACEME, ...) — anti-debug
-    ptrace_calls = next(
-        (s for s in signals.syscalls_summary if s.name == "ptrace"),
-        None,
-    )
+    ptrace_calls = _find_syscall(signals, "ptrace")
     if ptrace_calls:
         traceme = [a for a in ptrace_calls.sample_args if "TRACEME" in a]
         if traceme:
             flag(W_TRACEME, "syscalls_summary[ptrace].sample_args", traceme[0][:256])
 
     # VM fingerprinting via openat on DMI/cpuinfo
-    openat_calls = next(
-        (s for s in signals.syscalls_summary if s.name == "openat"),
-        None,
-    )
+    openat_calls = _find_syscall(signals, "openat")
     fingerprint_hits: list[str] = []
     if openat_calls:
         fingerprint_hits = [

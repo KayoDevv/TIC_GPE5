@@ -1,5 +1,21 @@
 {
   "job_id": "JOB-1",
+  "verdict": "malicious",
+  "anomaly_score": 0.42,
+  "analysis_trust": {
+    "liveness_ok": null,
+    "low_observability": null,
+    "timeout_triggered": false,
+    "error": null
+  },
+  "signals": [
+    {
+      "name": "c2_communication",
+      "score": 0.7,
+      "fired": true,
+      "evaluated": true
+    }
+  ],
   "iocs": [
     {
       "type": "syscall",
@@ -12,21 +28,9 @@
   "email_context": {
     "sender": "x@y"
   },
-  "timeout_triggered": false,
   "timestamp": "2026-01-01T00:00:00+00:00",
   "_meta": {
-    "anomaly_score": 0.42,
-    "duration_s": 12.3,
-    "error": null,
-    "pipeline_version": "v2-pdf",
-    "hypothesis_timings_ms": {
-      "c2_communication": 1.0
-    },
-    "hypothesis_scores": {
-      "c2_communication": 0.7
-    },
     "prompt_injection_filtered": 0,
     "file_type": "pdf"
-  },
-  "verdict": "malicious"
+  }
 }

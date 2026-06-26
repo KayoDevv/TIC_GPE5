@@ -10,9 +10,11 @@ import asyncio
 import json
 import logging
 import os
+import socket
 import sys
 import urllib.request
 import uuid
+from urllib.parse import urlparse
 from datetime import datetime, timezone
 
 import structlog
@@ -49,12 +51,13 @@ K8S_NAMESPACE   = os.getenv("K8S_NAMESPACE", "sandbox")
 JOB_IMAGE       = os.getenv("SANDBOX_JOB_IMAGE", "ghcr.io/kayodevv/ubuntu-sandbox:v1")
 PDF_JOB_IMAGE   = os.getenv("SANDBOX_PDF_JOB_IMAGE", "ghcr.io/kayodevv/ubuntu-pdf-sandbox:v1")
 TIMEOUT_S       = int(os.getenv("SANDBOX_TIMEOUT_S", "180"))
+PUBLISH_MARGIN_S = 60  # extra wall-clock after analysis for the Job to publish its result
 MINIO_ENDPOINT  = os.getenv("MINIO_ENDPOINT", "minio.minio.svc.cluster.local:9000")
 
 # Pod hardening knobs (env-overridable so dev can opt out).
 RUNTIME_CLASS   = os.getenv("SANDBOX_RUNTIME_CLASS", "").strip() or None  # "gvisor" in prod, else runc
 RUN_AS_USER     = int(os.getenv("SANDBOX_RUN_AS_USER", "10001"))          # 0 = root (legacy); image ships UID 10001
-SINKHOLE_DNS_IP = os.getenv("SANDBOX_DNS_IP", "").strip() or None         # detach analysis pods to the sinkhole resolver
+SINKHOLE_DNS_SERVICE = os.getenv("SANDBOX_DNS_SERVICE", "").strip() or None  # sinkhole DNS svc; empty = cluster DNS
 SECCOMP_TYPE    = os.getenv("SANDBOX_SECCOMP_TYPE", "RuntimeDefault").strip()  # or "Localhost" + charon-seccomp.json
 SECCOMP_PROFILE = os.getenv("SANDBOX_SECCOMP_PROFILE", "charon-seccomp.json").strip()
 
@@ -66,7 +69,10 @@ EGRESS_GATE     = os.getenv("SANDBOX_EGRESS_GATE", "1.1.1.1:443").strip()
 _EGRESS_GATE_SCRIPT = """
 import os, socket, sys, time
 host, _, port = os.environ["GATE_TARGET"].partition(":")
-target = (host, int(port)); required = 3; deadline = time.time() + 30; streak = 0
+target = (host, int(port))
+required = 3            # consecutive failed probes proving the policy is active
+deadline = time.time() + 30
+streak = 0
 while time.time() < deadline:
     try:
         socket.create_connection(target, timeout=2).close()  # reachable => egress OPEN
@@ -85,6 +91,15 @@ sys.exit("egress-gate FAIL-CLOSED: %s still reachable after deadline" % (target,
 # (override when the consumer runs outside the cluster).
 AGENT_KAFKA_BOOTSTRAP = os.getenv("AGENT_KAFKA_BOOTSTRAP_SERVERS", KAFKA_BOOTSTRAP)
 AGENT_MINIO_ENDPOINT  = os.getenv("AGENT_MINIO_ENDPOINT", MINIO_ENDPOINT)
+
+# Kafka advertises a per-pod headless listener name; aliased to the stable Kafka
+# Service ClusterIP too, else aiokafka's metadata reconnect hits the sinkhole.
+KAFKA_ADVERTISED_HOSTS = [
+    h.strip() for h in os.getenv(
+        "SANDBOX_KAFKA_ADVERTISED_HOSTS",
+        "kafka-controller-0.kafka-controller-headless.kafka.svc.cluster.local",
+    ).split(",") if h.strip()
+]
 
 # ---------------------------------------------------------------------------
 # File type detection
@@ -188,6 +203,7 @@ def _analysis_container(
             k8s_client.V1EnvVar(name="KAFKA_TOPIC_OUT", value=TOPIC_OUT),
             k8s_client.V1EnvVar(name="MINIO_ENDPOINT", value=AGENT_MINIO_ENDPOINT),
             k8s_client.V1EnvVar(name="EMAIL_CONTEXT_JSON", value=json.dumps(email_context)),
+            k8s_client.V1EnvVar(name="SANDBOX_TIMEOUT_S", value=str(TIMEOUT_S)),
         ],
         resources=k8s_client.V1ResourceRequirements(
             requests={"cpu": "500m", "memory": "512Mi"},
@@ -224,11 +240,17 @@ def _pod_volumes() -> list:
 
 
 def _pod_dns():
-    """Point analysis pods at the in-ns sinkhole resolver. (None, None) when unset."""
-    if not SINKHOLE_DNS_IP:
+    """Resolve the sinkhole DNS service and use it as the analysis pods' resolver."""
+    if not SINKHOLE_DNS_SERVICE:
         return None, None
+    try:
+        nameserver = socket.gethostbyname(SINKHOLE_DNS_SERVICE)
+    except OSError as exc:
+        log.error("sinkhole DNS unresolved, keeping cluster DNS", error=str(exc))
+        return None, None
+    # dnsPolicy="None" makes K8s use dns_config exclusively (ignore cluster DNS).
     return "None", k8s_client.V1PodDNSConfig(
-        nameservers=[SINKHOLE_DNS_IP],
+        nameservers=[nameserver],
         searches=[
             f"{K8S_NAMESPACE}.svc.cluster.local",
             "svc.cluster.local",
@@ -239,6 +261,36 @@ def _pod_dns():
             k8s_client.V1PodDNSConfigOption(name="single-request-reopen"),
         ],
     )
+
+
+def _resolve(host: str) -> str | None:
+    """Resolve via the consumer's own (unhijacked) resolver; None on failure or raw IP."""
+    if not host or host[0].isdigit():
+        return None
+    try:
+        return socket.gethostbyname(host)
+    except OSError as exc:
+        log.error("hostAlias: cannot resolve host", host=host, error=str(exc))
+        return None
+
+
+def _pod_host_aliases(s3_url: str) -> list | None:
+    """Pin the hosts the agent must reach to stable ClusterIPs, bypassing the
+    sinkhole resolver: the Kafka bootstrap AND its advertised headless name(s) to
+    Kafka's ClusterIP, and the MinIO presigned-URL host to its own. None when DNS off."""
+    if not SINKHOLE_DNS_SERVICE:
+        return None
+    aliases = []
+    kafka_host = AGENT_KAFKA_BOOTSTRAP.split(":", 1)[0].strip()
+    kafka_ip = _resolve(kafka_host)
+    if kafka_ip:
+        aliases.append(k8s_client.V1HostAlias(ip=kafka_ip, hostnames=[kafka_host, *KAFKA_ADVERTISED_HOSTS]))
+    s3_host = urlparse(s3_url).hostname or ""
+    if s3_host and s3_host != kafka_host:
+        s3_ip = _resolve(s3_host)
+        if s3_ip:
+            aliases.append(k8s_client.V1HostAlias(ip=s3_ip, hostnames=[s3_host]))
+    return aliases or None
 
 
 def _create_analysis_job(
@@ -280,7 +332,7 @@ def _create_analysis_job(
         spec=k8s_client.V1JobSpec(
             backoff_limit=0,
             ttl_seconds_after_finished=120,
-            active_deadline_seconds=TIMEOUT_S,
+            active_deadline_seconds=TIMEOUT_S + PUBLISH_MARGIN_S,
             template=k8s_client.V1PodTemplateSpec(
                 metadata=k8s_client.V1ObjectMeta(
                     labels={
@@ -299,6 +351,7 @@ def _create_analysis_job(
                     runtime_class_name=RUNTIME_CLASS,
                     dns_policy=dns_policy,
                     dns_config=dns_config,
+                    host_aliases=_pod_host_aliases(s3_url),
                     containers=[
                         _analysis_container(job_image, agent_cmd, job_id, s3_url, email_context),
                     ],
@@ -348,6 +401,7 @@ async def _handle(
     file_type = _detect_file_type(s3_url)
     log.info("File type detected", job_id=job_id, file_type=file_type)
 
+    # First attempt runs immediately (delay 0); the rest wait per _QUOTA_RETRY_DELAYS.
     last_exc: Exception | None = None
     for attempt, delay in enumerate([0] + _QUOTA_RETRY_DELAYS, start=1):
         if delay:

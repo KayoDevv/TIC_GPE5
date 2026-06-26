@@ -1,5 +1,22 @@
 {
   "job_id": "550e8400-e29b-41d4-a716-446655440001",
+  "verdict": "needs_more_context",
+  "anomaly_score": 0.1,
+  "analysis_trust": {
+    "liveness_ok": true,
+    "low_observability": null,
+    "timeout_triggered": false,
+    "error": null
+  },
+  "signals": [
+    {"name": "persistence_detected", "score": 0.0, "fired": false, "evaluated": true},
+    {"name": "c2_communication", "score": 0.0, "fired": false, "evaluated": true},
+    {"name": "code_injection", "score": 0.5, "fired": true, "evaluated": true},
+    {"name": "lolbins_abuse", "score": 0.0, "fired": false, "evaluated": true},
+    {"name": "file_encryption", "score": 0.0, "fired": false, "evaluated": true},
+    {"name": "evasion_attempted", "score": 0.0, "fired": false, "evaluated": true},
+    {"name": "propagation", "score": 0.0, "fired": false, "evaluated": true}
+  ],
   "iocs": [
     {
       "type": "file_hash",
@@ -20,12 +37,8 @@
     "subject": "Critical security patch",
     "body_text": "Install the attached patch immediately to avoid data loss."
   },
-  "timeout_triggered": false,
   "timestamp": "2026-04-27T07:57:05.008892+00:00",
   "_meta": {
-    "anomaly_score": 0.1,
-    "duration_s": 6.82,
-    "error": null,
     "prompt_injection_filtered": 0
   }
 }

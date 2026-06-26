@@ -129,6 +129,21 @@ def build_iocs(
     return iocs
 
 
+def _build_signals(hyp_results: dict, weights: dict[str, float]) -> list[dict]:
+    # A hypothesis absent from hyp_results was early-exit skipped: score=null,
+    # evaluated=false — kept distinct from a real 0 score.
+    signals: list[dict] = []
+    for name in weights:
+        result = hyp_results.get(name)
+        if result is None:
+            signals.append({"name": name, "score": None,
+                            "fired": False, "evaluated": False})
+        else:
+            signals.append({"name": name, "score": round(result.score, 3),
+                            "fired": result.value, "evaluated": True})
+    return signals
+
+
 def build_result_event(
     *,
     job_id: str,
@@ -143,48 +158,48 @@ def build_result_event(
     pipeline_version: str,
     hypothesis_timings_ms: dict,
     hyp_results: dict,
+    weights: dict[str, float] | None = None,
     verdict: str | None = None,
     meta_extra: dict | None = None,
 ) -> dict:
     """Assemble the SandboxLayerResult event published to Kafka.
 
-    Common ELF/PDF skeleton. `verdict` (top-level key) is present for PDF only.
-    `meta_extra` carries the path-specific _meta keys (early_exit for ELF,
-    file_type for PDF).
+    Decision-facing fields are top-level (verdict, anomaly_score, analysis_trust,
+    signals); operational fields live in _meta. `meta_extra` carries path-specific
+    keys (early_exit for ELF, file_type for PDF); liveness_ok/low_observability are
+    promoted into analysis_trust.
     """
-    meta = {
-        "anomaly_score": anomaly_score,
-        "duration_s": round(duration_s, 2),
+    extra = dict(meta_extra or {})
+    trust = {
+        "liveness_ok": extra.pop("liveness_ok", None),
+        "low_observability": extra.pop("low_observability", None),
+        "timeout_triggered": timeout_triggered,
         "error": error,
-        "pipeline_version": pipeline_version,
-        "hypothesis_timings_ms": hypothesis_timings_ms,
-        "hypothesis_scores": {k: round(r.score, 3) for k, r in hyp_results.items()},
-        # D4 — count of chat-template control tokens neutralized in the untrusted
-        # fields below (factual, not an intent guess). The LLM Layer reads this to
-        # warn the analyst; report it as a weak signal, never as "detection".
+    }
+    weights = weights if weights is not None else {k: 0.0 for k in hyp_results}
+
+    meta = {
+        # D4 — factual count of neutralized chat-template control tokens (weak
+        # signal for the LLM, never a detection claim).
         "prompt_injection_filtered": (
             count_control_tokens(behavior_summary)
             + count_control_tokens(email_context)
             + count_control_tokens(iocs)
         ),
     }
-    if meta_extra:
-        meta.update(meta_extra)
-    # D4 — neutralize chat-template control tokens in the attacker-influenced
-    # fields before they leave the sandbox. This is the single output boundary,
-    # so it covers every vector at once: IOC values/descriptions and the URI
-    # fragments embedded in behavior_summary (sample-derived), and the email
-    # context (fully attacker-controlled). The downstream LLM Layer must still
-    # wrap these fields as untrusted data at prompt-assembly time (contract).
-    event: dict = {
+    meta.update(extra)
+
+    # D4 — neutralize control tokens at this single output boundary; the LLM Layer
+    # must still treat these fields as untrusted data at prompt-assembly time.
+    return {
         "job_id": job_id,
+        "verdict": verdict,
+        "anomaly_score": anomaly_score,
+        "analysis_trust": trust,
+        "signals": _build_signals(hyp_results, weights),
         "iocs": sanitize_iocs(iocs),
         "behavior_summary": neutralize_untrusted(behavior_summary),
         "email_context": sanitize_email_context(email_context),
-        "timeout_triggered": timeout_triggered,
         "timestamp": timestamp,
         "_meta": meta,
     }
-    if verdict is not None:
-        event["verdict"] = verdict
-    return event

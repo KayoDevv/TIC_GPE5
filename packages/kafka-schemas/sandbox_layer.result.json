@@ -7,6 +7,66 @@
             "type": "string",
             "format": "uuid"
         },
+        "verdict": {
+            "type": "string",
+            "enum": [
+                "benign",
+                "needs_more_context",
+                "malicious",
+                "error"
+            ],
+            "description": "3-band sandbox verdict (guarded). The LLM Layer resolves needs_more_context."
+        },
+        "anomaly_score": {
+            "type": "number",
+            "minimum": 0.0,
+            "maximum": 1.0
+        },
+        "analysis_trust": {
+            "type": "object",
+            "description": "Whether this run can be trusted, or observed nothing.",
+            "properties": {
+                "liveness_ok": {
+                    "type": ["boolean", "null"]
+                },
+                "low_observability": {
+                    "type": ["string", "null"],
+                    "description": "Reason the run is a probable miss (no_liveness, quiet_benign), else null."
+                },
+                "timeout_triggered": {
+                    "type": "boolean"
+                },
+                "error": {
+                    "type": ["string", "null"]
+                }
+            }
+        },
+        "signals": {
+            "type": "array",
+            "description": "Per-hypothesis breakdown. evaluated=false means skipped (early-exit), score=null then.",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string"
+                    },
+                    "score": {
+                        "type": ["number", "null"]
+                    },
+                    "fired": {
+                        "type": "boolean"
+                    },
+                    "evaluated": {
+                        "type": "boolean"
+                    }
+                },
+                "required": [
+                    "name",
+                    "fired",
+                    "evaluated"
+                ]
+            }
+        },
         "iocs": {
             "type": "array",
             "items": {
@@ -19,7 +79,8 @@
                             "domain",
                             "file_hash",
                             "registry_key",
-                            "syscall"
+                            "syscall",
+                            "pdf_indicator"
                         ]
                     },
                     "value": {
@@ -27,7 +88,7 @@
                     },
                     "mitre_tactic": {
                         "type": "string",
-                        "description": "MITRE ATT&CK tactic (e.g. TA0011, TA0002)"
+                        "description": "MITRE ATT&CK tactic (TA0xxx) or technique (Txxxx)."
                     },
                     "description": {
                         "type": "string"
@@ -42,19 +103,25 @@
         },
         "behavior_summary": {
             "type": "string",
-            "description": "Raw behavior summary for ingestion by the LLM"
+            "description": "Human-readable summary for the UI and quick LLM read; the structured signals carry the detail."
         },
         "email_context": {
             "type": "object",
             "description": "Pass-through of the email context from the request for the LLM Layer"
         },
-        "timeout_triggered": {
-            "type": "boolean",
-            "default": false
-        },
         "timestamp": {
             "type": "string",
             "format": "date-time"
+        },
+        "_meta": {
+            "type": "object",
+            "description": "Operational metadata (not decision-facing).",
+            "properties": {
+                "prompt_injection_filtered": {
+                    "type": "integer",
+                    "description": "Count of chat-template control tokens neutralized in untrusted fields. Weak signal, never a detection claim."
+                }
+            }
         }
     },
     "required": [

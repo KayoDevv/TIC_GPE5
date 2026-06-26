@@ -12,6 +12,8 @@ from models import (
     EvasionTells,
     MAX_SYSCALL_ARG_CHARS,
     MAX_SYSCALL_SAMPLE_ARGS,
+    NetworkFlow,
+    NetworkObservables,
     SyscallSummary,
 )
 
@@ -139,3 +141,44 @@ def extract_sleep_cumulated(log_content: str) -> float:
     for m in re.finditer(r"nanosleep\(\{tv_sec=(\d+),\s*tv_nsec=(\d+)\}", log_content):
         total_ns += int(m.group(1)) * 1_000_000_000 + int(m.group(2))
     return total_ns / 1_000_000_000
+
+
+# socket() returns an fd; SOCK_STREAM=tcp, SOCK_DGRAM=udp.
+_SOCKET_RE = re.compile(r"socket\(AF_INET6?,\s*SOCK_(?P<kind>STREAM|DGRAM)[^)]*\)\s*=\s*(?P<fd>\d+)")
+# connect() carries the destination port + IP; the IP is IPv4 (inet_addr) or IPv6 (inet_pton).
+_CONNECT_RE = re.compile(
+    r'connect\((?P<fd>\d+),\s*\{sa_family=AF_INET6?,\s*sin6?_port=htons\((?P<port>\d+)\)'
+    r'.*?(?:inet_addr\("(?P<ipv4>[^"]+)"\)|inet_pton\(AF_INET6,\s*"(?P<ipv6>[^"]+)")'
+)
+
+
+def extract_network(log_content: str) -> NetworkObservables:
+    # Under gVisor packet capture is unavailable; DNS names / HTTP payloads are
+    # not reliably present in the trace, so those flow fields are left empty.
+    fd_proto: dict[str, str] = {}
+    for match in _SOCKET_RE.finditer(log_content):
+        fd_proto[match.group("fd")] = "tcp" if match.group("kind") == "STREAM" else "udp"
+
+    # Count connect() attempts per (proto, dst_ip, port).
+    counts: dict[tuple[str, str, int], int] = defaultdict(int)
+    for match in _CONNECT_RE.finditer(log_content):
+        fd = match.group("fd")
+        port = int(match.group("port"))
+        dst_ip = match.group("ipv4") or match.group("ipv6")
+        if not dst_ip:
+            continue
+        proto = fd_proto.get(fd, "tcp")
+        counts[(proto, dst_ip, port)] += 1
+
+    tcp_flows: list[NetworkFlow] = []
+    udp_flows: list[NetworkFlow] = []
+    for (proto, dst_ip, port), packet_count in counts.items():
+        flow = NetworkFlow(
+            proto=proto, src_ip="", src_port=0, dst_ip=dst_ip, dst_port=port,
+            bytes_sent=0, packet_count=packet_count, first_seen_relative_s=0.0,
+        )
+        if proto == "tcp":
+            tcp_flows.append(flow)
+        else:
+            udp_flows.append(flow)
+    return NetworkObservables(tcp_flows=tcp_flows, udp_flows=udp_flows)
