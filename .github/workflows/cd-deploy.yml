@@ -20,6 +20,12 @@ permissions:
   contents: read
   packages: write
 
+# One deploy at a time. If a second push lands while a deploy is running,
+# it queues — never cancels — to avoid leaving the cluster in a partial state.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
 env:
   OWNER: kayodevv     # forced lowercase — github.repository_owner = "KayoDevv"
 
