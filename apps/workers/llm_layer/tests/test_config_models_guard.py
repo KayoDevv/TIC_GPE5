@@ -135,4 +135,5 @@ def test_sanitize_explanation_neutralises_prefix_and_caps_length():
 
 
 def test_sanitize_explanation_keeps_clean_text():
-    assert sanitize_explanation("A normal explanation.\nLine two.") == "A normal explanation.\nLine two."
+    clean = "A normal explanation.\nLine two."
+    assert sanitize_explanation(clean) == clean
