@@ -6,8 +6,6 @@ name: CI — Tests
 on:
   pull_request:
     branches: [main]
-  push:
-    branches: [main, feat/**]
 
 permissions:
   contents: read   # checkout only — no write needed
