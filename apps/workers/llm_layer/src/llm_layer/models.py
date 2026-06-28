@@ -29,16 +29,18 @@ class SandboxMeta(BaseModel):
 
 
 class SandboxResultIn(SandboxLayerResultEvent):  # type: ignore[misc]
-    """Canonical sandbox event + optional ``_meta`` pass-through."""
-
     model_config = ConfigDict(populate_by_name=True)
 
     meta: SandboxMeta = Field(default_factory=SandboxMeta, alias="_meta")
 
 
-class ModelDecision(BaseModel):
-    """Constrained model output -> maps onto LlmLayerResultEvent."""
+def timed_out(report: SandboxResultIn) -> bool:
+    # Read from analysis_trust now that the sandbox no longer duplicates the flag
+    # at the top level; absent trust means no observed timeout.
+    return bool(report.analysis_trust and report.analysis_trust.timeout_triggered)
 
+
+class ModelDecision(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     is_malicious: bool = Field(
@@ -54,5 +56,4 @@ class ModelDecision(BaseModel):
 
     @staticmethod
     def guided_json_schema() -> dict[str, Any]:
-        """JSON Schema passed to vLLM as ``guided_json``."""
         return ModelDecision.model_json_schema()

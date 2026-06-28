@@ -13,7 +13,7 @@
         },
         "explanation_text": {
             "type": "string",
-            "description": "Natural-language explanation for the Frontend UI"
+            "description": "Untrusted natural-language text from the LLM (control chars/tokens stripped at the producer boundary). The consumer MUST output-encode it per render context (e.g. HTML-escape in the UI)."
         },
         "confidence_score": {
             "type": "integer",

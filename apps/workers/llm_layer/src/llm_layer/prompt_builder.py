@@ -12,7 +12,7 @@ import json
 from dataclasses import dataclass
 
 from llm_layer.guard import CLOSE_TAG, OPEN_TAG, neutralise_envelope
-from llm_layer.models import ModelDecision, SandboxResultIn
+from llm_layer.models import ModelDecision, SandboxResultIn, timed_out
 
 _SYSTEM_PROMPT = """\
 You are a defensive cybersecurity analyst for the CHARON pre-execution gateway.
@@ -54,7 +54,6 @@ def _wrap_untrusted(payload: dict[str, object]) -> str:
 
 
 def build_prompt(report: SandboxResultIn) -> Prompt:
-    """Assemble the strict two-message prompt from a (guarded) sandbox report."""
     system = _SYSTEM_PROMPT.format(
         schema=json.dumps(ModelDecision.guided_json_schema(), ensure_ascii=False),
         open=OPEN_TAG,
@@ -77,11 +76,11 @@ def build_prompt(report: SandboxResultIn) -> Prompt:
     trusted_lines = [
         "TRUSTED SANDBOX SIGNALS (computed by the sandbox, not attacker text):",
         f"- job_id: {report.job_id}",
-        f"- timeout_triggered: {report.timeout_triggered}",
+        f"- timeout_triggered: {timed_out(report)}",
         "- ioc_types: " + str([i.type for i in report.iocs]),
         "- mitre_tactics: " + str([i.mitre_tactic for i in report.iocs if i.mitre_tactic]),
     ]
-    if report.timeout_triggered:
+    if timed_out(report):
         trusted_lines.append(
             "- NOTE: the sandbox timed out; evidence is partial. Do not report a "
             "confident 'clean' verdict on absence of evidence."

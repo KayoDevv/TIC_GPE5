@@ -20,7 +20,8 @@ from datetime import datetime, timezone
 
 from zt_shared.models.events import LlmLayerResultEvent
 
-from llm_layer.models import ModelDecision, SandboxResultIn
+from llm_layer.guard import sanitize_explanation
+from llm_layer.models import ModelDecision, SandboxResultIn, timed_out
 
 _DEFAULT_CONFIDENCE = 50
 _TIMEOUT_CONFIDENCE_CAP = 40
@@ -46,16 +47,15 @@ def build_result(
     *,
     now: datetime | None = None,
 ) -> LlmLayerResultEvent:
-    """Apply the LLM-side rules and produce the wire event."""
     confidence = (
         decision.confidence_score
         if decision.confidence_score is not None
         else _DEFAULT_CONFIDENCE
     )
-    explanation = decision.explanation_text
+    explanation = sanitize_explanation(decision.explanation_text)
 
     # Partial evidence must not back a confident "clean".
-    if report.timeout_triggered and not decision.is_malicious:
+    if timed_out(report) and not decision.is_malicious:
         confidence = min(confidence, _TIMEOUT_CONFIDENCE_CAP)
         explanation = (
             "The sandbox timed out, so this assessment is based on partial "
@@ -79,12 +79,8 @@ def degraded_result(
     reason: str,
     now: datetime | None = None,
 ) -> LlmLayerResultEvent:
-    """Cautious fallback when the LLM cannot produce a usable decision.
-
-    Flags the sample (``is_malicious=True``) at zero confidence: a precautionary
-    signal, not a confident verdict. The Verdict Engine, which prioritises the
-    ML/Sandbox layers, makes the final call.
-    """
+    # Precautionary fallback: flag (is_malicious=True) at zero confidence -- a
+    # signal, not a verdict. The Verdict Engine (ML/Sandbox first) makes the call.
     explanation = (
         "Automated semantic analysis could not be completed for this file "
         f"({reason}). As a precaution it is flagged for review; open it only if "

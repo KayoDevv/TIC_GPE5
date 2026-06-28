@@ -6,20 +6,20 @@
 
 ## Model
 
-### Primary: `meta-llama/Meta-Llama-3-8B-Instruct`
+### Primary: `meta-llama/Llama-3.3-70B-Instruct`
 
 **Provider**: Meta
-**License**: Apache 2.0 (commercially unrestricted)
-**Parameters**: 8 billion
+**License**: Llama 3.3 Community License
+**Parameters**: 70 billion
 **Architecture**: Transformer (decoder-only)
-**Context window**: 8,192 tokens
+**Context window**: 128,000 tokens
 
-**Why Llama 3 8B**:
-- Unrestricted commercial license (Apache 2.0) — no royalties, no usage restrictions
+**Why Llama 3.3 70B**:
 - Strong instruction following on bounded reasoning tasks (email <-> sandbox correlation)
-- Available natively on HuggingFace Serverless Inference API
-- Mature ecosystem for fine-tuning (LoRA tooling well-documented) — cybersecurity fine-tuning planned for V2
-- 8B parameters = good precision-to-latency ratio for real-time inference
+- Served by the HuggingFace Inference Providers router in development, same OpenAI-compatible API as the production vLLM
+- The default model id is overridable via `LLM_MODEL_PRIMARY` — the worker code is model-agnostic
+
+> Note: the default is `Llama-3.3-70B-Instruct`. Earlier specs targeted the 8B for latency; the larger model is the current choice and can be swapped per environment via env vars.
 
 ### Fallback: `mistralai/Mistral-7B-Instruct-v0.3`
 
@@ -35,8 +35,8 @@ Activated by circuit-breaker if Llama 3 is unavailable or experiencing cold star
 
 ### Development Phase: HuggingFace Serverless Inference API
 
-**Service**: `api-inference.huggingface.co`
-**Authentication**: Bearer token (HuggingFace user token)
+**Service**: `router.huggingface.co` (Inference Providers, `/v1/chat/completions`)
+**Authentication**: Bearer token (HuggingFace fine-grained token with the "Make calls to Inference Providers" permission)
 **Hosting**: Managed by HuggingFace (no GPU provisioning)
 **Free quota**: ~1,000 requests/day
 **API format**: OpenAI-compatible (`/v1/chat/completions`)
@@ -88,7 +88,7 @@ Activated by circuit-breaker if Llama 3 is unavailable or experiencing cold star
 | **Temperature** | 0.2 | Constraint: 0.1–0.3. Very low temperature to avoid hallucinations on security decisions. Verdict must be deterministic; slight variation acceptable for UI text. |
 | **Top-p (nucleus sampling)** | 0.9 | Standard default. Prevents improbable token selection while preserving model diversity. |
 | **Max tokens (output)** | 512 | Balanced for 3–5 s latency + concise explanation for UI. Prevents verbose responses. |
-| **Max tokens (context)** | 8,192 | Llama 3 context window. Prompt (system + user + sandbox report) fits easily. |
+| **Max tokens (context)** | 128,000 | Llama 3.3 70B context window. Prompt (system + user + sandbox report) fits easily. |
 
 **Temperature justification**:
 - At 0.2: Llama 3 selects the most likely token ~95% of the time, with rare alternative tokens.
@@ -118,10 +118,9 @@ The LLM output schema is defined as a Pydantic model and passed as a JSON Schema
 
 | Field | Type | Constraint |
 |---|---|---|
-| `verdict` | enum | **Pending team decision** — see "Open contract decision" below |
-| `explanation` | string | User-facing text, non-technical (e.g. understandable by an SME's IT manager) |
-| `mitre_tag` | string or null | MITRE ATT&CK technique reference |
-| `technical_detail` | string | Internal logging detail |
+| `is_malicious` | boolean | Binary decision (Option A, implemented) |
+| `explanation_text` | string | User-facing text, non-technical (e.g. understandable by an SME's IT manager) |
+| `confidence_score` | integer or null | 0–100 confidence in the decision |
 
 **Security benefit**: the verdict field is constrained at the decoding level. The model cannot hallucinate an out-of-schema verdict value, which removes an entire class of parsing edge cases from the security decision path.
 
@@ -129,16 +128,9 @@ The LLM output schema is defined as a Pydantic model and passed as a JSON Schema
 - **Production (vLLM)**: guided decoding is native and always enforced.
 - **Development (HF Serverless)**: structured output support is not guaranteed across models. A lightweight fallback parser handles this case in development only; it is dead code in production.
 
-### Open contract decision — verdict field format
+### Resolved — verdict field format (Option A, binary)
 
-Two candidate contracts exist and must be aligned with the Verdict Engine team before implementation:
-
-| Option | Format | Implication |
-|---|---|---|
-| **A — Binary** (original spec) | `is_malicious: boolean` + `explanation_text: string` | LLM can escalate to malicious; Verdict Engine treats it as a binary signal |
-| **B — Enum** (current proposal) | `verdict: "suspect" \| "sain"` | LLM can only lower or maintain the Orange verdict; declaring "malicious" remains exclusive to ML/Sandbox layers |
-
-The functional specification states the LLM "can lower or raise the verdict" within the grey band, which must be reconciled with the security rule that the LLM cannot force-block or force-allow a file. **This decision blocks the Kafka schema versioning for `llm_layer.result`.**
+The implemented contract is **Option A — binary**: the LLM emits `is_malicious: boolean` + `explanation_text: string` + `confidence_score: integer`. It is a binary *signal*, not the final decision — the Verdict Engine (which prioritises the ML/Sandbox layers) makes the allow/block/warning call. The LLM cannot force-block or force-allow; it only resolves the grey (`needs_more_context`) band. The Kafka schema reflects this: `packages/kafka-schemas/llm_layer.result.json`.
 
 ---
 
@@ -182,28 +174,25 @@ If Llama 3 endpoint times out or returns HTTP error:
 **Async runtime**: asyncio
 **Code guidelines**: strict TDD with `pytest-asyncio` — every component (prompt builder, client, parser, verdict logic) is developed test-first
 
-Python's asyncio is essential because the worker is I/O-bound: waiting on Kafka consumer, waiting on network calls to the LLM, waiting on MinIO for email content. Async allows a single worker thread to handle hundreds of concurrent analyses.
+Python's asyncio is essential because the worker is I/O-bound: waiting on the Kafka consumer and on network calls to the LLM. Async lets a single worker handle many concurrent analyses. The email context arrives inline in the sandbox event — the LLM layer does not fetch from MinIO.
 
 ### LLM Client Library
 
-**Primary**: `huggingface_hub.InferenceClient` (official HuggingFace library)
-**Fallback**: `httpx` (async HTTP client, manual API calls)
-
-`InferenceClient` handles:
-- Bearer token injection
-- Automatic retries on transient errors
-- OpenAI API compatibility layer
-- Model endpoint switching (HF Serverless vs vLLM)
+**`httpx`** (async HTTP client) — a single OpenAI-compatible code path drives both
+the HuggingFace router (dev) and vLLM (prod). REST was chosen over a provider SDK so
+the same client serves both profiles with no extra SDK/protobuf contract. The worker
+injects the Bearer token and applies the per-request timeout; the **circuit breaker**
+(not the HTTP lib) owns retries and the primary→fallback switch.
 
 ### Supporting Libraries
 
 | Library | Purpose |
 |---|---|
-| `aiokafka` | Async Kafka consumer/producer |
+| `aiokafka` | Async Kafka consumer/producer (via `zt_shared`) |
+| `httpx` | Async OpenAI-compatible HTTP client (dev HF router + prod vLLM) |
 | `pydantic` | Kafka message validation + JSON Schema source for guided decoding |
 | `pytest-asyncio` | TDD test framework (async test support) |
-| `json` + `re` | Fallback parsing (development / HF Serverless only) |
-| `minio` | S3-compatible storage client (fetch email content) |
+| `json` + `re` | Fallback parsing (development / HF router only) |
 
 ---
 
@@ -212,8 +201,8 @@ Python's asyncio is essential because the worker is I/O-bound: waiting on Kafka 
 ### Input: Kafka Topic `sandbox_layer.result`
 
 The worker consumes events where:
-- `sandbox_verdict == "suspect"` (gate-kept condition)
-- Payload includes the technical report **and** the email body context (required for correlation): `sandbox_score`, `triggered_hypotheses`, `iocs`, `email_content`
+- `verdict == "needs_more_context"` (the grey band; `benign`/`malicious`/`error` are skipped, a missing verdict is still analysed)
+- Payload carries the technical report **and** the inline email context: `anomaly_score`, `signals`, `iocs`, `behavior_summary`, `email_context`
 
 ### Processing
 
@@ -221,11 +210,13 @@ The worker consumes events where:
 2. **Build prompt** from the strict template: system instructions + email business context (sender, subject, body) + IOC JSON report
 3. **Call LLM asynchronously**: POST to HuggingFace Serverless or vLLM endpoint (temperature 0.2)
 4. **Validate response**: guided decoding guarantees schema-valid JSON in production (vLLM); a lightweight fallback parser covers development (HF Serverless)
-5. **Apply verdict logic**: per the security rules pending the contract decision above
+5. **Apply verdict logic**: cap confidence on partial evidence (sandbox timeout), append the prompt-injection hint when the sandbox neutralised injection-shaped content, then publish the binary signal
 
 ### Output: Kafka Topic `llm_layer.result`
 
-The worker publishes the verdict (format pending contract decision), the user-facing explanation, the MITRE tag, and an error flag when degraded.
+The worker publishes the binary signal (`is_malicious`), the user-facing `explanation_text`, and `confidence_score` (`LlmLayerResultEvent`). On inference/parse failure it publishes a cautious degraded result (`is_malicious=true`, `confidence=0`) so a verdict is always emitted.
+
+**Output trust**: `explanation_text` is generated by the LLM from attacker-influenced input. The worker neutralises it at the output boundary (`guard.sanitize_explanation`: control/non-printable chars, chat-template tokens, turn prefixes, length cap), but the Frontend MUST still output-encode it (HTML-escape) — output encoding is contextual to the consumer, not the producer.
 
 ---
 
@@ -276,18 +267,16 @@ KAFKA_BOOTSTRAP=kafka:9092
 | Dependency | Version | Purpose |
 |---|---|---|
 | Python | 3.12+ | Runtime |
-| huggingface_hub | 0.20+ | HF Serverless client |
-| aiokafka | 0.10+ | Async Kafka |
-| httpx | 0.25+ | Async HTTP (fallback) |
+| aiokafka | 0.10+ | Async Kafka (via zt_shared) |
+| httpx | 0.28+ | Async OpenAI-compatible HTTP client (dev + prod) |
 | pydantic | 2.0+ | Message validation + guided decoding schema |
-| pytest-asyncio | 0.23+ | TDD test framework |
-| minio | 7.2+ | S3-compatible storage client |
+| pytest-asyncio | 0.24+ | TDD test framework |
 
 ---
 
 ## Next Steps (Implementation Order)
 
-1. **Resolve the verdict contract decision** (binary vs enum) with the Verdict Engine team — blocks Kafka schema
+1. ~~Resolve the verdict contract decision~~ — **done**: Option A (binary `is_malicious`); the `llm_layer.result` schema is finalised
 2. **Prepare HF token** and agree to Llama 3 model terms
 3. **Test HuggingFace Serverless** with sample prompts (curl or Postman)
 4. **Write tests first (TDD)**, then build the Kafka consumer that filters Orange verdicts

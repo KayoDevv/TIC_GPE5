@@ -18,7 +18,7 @@ ENV PYTHONUNBUFFERED=1 \
 # LLM Layer's own runtime deps. No dev/test tooling in the runtime image.
 COPY packages/core /app/packages/core
 RUN pip install --no-cache-dir ./packages/core \
-    && pip install --no-cache-dir "httpx>=0.28,<0.29" "tenacity>=9.1,<10"
+    && pip install --no-cache-dir "httpx>=0.28,<0.29"
 
 COPY apps/workers/llm_layer/src /app/apps/workers/llm_layer/src
 

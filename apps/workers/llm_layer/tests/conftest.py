@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from uuid import UUID
 
-from zt_shared.models.events import Ioc
+from zt_shared.models.events import AnalysisTrust, Ioc
 
 from llm_layer.models import SandboxMeta, SandboxResultIn
 
@@ -19,16 +19,18 @@ def make_report(
     body_text: str = "Please find attached your payment receipt.",
     sender: str = "billing@example.com",
     iocs: list[Ioc] | None = None,
+    verdict: str | None = None,
 ) -> SandboxResultIn:
     return SandboxResultIn(
         job_id=JOB_ID,
+        verdict=verdict,
         iocs=iocs if iocs is not None else [
             Ioc(type="ip", value="203.0.113.10", mitre_tactic="TA0011",
                 description="outbound beacon"),
         ],
         behavior_summary=behavior_summary,
         email_context={"sender": sender, "subject": "Your receipt", "body_text": body_text},
-        timeout_triggered=timeout,
+        analysis_trust=AnalysisTrust(timeout_triggered=timeout),
         timestamp=NOW,
         _meta=SandboxMeta(prompt_injection_filtered=prompt_injection_filtered),
     )

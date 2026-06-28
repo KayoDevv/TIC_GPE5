@@ -24,6 +24,11 @@ from llm_layer.pipeline import analyse
 
 log = logging.getLogger("llm_layer.worker")
 
+# Verdicts that are already decided by the sandbox and bypass semantic analysis
+# (LLM.md: the LLM only resolves the grey "needs_more_context" band). A missing
+# verdict is treated as uncertain and still analysed (silence is not benign).
+_TERMINAL_VERDICTS = frozenset({"benign", "malicious", "error"})
+
 
 class LlmLayerWorker:
     def __init__(self, settings: Settings) -> None:
@@ -46,6 +51,12 @@ class LlmLayerWorker:
         )
 
     async def _handle(self, event: SandboxResultIn) -> None:
+        if event.verdict in _TERMINAL_VERDICTS:
+            log.info(
+                "skip job_id=%s verdict=%s (LLM resolves needs_more_context only)",
+                event.job_id, event.verdict,
+            )
+            return
         try:
             result = await analyse(event, self.breaker)
         except SandboxInputRegression as exc:

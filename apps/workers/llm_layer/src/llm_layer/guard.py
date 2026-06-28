@@ -19,6 +19,7 @@ Two responsibilities, kept separate on purpose:
 from __future__ import annotations
 
 import re
+import unicodedata
 
 from llm_layer.models import SandboxResultIn
 
@@ -45,12 +46,12 @@ _CONTROL_TOKENS: tuple[str, ...] = (
 _PREFIX_RE = re.compile(r"\n\s*\n\s*(human|assistant|system)\s*:", re.IGNORECASE)
 
 
+# Raised when a raw control token survived in an untrusted field (sandbox regressed).
 class SandboxInputRegression(ValueError):
-    """A raw control token survived in an untrusted field (sandbox regressed)."""
+    pass
 
 
 def untrusted_fields(report: SandboxResultIn) -> dict[str, str]:
-    """The exact set of fields the sandbox guarantees to have sanitised."""
     fields: dict[str, str] = {
         "email_context.sender": str(report.email_context.sender),
         "email_context.subject": report.email_context.subject,
@@ -64,7 +65,6 @@ def untrusted_fields(report: SandboxResultIn) -> dict[str, str]:
 
 
 def scan_text(text: str) -> list[str]:
-    """Return the raw control markers found in ``text`` (empty if clean)."""
     if not text:
         return []
     lowered = text.lower()
@@ -75,7 +75,6 @@ def scan_text(text: str) -> list[str]:
 
 
 def scan_control_tokens(report: SandboxResultIn) -> None:
-    """Raise :class:`SandboxInputRegression` if any untrusted field is poisoned."""
     violations: list[str] = []
     for where, text in untrusted_fields(report).items():
         violations.extend(f"{where}: {h}" for h in scan_text(text))
@@ -87,5 +86,23 @@ def scan_control_tokens(report: SandboxResultIn) -> None:
 
 
 def neutralise_envelope(text: str) -> str:
-    """Stop untrusted text from closing or reopening the data envelope."""
     return text.replace(OPEN_TAG, "[filtered]").replace(CLOSE_TAG, "[filtered]")
+
+
+_MAX_EXPLANATION_CHARS = 2000
+
+
+def sanitize_explanation(text: str) -> str:
+    # LLM-generated from attacker-influenced input and rendered to users downstream:
+    # strip control/non-printable chars (log & terminal-escape injection, zero-width
+    # tricks), neutralise chat-template tokens + turn prefixes (so it cannot poison a
+    # downstream model), and bound the length. The consumer MUST still output-encode
+    # it for its render context (HTML-escape in the UI) -- that is context-specific.
+    cleaned = "".join(
+        ch for ch in text
+        if ch in ("\n", "\t") or (ord(ch) >= 0x20 and unicodedata.category(ch)[0] != "C")
+    )
+    for token in _CONTROL_TOKENS:
+        cleaned = cleaned.replace(token, "[filtered]")
+    cleaned = _PREFIX_RE.sub(" ", cleaned)
+    return cleaned[:_MAX_EXPLANATION_CHARS]

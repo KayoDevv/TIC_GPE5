@@ -25,8 +25,6 @@ class Profile(str, Enum):
 
 @dataclass(frozen=True)
 class InferenceParams:
-    """Decoding parameters. Defaults satisfy the project constraint 0.1-0.3."""
-
     temperature: float = 0.2
     top_p: float = 0.9
     max_tokens: int = 512
@@ -41,8 +39,6 @@ class InferenceParams:
 
 @dataclass(frozen=True)
 class Endpoint:
-    """A single OpenAI-compatible chat-completions endpoint."""
-
     base_url: str
     model: str
     api_key: str | None
@@ -76,14 +72,13 @@ def _get(env: dict[str, str], key: str, default: str | None = None) -> str | Non
     return value if value else default
 
 
+# Like _get but with a mandatory default, so the return is always str (mypy-strict).
 def _req(env: dict[str, str], key: str, default: str) -> str:
-    """Like :func:`_get` but always returns a ``str`` (non-empty default)."""
     value = env.get(key)
     return value if value else default
 
 
 def load_settings(env: dict[str, str] | None = None) -> Settings:
-    """Build :class:`Settings` from a mapping (defaults to ``os.environ``)."""
     env = dict(os.environ) if env is None else env
 
     inference = InferenceParams(
@@ -95,7 +90,7 @@ def load_settings(env: dict[str, str] | None = None) -> Settings:
     topic_in = _req(env, "TOPIC_IN", "sandbox_layer.result")
     topic_out = _req(env, "TOPIC_OUT", "llm_layer.result")
     consumer_group = _req(env, "KAFKA_GROUP", "llm-layer")
-    default_model = "meta-llama/Meta-Llama-3-8B-Instruct"
+    default_model = "meta-llama/Llama-3.3-70B-Instruct"
     fallback_model = "mistralai/Mistral-7B-Instruct-v0.3"
 
     vllm_url = _get(env, "VLLM_URL")

@@ -109,6 +109,26 @@ async def test_worker_handle_regression_publishes_degraded(caplog):
     assert "SANDBOX REGRESSION" in caplog.text
 
 
+@pytest.mark.parametrize("verdict", ["benign", "malicious", "error"])
+async def test_worker_skips_terminal_verdicts(verdict, caplog):
+    w = _worker()
+    w.publisher = FakePublisher()
+    w.breaker = StubBreaker(content=CLEAN_JSON)
+    with caplog.at_level("INFO"):
+        await w._handle(make_report(verdict=verdict))
+    assert w.publisher.published == []
+    assert f"verdict={verdict}" in caplog.text
+
+
+@pytest.mark.parametrize("verdict", ["needs_more_context", None])
+async def test_worker_handles_grey_and_missing_verdict(verdict):
+    w = _worker()
+    w.publisher = FakePublisher()
+    w.breaker = StubBreaker(content=CLEAN_JSON)
+    await w._handle(make_report(verdict=verdict))
+    assert len(w.publisher.published) == 1
+
+
 async def test_worker_stop_closes_resources():
     w = _worker()
     w.publisher = FakePublisher()
