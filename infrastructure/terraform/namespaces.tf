@@ -20,6 +20,9 @@ locals {
     minio    = { "name" = "minio" }
     sandbox  = local.psa_privileged
     sinkhole = local.psa_privileged
+    # Core analysis workers (backend, ml, verdict, llm) + redis. Restricted PSA
+    # is fine — every pod runs non-root, drops all caps, seccomp RuntimeDefault.
+    pipeline = { "name" = "pipeline" }
   }
 }
 

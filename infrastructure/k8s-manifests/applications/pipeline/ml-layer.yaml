@@ -1,0 +1,54 @@
+# ML Layer — static PDF analysis (pikepdf features + ONNX inference). Consumes
+# file.requested (downloads the sample from MinIO via s3://), produces
+# ml_layer.result. Model ships inside the image (MODEL_PATH baked in Dockerfile).
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ml-layer
+  namespace: pipeline
+  labels:
+    app: ml-layer
+    app.kubernetes.io/part-of: charon
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ml-layer
+  template:
+    metadata:
+      labels:
+        app: ml-layer
+    spec:
+      imagePullSecrets:
+        - name: ghcr-pull        # ghcr charon packages are private; created once on the node
+      containers:
+        - name: ml-layer
+          image: ghcr.io/kayodevv/charon-ml-layer:latest  # bumped by CD to a sha- tag
+          imagePullPolicy: IfNotPresent
+          env:
+            # Nested settings use the __ delimiter (KafkaSettings.bootstrap_servers).
+            - name: KAFKA__BOOTSTRAP_SERVERS
+              value: "kafka.kafka.svc.cluster.local:9092"
+            - name: MINIO_ENDPOINT
+              value: "http://minio.minio.svc.cluster.local:9000"
+            - name: AWS_ACCESS_KEY
+              valueFrom: {secretKeyRef: {name: pipeline-s3, key: ACCESS_KEY}}
+            - name: AWS_SECRET_KEY
+              valueFrom: {secretKeyRef: {name: pipeline-s3, key: SECRET_KEY}}
+          resources:
+            requests: {cpu: "250m", memory: "384Mi"}
+            limits: {cpu: "1000m", memory: "768Mi"}
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 10005
+            capabilities: {drop: ["ALL"]}
+            seccompProfile: {type: RuntimeDefault}
+            readOnlyRootFilesystem: true
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp          # onnxruntime scratch
+      volumes:
+        - name: tmp
+          emptyDir: {}

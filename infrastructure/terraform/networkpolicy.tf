@@ -225,6 +225,19 @@ resource "kubernetes_network_policy_v1" "kafka_allow" {
         port     = "9092"
       }
     }
+    # Legitimate clients: the pipeline namespace (core-backend produces
+    # file.requested + consumes verdict.result; ml/verdict/llm workers).
+    ingress {
+      from {
+        namespace_selector {
+          match_labels = { "kubernetes.io/metadata.name" = "pipeline" }
+        }
+      }
+      ports {
+        protocol = "TCP"
+        port     = "9092"
+      }
+    }
     # Intra-namespace: Bitnami provisioning Jobs + controller quorum.
     ingress {
       from {

@@ -1,0 +1,50 @@
+# Redis — Verdict Layer Saga state store (per-job partial state, TTL 300s).
+# In-cluster only; reached by verdict-layer as redis://redis:6379/0.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: pipeline
+  labels:
+    app: redis
+    app.kubernetes.io/part-of: charon
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      containers:
+        - name: redis
+          image: redis:7.4-alpine
+          imagePullPolicy: IfNotPresent
+          args: ["--save", "", "--appendonly", "no"]   # ephemeral: state is GDPR-bounded (TTL 300s)
+          ports:
+            - containerPort: 6379
+          resources:
+            requests: {cpu: "50m", memory: "64Mi"}
+            limits: {cpu: "200m", memory: "128Mi"}
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 999          # redis image's built-in redis user
+            capabilities: {drop: ["ALL"]}
+            seccompProfile: {type: RuntimeDefault}
+            readOnlyRootFilesystem: true
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: pipeline
+spec:
+  selector:
+    app: redis
+  ports:
+    - port: 6379
+      targetPort: 6379

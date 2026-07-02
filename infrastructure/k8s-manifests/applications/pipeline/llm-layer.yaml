@@ -1,0 +1,56 @@
+# LLM Layer — semantic analyst. Consumes sandbox_layer.result (needs_more_context
+# band), produces llm_layer.result. DEV PROFILE: no VLLM_URL -> uses the
+# HuggingFace router as the inference backend (the VM has no GPU, so a local
+# vLLM + 70B model is impossible). HF_TOKEN comes from the `llm-secrets` secret,
+# created out-of-band (never committed) — see secret-s3.yaml note.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: llm-layer
+  namespace: pipeline
+  labels:
+    app: llm-layer
+    app.kubernetes.io/part-of: charon
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: llm-layer
+  template:
+    metadata:
+      labels:
+        app: llm-layer
+    spec:
+      imagePullSecrets:
+        - name: ghcr-pull        # ghcr charon packages are private; created once on the node
+      containers:
+        - name: llm-layer
+          image: ghcr.io/kayodevv/charon-llm-layer:latest  # bumped by CD to a sha- tag
+          imagePullPolicy: IfNotPresent
+          env:
+            # DEV profile: VLLM_URL is intentionally unset -> HF router.
+            - name: KAFKA_BOOTSTRAP
+              value: "kafka.kafka.svc.cluster.local:9092"
+            - name: TOPIC_IN
+              value: "sandbox_layer.result"
+            - name: TOPIC_OUT
+              value: "llm_layer.result"
+            - name: KAFKA_GROUP
+              value: "llm-layer"
+            - name: HF_BASE_URL
+              value: "https://router.huggingface.co"
+            - name: LLM_TIMEOUT_S
+              value: "30.0"
+            - name: HF_TOKEN
+              valueFrom: {secretKeyRef: {name: llm-secrets, key: HF_TOKEN}}
+          resources:
+            requests: {cpu: "50m", memory: "96Mi"}
+            limits: {cpu: "300m", memory: "256Mi"}
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 10003
+            capabilities: {drop: ["ALL"]}
+            seccompProfile: {type: RuntimeDefault}
+            readOnlyRootFilesystem: true

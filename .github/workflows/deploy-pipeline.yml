@@ -1,0 +1,159 @@
+name: Deploy core pipeline (OpenVPN + SSH)
+
+# Deploys the core analysis pipeline (redis + backend/ml/verdict/llm) to GPE-NYX
+# from a GitHub-HOSTED runner, using the same OpenVPN+SSH pattern as
+# deploy-monitoring.yml.
+#
+# Triggering:
+#   * runs AFTER "CD - Build, Push & Deploy" succeeds on main (workflow_run) so
+#     the sha- tagged images are already in GHCR before we pin them — no race.
+#   * the `detect` job then SKIPS unless the merge actually touched a pipeline
+#     image's source / manifest. So a docs / frontend / sandbox-only merge does
+#     NOT redeploy the pipeline (no pointless rollout).
+#   * workflow_dispatch always deploys (manual override).
+#
+# Required secrets (already provisioned): VPN_OVPN, SSH_HOST, SSH_USER,
+# SSH_PRIVATE_KEY. VM prerequisites (one-time): `ghcr-pull` imagePullSecret +
+# `llm-secrets` in the pipeline namespace, and `make tf-apply` for the namespace
+# + kafka-allow NetworkPolicy. See applications/pipeline/README.md.
+
+on:
+  workflow_dispatch: {}
+  workflow_run:
+    workflows: ["CD - Build, Push & Deploy"]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-pipeline
+  cancel-in-progress: false
+
+env:
+  SSH_OPTS: "-i ~/.ssh/id_deploy -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts"
+  OWNER: kayodevv
+  # If the SSH user's default kubeconfig isn't the K3s one, set this to e.g.
+  # /home/tisser_f/.kube/config (as deploy-monitoring.yml does).
+  REMOTE_KUBECONFIG: ""
+
+jobs:
+  # Deploy only when the triggering merge changed a pipeline image's source or a
+  # pipeline manifest (and cd-deploy succeeded). Manual dispatch always deploys.
+  detect:
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    outputs:
+      deploy: ${{ steps.check.outputs.deploy }}
+      short: ${{ steps.check.outputs.short }}
+      services: ${{ steps.check.outputs.services }}   # workers whose IMAGE was rebuilt
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+          ref: ${{ github.event.workflow_run.head_sha || github.ref }}
+      - id: check
+        run: |
+          set -euo pipefail
+          # cd-deploy's docker/metadata-action tags images `sha-<7-char short>`,
+          # so we pin the SHORT sha, not the full one.
+          echo "short=$(git rev-parse --short=7 HEAD)" >> "$GITHUB_OUTPUT"
+
+          DIFF=$(git diff --name-only HEAD~1 HEAD || true)
+          # A _global change makes cd-deploy rebuild every service (mirror that).
+          GLOBAL='^(\.github/workflows/(ci-build|ci-tests|cd-deploy)\.yml|\.github/service-matrix\.json|\.github/filters\.yml|\.trivyignore|\.github/actions/)'
+          svc=""
+          if echo "$DIFF" | grep -qE "$GLOBAL"; then
+            svc="core-backend ml-layer verdict-layer llm-layer"
+          else
+            echo "$DIFF" | grep -qE '^(apps/core-backend/|packages/core/)'          && svc="$svc core-backend"
+            echo "$DIFF" | grep -qE '^(apps/workers/ml_layer/|packages/core/)'       && svc="$svc ml-layer"
+            echo "$DIFF" | grep -qE '^(apps/workers/verdict_layer/|packages/core/)'  && svc="$svc verdict-layer"
+            echo "$DIFF" | grep -qE '^(apps/workers/llm_layer/|packages/core/)'      && svc="$svc llm-layer"
+          fi
+          svc=$(echo $svc | xargs -n1 2>/dev/null | sort -u | xargs || true)
+          echo "services=$svc" >> "$GITHUB_OUTPUT"
+
+          # Deploy if any image was rebuilt, a manifest changed, or manual dispatch.
+          manifest=false
+          echo "$DIFF" | grep -qE '^infrastructure/k8s-manifests/applications/pipeline/' && manifest=true
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] || [ -n "$svc" ] || [ "$manifest" = "true" ]; then
+            echo "deploy -> services=[$svc] manifest=$manifest dispatch=${{ github.event_name == 'workflow_dispatch' }}"
+            echo "deploy=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "no pipeline change -> skip"; echo "deploy=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  deploy:
+    needs: detect
+    if: ${{ needs.detect.outputs.deploy == 'true' }}
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install OpenVPN client
+        run: sudo apt-get update && sudo apt-get install -y openvpn
+
+      - name: Connect to OpenVPN
+        run: |
+          set -euo pipefail
+          echo "${{ secrets.VPN_OVPN }}" > vpn.ovpn
+          sudo openvpn --config vpn.ovpn --daemon --log vpn.log --writepid vpn.pid
+          echo "Waiting for tun0..."
+          timeout 60 bash -c 'until ip link show tun0 >/dev/null 2>&1; do sleep 2; done' \
+            || { echo "::error::VPN tunnel did not come up"; sudo cat vpn.log; exit 1; }
+          ip -br a show tun0
+
+      - name: Setup SSH key
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+
+      - name: Reachability check (SSH + K3s)
+        run: |
+          ssh $SSH_OPTS "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
+            "${REMOTE_KUBECONFIG:+KUBECONFIG=$REMOTE_KUBECONFIG} kubectl get nodes -o wide"
+
+      - name: Ship pipeline manifests to VM
+        run: |
+          set -euo pipefail
+          tar czf - -C infrastructure/k8s-manifests/applications pipeline \
+          | ssh $SSH_OPTS "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
+            'rm -rf ~/charon-deploy/pipeline && mkdir -p ~/charon-deploy && tar xzf - -C ~/charon-deploy'
+
+      - name: Apply pipeline (pin rebuilt services to new sha, keep the rest)
+        run: |
+          ssh $SSH_OPTS "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
+            "OWNER=$OWNER SHORT='${{ needs.detect.outputs.short }}' CHANGED='${{ needs.detect.outputs.services }}' KC=$REMOTE_KUBECONFIG bash -seuo pipefail" <<'REMOTE'
+            k() { KUBECONFIG=${KC:-$HOME/.kube/config} kubectl "$@"; }
+            cd ~/charon-deploy/pipeline
+            # Build a kustomize image override: rebuilt workers -> sha-SHORT;
+            # untouched workers -> whatever tag they currently run (so apply -k
+            # doesn't reset them to :latest and roll them needlessly).
+            {
+              echo ""
+              echo "images:"
+              for s in core-backend ml-layer verdict-layer llm-layer; do
+                if echo " $CHANGED " | grep -q " $s "; then
+                  tag="sha-$SHORT"
+                else
+                  cur=$(k -n pipeline get deploy/$s -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || true)
+                  tag="${cur##*:}"; [ -z "$tag" ] && tag="sha-$SHORT"
+                fi
+                echo "  - name: ghcr.io/$OWNER/charon-$s"
+                echo "    newTag: $tag"
+              done
+            } >> kustomization.yaml
+            k apply -k .
+            # Roll (and wait on) only what actually changed.
+            for s in $CHANGED; do k -n pipeline rollout status "deploy/$s" --timeout=180s; done
+            k -n pipeline get pods -o wide
+          REMOTE
+
+      - name: Disconnect VPN
+        if: always()
+        run: sudo test -f vpn.pid && sudo kill "$(cat vpn.pid)" || true

@@ -1,0 +1,42 @@
+# Verdict Layer — Saga orchestrator. Consumes ml/sandbox/llm results, aggregates
+# per-job state in Redis, emits verdict.result. See decision matrix in the code.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: verdict-layer
+  namespace: pipeline
+  labels:
+    app: verdict-layer
+    app.kubernetes.io/part-of: charon
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: verdict-layer
+  template:
+    metadata:
+      labels:
+        app: verdict-layer
+    spec:
+      imagePullSecrets:
+        - name: ghcr-pull        # ghcr charon packages are private; created once on the node
+      containers:
+        - name: verdict-layer
+          image: ghcr.io/kayodevv/charon-verdict-layer:latest  # bumped by CD to a sha- tag
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              value: "kafka.kafka.svc.cluster.local:9092"
+            - name: REDIS_URL
+              value: "redis://redis:6379/0"
+          resources:
+            requests: {cpu: "50m", memory: "96Mi"}
+            limits: {cpu: "300m", memory: "256Mi"}
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 10006
+            capabilities: {drop: ["ALL"]}
+            seccompProfile: {type: RuntimeDefault}
+            readOnlyRootFilesystem: true

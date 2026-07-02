@@ -1,0 +1,13 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: pipeline
+# The `pipeline` namespace + the kafka-allow NetworkPolicy ingress rule are owned
+# by Terraform (namespaces.tf, networkpolicy.tf). The `llm-secrets` secret
+# (HF_TOKEN) is created out-of-band and is NOT in this kustomization.
+resources:
+  - secret-s3.yaml
+  - redis.yaml
+  - core-backend.yaml
+  - ml-layer.yaml
+  - verdict-layer.yaml
+  - llm-layer.yaml

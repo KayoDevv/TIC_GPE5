@@ -20,13 +20,16 @@ kraft:
 controller:
   replicaCount: 1
   # Note: in combined mode, controller-0 also acts as the broker.
+  # Memory bumped 1Gi -> 2Gi: at a 1Gi limit the JVM heap (~1Gi default) plus
+  # off-heap (page cache, metaspace, threads) pushed RSS over the limit and the
+  # container was OOMKilled repeatedly (exit 137). 2Gi gives the off-heap room.
   resources:
     requests:
       cpu: "250m"
-      memory: "512Mi"
+      memory: "1Gi"
     limits:
       cpu: "1"
-      memory: "1Gi"
+      memory: "2Gi"
   persistence:
     enabled: true
     size: 5Gi

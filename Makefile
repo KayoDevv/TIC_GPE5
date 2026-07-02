@@ -516,6 +516,57 @@ dev-teardown:
 	@echo "DEV NodePorts removed (prod-safe ClusterIP only)."
 
 # ══════════════════════════════════════════════════════════════════════════════
+#  K3s — PIPELINE (core analysis workers: backend, ml, verdict, llm + redis)
+#  Same bootstrap contract as the sandbox stack: build locally, import into the
+#  K3s containerd, kubectl apply. On merge to main, cd-deploy also pushes these
+#  images to GHCR (Dockerfiles now exist for all four).
+# ══════════════════════════════════════════════════════════════════════════════
+PIPELINE_DIR := infrastructure/k8s-manifests/applications/pipeline
+
+.PHONY: build-core-backend build-ml-layer build-verdict-layer build-llm-layer \
+        import-pipeline-images deploy-pipeline launch-pipeline undeploy-pipeline
+
+build-core-backend:
+	docker build -t ghcr.io/kayodevv/charon-core-backend:latest \
+	             -f apps/core-backend/Dockerfile .
+build-ml-layer:
+	docker build -t ghcr.io/kayodevv/charon-ml-layer:latest \
+	             -f apps/workers/ml_layer/Dockerfile .
+build-verdict-layer:
+	docker build -t ghcr.io/kayodevv/charon-verdict-layer:latest \
+	             -f apps/workers/verdict_layer/Dockerfile .
+build-llm-layer:
+	docker build -t ghcr.io/kayodevv/charon-llm-layer:latest \
+	             -f apps/workers/llm_layer/Dockerfile .
+
+import-pipeline-images: build-core-backend build-ml-layer build-verdict-layer build-llm-layer
+	docker save ghcr.io/kayodevv/charon-core-backend:latest  | sudo k3s ctr images import -
+	docker save ghcr.io/kayodevv/charon-ml-layer:latest      | sudo k3s ctr images import -
+	docker save ghcr.io/kayodevv/charon-verdict-layer:latest | sudo k3s ctr images import -
+	docker save ghcr.io/kayodevv/charon-llm-layer:latest     | sudo k3s ctr images import -
+	@echo "Pipeline images imported into K3s."
+
+# Deploys redis + the 4 workers. HF_TOKEN (llm dev profile) must be provided the
+# first time so the llm-secrets secret is created; thereafter it is reused.
+deploy-pipeline: setup-kubeconfig
+	@test -n "$(HF_TOKEN)" && kubectl -n pipeline create secret generic llm-secrets \
+		--from-literal=HF_TOKEN=$(HF_TOKEN) --dry-run=client -o yaml | kubectl apply -f - \
+		|| echo "HF_TOKEN not set — assuming llm-secrets already exists."
+	kubectl apply -k $(PIPELINE_DIR)/
+	kubectl -n pipeline rollout status deploy/redis         --timeout=120s
+	kubectl -n pipeline rollout status deploy/core-backend  --timeout=180s
+	kubectl -n pipeline rollout status deploy/ml-layer      --timeout=180s
+	kubectl -n pipeline rollout status deploy/verdict-layer --timeout=180s
+	kubectl -n pipeline rollout status deploy/llm-layer     --timeout=180s
+	@echo "Pipeline deployed. Backend on the LAN: $(NODE_IP):30080"
+
+launch-pipeline: import-pipeline-images deploy-pipeline
+	@echo "=== Core pipeline launched (backend + ml + verdict + llm + redis) ==="
+
+undeploy-pipeline:
+	kubectl delete -k $(PIPELINE_DIR)/ --ignore-not-found
+
+# ══════════════════════════════════════════════════════════════════════════════
 #  K3s — gVisor + NetworkPolicy + Validation
 # ══════════════════════════════════════════════════════════════════════════════
 
