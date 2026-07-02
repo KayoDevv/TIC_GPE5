@@ -5,7 +5,6 @@ resources:
   # namespace `sandbox`: owned by Terraform (infrastructure/terraform/namespaces.tf)
   # rbac + networkpolicy: owned by Terraform (rbac.tf, networkpolicy.tf)
   - consumer-deployment.yaml
-  - watcher-deployment.yaml
   - keda-scaledobject.yaml
   # analysis-job-template.yaml is applied dynamically by the consumer,
   # not via kustomize. Kept in the repo as the source of truth.

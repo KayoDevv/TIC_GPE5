@@ -96,7 +96,6 @@ apps/
     ├── sandbox_layer/          ← K8s Jobs + gVisor · 3 Dockerfiles ✓
     ├── llm_layer/              ← vLLM / Llama 3 (stub, no Dockerfile yet)
     ├── verdict_layer/          ← Redis Saga (stub, no Dockerfile yet)
-    └── minio_watcher/          ← S3 event bridge · Dockerfile ✓
 
 packages/
 ├── core/                       ← Shared Pydantic models + Kafka · pyproject.toml ✓
@@ -139,7 +138,7 @@ scripts/
 │  ci-build.yml (9 images)                             │  ruff+mypy+      │  │
 │  ┌──────────────────────────────────────────┐        │  pytest 100%cov  │  │
 │  │ sandbox-consumer  sandbox-agent          │        │                  │  │
-│  │ sandbox-pdf-agent minio-watcher          │        │ test-sandbox-    │  │
+│  │ sandbox-pdf-agent                       │        │ test-sandbox-    │  │
 │  │ core-backend*     frontend*              │        │ layer (pure core)│  │
 │  │ ml-layer*         llm-layer*             │        │  ruff + pytest   │  │
 │  │ verdict-layer*                           │        │  (no K8s needed) │  │
@@ -178,7 +177,7 @@ scripts/
 │  │  2. Trivy CVE scan → fails on CRITICAL or HIGH                       │  │
 │  │  3. Push to ghcr.io/kayodevv/<image>:sha-<SHA> + :latest             │  │
 │  │  Images: charon-sandbox-consumer · ubuntu-sandbox · ubuntu-pdf-sandbox │  │
-│  │     charon-minio-watcher · charon-core-backend* · charon-frontend*   │  │
+│  │     charon-core-backend* · charon-frontend*   │  │
 │  │     charon-ml-layer* · charon-llm-layer* · charon-verdict-layer*    │  │
 │  │  (* skipped gracefully until Dockerfile is added)                   │  │
 │  └──────────────────────────────────────────────────────────────────────┘  │
@@ -268,7 +267,6 @@ Services without a Dockerfile are **skipped gracefully** (not failed):
 | `sandbox-consumer` | `apps/workers/sandbox_layer/Dockerfile.consumer` | ✅ Exists |
 | `sandbox-agent` | `apps/workers/sandbox_layer/Dockerfile.agent` | ✅ Exists |
 | `sandbox-pdf-agent` | `apps/workers/sandbox_layer/Dockerfile.pdf-agent` | ✅ Exists |
-| `minio-watcher` | `apps/workers/minio_watcher/Dockerfile` | ✅ Exists |
 | `core-backend` | `apps/core-backend/Dockerfile` | ⏭ Skipped (not yet created) |
 | `frontend` | `apps/frontend/Dockerfile` | ⏭ Skipped |
 | `ml-layer` | `apps/workers/ml_layer/Dockerfile` | ⏭ Skipped |
@@ -356,7 +354,6 @@ Push to ghcr.io/kayodevv/<image>  (see image table above)
 | `sandbox-consumer` | `ghcr.io/kayodevv/charon-sandbox-consumer` |
 | `sandbox-agent` | `ghcr.io/kayodevv/ubuntu-sandbox` |
 | `sandbox-pdf-agent` | `ghcr.io/kayodevv/ubuntu-pdf-sandbox` |
-| `minio-watcher` | `ghcr.io/kayodevv/charon-minio-watcher` |
 | `core-backend` | `ghcr.io/kayodevv/charon-core-backend` |
 | `frontend` | `ghcr.io/kayodevv/charon-frontend` |
 | `ml-layer` | `ghcr.io/kayodevv/charon-ml-layer` |
@@ -423,7 +420,6 @@ The script applies all three rules **recursively**: it walks nested `object` pro
 | `scripts/ci/check_schema_compat.py` | BACKWARD_TRANSITIVE schema checker script |
 | `infrastructure/k8s-manifests/overlays/prod/kustomization.yaml` | Production Kustomize overlay |
 | `infrastructure/k8s-manifests/overlays/prod/consumer-env-patch.yaml` | Consumer env for prod |
-| `infrastructure/k8s-manifests/overlays/prod/watcher-env-patch.yaml` | Watcher env for prod |
 | `.github/service-matrix.json` | Shared 9-service matrix — single source of truth for `ci-build.yml` and `cd-deploy.yml` |
 | `docs/ci-cd.md` | This document |
 | `CLAUDE.md` | Full project reference for Claude Code |
@@ -432,7 +428,7 @@ The script applies all three rules **recursively**: it walks nested `object` pro
 
 | File | What changed |
 |---|---|
-| `.github/workflows/cd-deploy.yml` | Fixed matrix (`path:` → `dockerfile:`); added 3 sandbox Dockerfiles + minio-watcher; added Trivy CVE scan between build and push; improved deploy stub; matrix moved to `service-matrix.json` |
+| `.github/workflows/cd-deploy.yml` | Fixed matrix (`path:` → `dockerfile:`); added 3 sandbox Dockerfiles +             ; added Trivy CVE scan between build and push; improved deploy stub; matrix moved to `service-matrix.json` |
 | `.github/workflows/ci-tests.yml` | Added `Test · apps/core-backend` job (folded from the deleted `core-backend-ci.yml`; runs in parallel with no `needs:`) |
 | `.github/workflows/ci-build.yml` | Added Trivy CVE scan between build and push-verification steps; matrix now sourced from `service-matrix.json` |
 | `.github/workflows/ci-lint.yml` | Fixed 5 occurrences of `checkout@v5` → `@v4` (inconsistency with all other workflows) |
@@ -478,7 +474,6 @@ Test · apps/core-backend
 Build · sandbox-consumer
 Build · sandbox-agent
 Build · sandbox-pdf-agent
-Build · minio-watcher
 ```
 
 > **Do NOT add** `BACKWARD_TRANSITIVE · *` or `Validate sandbox -> LLM contract` — these are path-filtered and show as `skipped` on most PRs. GitHub treats `skipped` as passing.

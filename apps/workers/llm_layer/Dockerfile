@@ -22,7 +22,7 @@ RUN pip install --no-cache-dir ./packages/core \
 
 COPY apps/workers/llm_layer/src /app/apps/workers/llm_layer/src
 
-# Non-root UID (distinct from minio-watcher=10002), matching the K8s runAsUser.
+# Non-root UID (distinct from sandbox=10001), matching the K8s runAsUser.
 RUN useradd -u 10003 -m -s /bin/false llm
 USER 10003
 

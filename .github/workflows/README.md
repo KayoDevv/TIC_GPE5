@@ -94,7 +94,6 @@ Test · apps/core-backend
 Build · sandbox-consumer
 Build · sandbox-agent
 Build · sandbox-pdf-agent
-Build · minio-watcher
 Build · core-backend
 Build · frontend
 Build · ml-layer
@@ -124,7 +123,6 @@ Image names match the existing K8s manifests exactly:
 | Sandbox consumer (Deployment) | `ghcr.io/kayodevv/charon-sandbox-consumer` |
 | Sandbox ELF agent (Job) | `ghcr.io/kayodevv/ubuntu-sandbox` |
 | Sandbox PDF agent (Job) | `ghcr.io/kayodevv/ubuntu-pdf-sandbox` |
-| MinIO watcher (Deployment) | `ghcr.io/kayodevv/charon-minio-watcher` |
 | Core backend | `ghcr.io/kayodevv/charon-core-backend` |
 | Frontend | `ghcr.io/kayodevv/charon-frontend` |
 | ML layer | `ghcr.io/kayodevv/charon-ml-layer` |

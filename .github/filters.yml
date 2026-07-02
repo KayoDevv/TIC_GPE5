@@ -41,9 +41,6 @@ verdict-layer:
   - *global
   - *shared_py
   - 'apps/workers/verdict_layer/**'
-minio-watcher:
-  - *global
-  - 'apps/workers/minio_watcher/**'
 frontend:
   - *global
   - 'apps/frontend/**'

@@ -1,6 +1,6 @@
 # Sandbox RBAC — least-privilege split:
 #   sandbox-consumer : CREATE Jobs + read pods/logs (dispatcher)
-#   sandbox-analysis / sandbox-watcher : NO API rights (token not mounted)
+#   sandbox-analysis : NO API rights (token not mounted)
 
 resource "kubernetes_service_account_v1" "consumer" {
   metadata {
@@ -9,18 +9,10 @@ resource "kubernetes_service_account_v1" "consumer" {
   }
 }
 
-# Token not mounted: a compromised detonation/watcher pod can't reach the API server.
+# Token not mounted: a compromised detonation pod can't reach the API server.
 resource "kubernetes_service_account_v1" "analysis" {
   metadata {
     name      = "sandbox-analysis"
-    namespace = "sandbox"
-  }
-  automount_service_account_token = false
-}
-
-resource "kubernetes_service_account_v1" "watcher" {
-  metadata {
-    name      = "sandbox-watcher"
     namespace = "sandbox"
   }
   automount_service_account_token = false

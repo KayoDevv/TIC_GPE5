@@ -15,7 +15,3 @@ patches:
     target:
       kind: Deployment
       name: sandbox-consumer
-  - path: watcher-env-patch.yaml
-    target:
-      kind: Deployment
-      name: minio-watcher

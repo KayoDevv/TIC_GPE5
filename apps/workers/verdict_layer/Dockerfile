@@ -24,7 +24,7 @@ RUN pip install --no-cache-dir ./packages/core \
 
 COPY apps/workers/verdict_layer/src /app/apps/workers/verdict_layer/src
 
-# Non-root UID (distinct from sandbox=10001, minio-watcher=10002, llm=10003,
+# Non-root UID (distinct from sandbox=10001, llm=10003,
 # core-backend=10004, ml=10005).
 RUN useradd -u 10006 -m -s /bin/false verdict
 USER 10006

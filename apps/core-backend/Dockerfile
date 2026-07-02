@@ -29,7 +29,7 @@ RUN pip install --no-cache-dir ./packages/core \
 
 COPY apps/core-backend/src /app/apps/core-backend/src
 
-# Non-root UID (distinct from sandbox=10001, minio-watcher=10002, llm=10003).
+# Non-root UID (distinct from sandbox=10001, llm=10003).
 RUN useradd -u 10004 -m -s /bin/false backend
 USER 10004
 

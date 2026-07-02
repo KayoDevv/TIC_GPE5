@@ -31,8 +31,8 @@ spec:
   validationActions: [Deny]
   matchResources:
     # Restricted to the sandbox namespace AND to detonation pods only.
-    # The consumer/watcher (app=sandbox-consumer / minio-watcher) do NOT carry
-    # this label → not affected (they run under runc, which is intended).
+    # The consumer (app=sandbox-consumer) does NOT carry this label → not
+    # affected (it runs under runc, which is intended).
     namespaceSelector:
       matchLabels:
         kubernetes.io/metadata.name: sandbox

@@ -24,10 +24,6 @@ patches:
     target:
       kind: Deployment
       name: sandbox-consumer
-  - path: watcher-env-patch.yaml
-    target:
-      kind: Deployment
-      name: minio-watcher
 
 # Image tags are updated by `kustomize edit set image` in cd-deploy.yml
 # before `kubectl apply -k`. Placeholders below show the expected format.

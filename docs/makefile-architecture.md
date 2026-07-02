@@ -46,7 +46,6 @@ apps/
     sandbox_layer/Makefile    ← Docker-only    → includes common.mk, implements verbs
     llm_layer/Makefile
     verdict_layer/Makefile
-    minio_watcher/Makefile
 packages/
   core/Makefile               ← Python/Poetry  (zt-shared)
   kafka-schemas/Makefile      ← static JSON    → includes common.mk, implements verbs

@@ -15,14 +15,13 @@ ML_DIR       := apps/workers/ml_layer
 SANDBOX_DIR  := apps/workers/sandbox_layer
 LLM_DIR      := apps/workers/llm_layer
 VERDICT_DIR  := apps/workers/verdict_layer
-MINIO_DIR    := apps/workers/minio_watcher
 SINKHOLE_DIR := apps/sinkhole
 SHARED_DIR   := packages/core
 SCHEMAS_DIR  := packages/kafka-schemas
 
-SERVICE_NAMES := BACKEND FRONTEND ML SANDBOX LLM VERDICT MINIO SINKHOLE SHARED SCHEMAS
+SERVICE_NAMES := BACKEND FRONTEND ML SANDBOX LLM VERDICT SINKHOLE SHARED SCHEMAS
 ALL_SVC_DIRS  := $(BACKEND_DIR) $(FRONTEND_DIR) $(ML_DIR) $(SANDBOX_DIR) \
-                 $(LLM_DIR) $(VERDICT_DIR) $(MINIO_DIR) $(SINKHOLE_DIR) $(SHARED_DIR) $(SCHEMAS_DIR)
+                 $(LLM_DIR) $(VERDICT_DIR) $(SINKHOLE_DIR) $(SHARED_DIR) $(SCHEMAS_DIR)
 
 # ── Service dispatch ──────────────────────────────────────────────────────────
 # make build LLM  ->  _SVC = LLM  ->  delegates to apps/workers/llm_layer
@@ -78,7 +77,7 @@ help:
 	@printf "$(_BOLD)$(_CYN)  ░╚════╝░╚═╝░░╚═╝╚═╝░░╚═╝╚═╝░░╚═╝░╚════╝░╚═╝░░╚══╝$(_RST)\n"
 	@printf "$(_DIM)  Zero-Trust Endpoint Analysis Platform$(_RST)\n"
 	@printf "\n"
-	@printf "$(_BOLD)$(_YLW)  SERVICES$(_RST)  $(_CYN)BACKEND$(_RST) · $(_CYN)FRONTEND$(_RST) · $(_CYN)ML$(_RST) · $(_CYN)SANDBOX$(_RST) · $(_CYN)LLM$(_RST) · $(_CYN)VERDICT$(_RST) · $(_CYN)MINIO$(_RST) · $(_CYN)SINKHOLE$(_RST) · $(_CYN)SHARED$(_RST) · $(_CYN)SCHEMAS$(_RST)\n"
+	@printf "$(_BOLD)$(_YLW)  SERVICES$(_RST)  $(_CYN)BACKEND$(_RST) · $(_CYN)FRONTEND$(_RST) · $(_CYN)ML$(_RST) · $(_CYN)SANDBOX$(_RST) · $(_CYN)LLM$(_RST) · $(_CYN)VERDICT$(_RST) · $(_CYN)SINKHOLE$(_RST) · $(_CYN)SHARED$(_RST) · $(_CYN)SCHEMAS$(_RST)\n"
 	@printf "\n"
 	@printf "$(_BOLD)$(_YLW)  USAGE$(_RST)     make <action> [SERVICE...]\n"
 	@printf "\n"
@@ -426,12 +425,10 @@ tf-import-compartments:
 	cd $(TERRAFORM_DIR) && printf '%s\n' \
 		'kubernetes_service_account_v1.consumer sandbox/sandbox-consumer' \
 		'kubernetes_service_account_v1.analysis sandbox/sandbox-analysis' \
-		'kubernetes_service_account_v1.watcher sandbox/sandbox-watcher' \
 		'kubernetes_role_v1.job_dispatcher sandbox/sandbox-job-dispatcher' \
 		'kubernetes_role_binding_v1.consumer_can_dispatch sandbox/sandbox-consumer-can-dispatch' \
 		'kubernetes_network_policy_v1.sandbox_deny_all sandbox/deny-all-default' \
 		'kubernetes_network_policy_v1.consumer_egress sandbox/consumer-egress' \
-		'kubernetes_network_policy_v1.watcher_egress sandbox/watcher-egress' \
 		'kubernetes_network_policy_v1.analysis_egress sandbox/analysis-egress' \
 		'kubernetes_network_policy_v1.kafka_deny_all kafka/deny-all-default' \
 		'kubernetes_network_policy_v1.kafka_allow kafka/kafka-allow' \
@@ -474,20 +471,15 @@ build-pdf-sandbox:
 	docker build -t ghcr.io/kayodevv/ubuntu-pdf-sandbox:v1 \
 	             -f apps/workers/sandbox_layer/Dockerfile.pdf-agent .
 
-build-watcher:
-	docker build -t ghcr.io/kayodevv/charon-minio-watcher:latest \
-	             -f apps/workers/minio_watcher/Dockerfile .
-
 # Sinkhole image build is owned by its child Makefile (apps/sinkhole), per the
 # parent-child build contract; root only orchestrates the K3s import.
 build-sinkhole:
 	$(MAKE) -C $(SINKHOLE_DIR) build
 
-import-images: build-consumer build-sandbox build-pdf-sandbox build-watcher build-sinkhole
+import-images: build-consumer build-sandbox build-pdf-sandbox build-sinkhole
 	docker save ghcr.io/kayodevv/charon-sandbox-consumer:latest | sudo k3s ctr images import -
 	docker save ghcr.io/kayodevv/ubuntu-sandbox:v1              | sudo k3s ctr images import -
 	docker save ghcr.io/kayodevv/ubuntu-pdf-sandbox:v1          | sudo k3s ctr images import -
-	docker save ghcr.io/kayodevv/charon-minio-watcher:latest    | sudo k3s ctr images import -
 	docker save ghcr.io/kayodevv/inetsim-sinkhole:v1.0.0        | sudo k3s ctr images import -
 	@echo "Images imported into K3s."
 
@@ -622,17 +614,7 @@ undeploy:
 #  K3s — LOCAL RUN (port-forward to in-cluster)
 # ══════════════════════════════════════════════════════════════════════════════
 
-.PHONY: run-watcher run-consumer
-
-run-watcher:
-	@echo "Prerequisite: port-forward Kafka (9092) and MinIO (9000) from K3s."
-	KAFKA_BOOTSTRAP=localhost:9092 \
-	MINIO_ENDPOINT=localhost:9000 \
-	MINIO_PRESIGN_ENDPOINT=localhost:9000 \
-	MINIO_ACCESS_KEY=minioadmin \
-	MINIO_SECRET_KEY=minioadmin \
-	MINIO_BUCKET=sandbox-reports \
-	python3 apps/workers/minio_watcher/watcher.py
+.PHONY: run-consumer
 
 run-consumer:
 	@echo "Prerequisite: port-forward Kafka (9092) from K3s."
@@ -745,8 +727,7 @@ clean-all:
 	-docker rm -f redis 2>/dev/null || true
 	-docker rmi ghcr.io/kayodevv/charon-sandbox-consumer:latest \
 		ghcr.io/kayodevv/ubuntu-sandbox:v1 \
-		ghcr.io/kayodevv/ubuntu-pdf-sandbox:v1 \
-		ghcr.io/kayodevv/charon-minio-watcher:latest 2>/dev/null || true
+		ghcr.io/kayodevv/ubuntu-pdf-sandbox:v1 2>/dev/null || true
 	@if [ -x /usr/local/bin/k3s-uninstall.sh ]; then \
 		echo "Uninstalling k3s (cluster + data)..."; \
 		sudo /usr/local/bin/k3s-uninstall.sh; \

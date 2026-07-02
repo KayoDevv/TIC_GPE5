@@ -16,11 +16,6 @@
       "dockerfile": "apps/workers/sandbox_layer/Dockerfile.pdf-agent"
     },
     {
-      "name": "minio-watcher",
-      "image": "charon-minio-watcher",
-      "dockerfile": "apps/workers/minio_watcher/Dockerfile"
-    },
-    {
       "name": "core-backend",
       "image": "charon-core-backend",
       "dockerfile": "apps/core-backend/Dockerfile"

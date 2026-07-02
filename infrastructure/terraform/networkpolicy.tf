@@ -68,55 +68,6 @@ resource "kubernetes_network_policy_v1" "consumer_egress" {
   }
 }
 
-resource "kubernetes_network_policy_v1" "watcher_egress" {
-  metadata {
-    name      = "watcher-egress"
-    namespace = "sandbox"
-  }
-  spec {
-    pod_selector {
-      match_labels = { app = "minio-watcher" }
-    }
-    policy_types = ["Egress"]
-
-    egress {
-      to {
-        namespace_selector {
-          match_labels = { "kubernetes.io/metadata.name" = "kafka" }
-        }
-      }
-      ports {
-        protocol = "TCP"
-        port     = "9092"
-      }
-    }
-    egress {
-      to {
-        namespace_selector {
-          match_labels = { "kubernetes.io/metadata.name" = "minio" }
-        }
-      }
-      ports {
-        protocol = "TCP"
-        port     = "9000"
-      }
-    }
-    egress {
-      to {
-        namespace_selector {}
-      }
-      ports {
-        protocol = "UDP"
-        port     = "53"
-      }
-      ports {
-        protocol = "TCP"
-        port     = "53"
-      }
-    }
-  }
-}
-
 # Analysis Jobs: egress only to Kafka, MinIO, DNS and the D2 sinkhole — never the
 # real Internet (the sample reaches the fake world only).
 resource "kubernetes_network_policy_v1" "analysis_egress" {

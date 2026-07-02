@@ -87,7 +87,7 @@ spec:
             storage: 5Gi
 ---
 # `minio` ClusterIP Service — DNS minio.minio.svc.cluster.local:9000
-# (shorthand aligned with overlays/prod, consumer/watcher env vars, CLAUDE.md).
+# (shorthand aligned with overlays/prod, the consumer env vars, CLAUDE.md).
 apiVersion: v1
 kind: Service
 metadata:

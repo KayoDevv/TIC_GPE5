@@ -40,7 +40,7 @@ COPY apps/workers/ml_layer/src /app/apps/workers/ml_layer/src
 COPY apps/workers/ml_layer/models/ml_model_pdf.onnx \
      /app/apps/workers/ml_layer/models/ml_model_pdf.onnx
 
-# Non-root UID (distinct from sandbox=10001, minio-watcher=10002, llm=10003,
+# Non-root UID (distinct from sandbox=10001, llm=10003,
 # core-backend=10004).
 RUN useradd -u 10005 -m -s /bin/false ml
 USER 10005

@@ -170,7 +170,7 @@ Kafka and MinIO run in-cluster:
 - **MinIO**: standalone StatefulSet, namespace `minio`, service `minio.minio.svc.cluster.local:9000`
 
 The consumer and the analysis pods reach these services via K8s DNS. The
-`analysis-egress` / `consumer-egress` / `watcher-egress` NetworkPolicies (dev overlay) allow
+`analysis-egress` / `consumer-egress` NetworkPolicies (dev overlay) allow
 egress only to those 2 namespaces + DNS + the K8s API — all other traffic is blocked by
 `deny-all-default` (enforced by Calico).
 
