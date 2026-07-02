@@ -1,6 +1,10 @@
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock
+from uuid import uuid4
 
-from backend.services.verdict_consumer import VerdictDispatcher
+from zt_shared.models.events import VerdictResultEvent
+
+from backend.services.verdict_consumer import VerdictDispatcher, build_verdict_handler
 
 
 class TestVerdictDispatcher:
@@ -51,3 +55,26 @@ class TestVerdictDispatcher:
         """Dispatching to an unknown job_id must not raise."""
         dispatcher = VerdictDispatcher()
         await dispatcher.dispatch("unknown", {"some": "data"})
+
+
+class TestBuildVerdictHandler:
+    """The Kafka handler must forward verdict events to the dispatcher."""
+
+    async def test_handler_dispatches_event_as_dict(self) -> None:
+        dispatcher = VerdictDispatcher()
+        callback = AsyncMock()
+        job_id = uuid4()
+        dispatcher.register(str(job_id), callback)
+
+        handler = build_verdict_handler(dispatcher)
+        event = VerdictResultEvent(
+            job_id=job_id,
+            final_decision="blocked",
+            timestamp=datetime.now(timezone.utc),
+        )
+        await handler(event)
+
+        callback.assert_awaited_once()
+        payload = callback.await_args.args[0]
+        assert payload["job_id"] == str(job_id)
+        assert payload["final_decision"] == "blocked"

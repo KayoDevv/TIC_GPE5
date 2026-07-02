@@ -13,16 +13,28 @@ name: Kafka Schema Compatibility
 on:
   pull_request:
     branches: [main]
-    paths:
-      - "packages/kafka-schemas/**"
-      - ".github/workflows/schema-compatibility.yml"
-      - "scripts/ci/check_schema_compat.py"
 
 permissions:
   contents: read
+  pull-requests: read   # dorny/paths-filter lists changed files via the PR API
 
 jobs:
+  # Runs on every PR so the "Schema result" gate always posts (requireable in the
+  # ruleset). The matrix below only runs when a schema actually changed.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      schemas: ${{ steps.filter.outputs.schemas }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: .github/filters.yml
+
   check:
+    needs: changes
+    if: ${{ needs.changes.outputs.schemas == 'true' }}
     name: BACKWARD_TRANSITIVE · ${{ matrix.schema }}
     runs-on: ubuntu-latest
     strategy:
@@ -84,3 +96,22 @@ jobs:
           python scripts/ci/check_schema_compat.py \
             /tmp/old_schema.json \
             "packages/kafka-schemas/${{ matrix.schema }}"
+
+  # Single stable status for branch protection — require THIS. Passes when the
+  # schema matrix succeeded or was skipped (no schema changed).
+  schema-result:
+    name: Schema result
+    if: ${{ always() }}
+    needs: [changes, check]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail if the schema check failed
+        run: |
+          for r in "${{ needs.changes.result }}" "${{ needs.check.result }}"; do
+            echo "result: $r"
+            if [ "$r" = "failure" ] || [ "$r" = "cancelled" ]; then
+              echo "::error::schema compatibility check failed"
+              exit 1
+            fi
+          done
+          echo "Schema compatibility passed or was not applicable."

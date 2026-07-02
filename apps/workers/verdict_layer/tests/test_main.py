@@ -67,6 +67,23 @@ class TestHandleSandboxEvent:
         assert call.kwargs["timeout"] is False
         assert len(call.kwargs["iocs"]) == 1
 
+    async def test_forwards_sandbox_verdict(self) -> None:
+        saga = AsyncMock()
+        event = SandboxLayerResultEvent(
+            job_id=uuid4(),
+            verdict="malicious",
+            iocs=[],
+            behavior_summary="dropper behaviour",
+            email_context=EmailContext(sender="a@b.com", subject="s", body_text="b"),
+            timeout_triggered=False,
+            timestamp=_now(),
+        )
+
+        await handle_sandbox_event(saga, event)
+
+        call = saga.on_sandbox_result.await_args
+        assert call.kwargs["verdict"] == "malicious"
+
 
 class TestSandboxTimedOut:
     """Reads timeout across the v2 (top-level) and v3 (analysis_trust) contracts."""

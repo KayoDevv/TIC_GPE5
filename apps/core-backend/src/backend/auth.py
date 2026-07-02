@@ -41,6 +41,15 @@ async def verify_jwt(token: str, settings: Settings) -> JWTPayload:
     Raises:
         ValueError: with message "INVALID_TOKEN" if any check fails.
     """
+    if settings.auth_dev_mode:
+        # LOCAL ONLY: skip signature verification and return a fixed dev identity.
+        # Gated behind AUTH_DEV_MODE (default False) so it can never trigger unless
+        # explicitly enabled. See Settings.auth_dev_mode.
+        logger.warning(
+            "AUTH_DEV_MODE enabled — JWT signature is NOT verified. Never use in production."
+        )
+        return JWTPayload(sub=settings.auth_dev_sub, tenant_id=settings.auth_dev_tenant_id)
+
     public_key = await _get_public_key(settings)
 
     try:

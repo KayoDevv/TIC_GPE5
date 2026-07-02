@@ -35,9 +35,13 @@ class VerdictSaga:
         await self._resolve_if_complete(job_id)
 
     async def on_sandbox_result(
-        self, job_id: str, iocs: list[dict[str, Any]], timeout: bool
+        self,
+        job_id: str,
+        iocs: list[dict[str, Any]],
+        timeout: bool,
+        verdict: str | None = None,
     ) -> None:
-        await self._store.update_sandbox(job_id, iocs=iocs, timeout=timeout)
+        await self._store.update_sandbox(job_id, iocs=iocs, timeout=timeout, verdict=verdict)
         await self._resolve_if_complete(job_id)
 
     async def on_llm_result(self, job_id: str, is_malicious: bool, explanation: str) -> None:

@@ -10,15 +10,28 @@ name: Sandbox <-> LLM Contract
 on:
   pull_request:
     branches: [main]
-    paths:
-      - 'apps/workers/sandbox_layer/**'
-      - 'apps/workers/llm_layer/**'
-      - 'packages/kafka-schemas/sandbox_layer.result.json'
-      - 'packages/kafka-schemas/file.requested.json'
-      - '.github/workflows/sandbox-llm-contract.yml'
+
+permissions:
+  contents: read
+  pull-requests: read   # dorny/paths-filter lists changed files via the PR API
 
 jobs:
+  # Runs on every PR so the "Contract result" gate always posts (requireable in
+  # the ruleset). The contract job only runs when sandbox/llm/contract change.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      contract: ${{ steps.filter.outputs.contract }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: .github/filters.yml
+
   contract:
+    needs: changes
+    if: ${{ needs.changes.outputs.contract == 'true' }}
     name: Validate sandbox -> LLM contract
     runs-on: ubuntu-latest
     steps:
@@ -91,3 +104,22 @@ jobs:
             exit 1
           fi
           echo "Contract version aligned: $a"
+
+  # Single stable status for branch protection — require THIS. Passes when the
+  # contract job succeeded or was skipped (no sandbox/llm/contract change).
+  contract-result:
+    name: Contract result
+    if: ${{ always() }}
+    needs: [changes, contract]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail if the contract check failed
+        run: |
+          for r in "${{ needs.changes.result }}" "${{ needs.contract.result }}"; do
+            echo "result: $r"
+            if [ "$r" = "failure" ] || [ "$r" = "cancelled" ]; then
+              echo "::error::sandbox<->LLM contract check failed"
+              exit 1
+            fi
+          done
+          echo "Contract check passed or was not applicable."

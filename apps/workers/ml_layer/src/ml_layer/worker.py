@@ -140,5 +140,5 @@ async def main() -> None:
         await worker.stop()
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     asyncio.run(main())

@@ -1,16 +1,18 @@
+import asyncio
 import logging
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from typing import AsyncIterator, cast
 
 from fastapi import FastAPI, Request
-from zt_shared.kafka import KafkaPublisher
+from zt_shared.kafka import KafkaPublisher, KafkaSubscriber
+from zt_shared.models.events import VerdictResultEvent
 
 from backend.dependencies import get_s3_client, get_settings
 from backend.routes.analyze import router as analyze_router
 from backend.routes.health import router as health_router
 from backend.routes.ws import router as ws_router
 from backend.services.storage import create_s3_client
-from backend.services.verdict_consumer import VerdictDispatcher
+from backend.services.verdict_consumer import VerdictDispatcher, build_verdict_handler
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +24,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     - KafkaPublisher: started on boot, stopped on shutdown
     - S3 client: created on boot, stored in app state
+    - Verdict consumer: subscribes to verdict.result and dispatches each verdict
+      to the WebSocket waiting on that job_id (without it, verdicts never reach
+      the client — the dispatcher would have no producer).
     """
     settings = get_settings()
 
@@ -34,15 +39,31 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     s3_client = create_s3_client(settings)
 
+    dispatcher = VerdictDispatcher()
+    verdict_subscriber = KafkaSubscriber(
+        bootstrap_servers=settings.kafka_bootstrap_servers,
+        group_id=settings.kafka_consumer_group_id,
+        topic=settings.kafka_topic_verdict_result,
+        model=VerdictResultEvent,
+        handler=build_verdict_handler(dispatcher),
+    )
+    # start() runs the consume loop, so it must live in its own task.
+    verdict_task = asyncio.create_task(verdict_subscriber.start())
+
     app.state.publisher = publisher
     app.state.s3_client = s3_client
-    app.state.verdict_dispatcher = VerdictDispatcher()
+    app.state.verdict_dispatcher = dispatcher
+    app.state.verdict_subscriber = verdict_subscriber
 
     logger.info("Core Backend started.")
 
     yield
 
     # --- Shutdown ---
+    await verdict_subscriber.stop()
+    verdict_task.cancel()
+    with suppress(asyncio.CancelledError):
+        await verdict_task
     await publisher.stop()
     logger.info("Core Backend stopped.")
 

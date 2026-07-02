@@ -8,6 +8,8 @@ Decision = Literal["allowed", "blocked", "warning"]
 ML_BLOCKED_EXPLANATION = "Blocked: static analysis assigned a critical risk score."
 LLM_BLOCKED_EXPLANATION = "Blocked: semantic analysis identified malicious intent."
 SANDBOX_TIMEOUT_EXPLANATION = "Partial analysis: the behavioral sandbox did not respond in time."
+SANDBOX_MALICIOUS_EXPLANATION = "Blocked: behavioral analysis confirmed malicious activity."
+SANDBOX_ERROR_EXPLANATION = "Partial analysis: the behavioral sandbox could not analyze this file."
 
 
 @dataclass
@@ -16,6 +18,8 @@ class JobState:
     sandbox_received: bool = False
     sandbox_timeout: bool = False
     sandbox_iocs: list[dict[str, Any]] = field(default_factory=list)
+    # 3-band sandbox verdict; None means unknown (LLM still expected to resolve).
+    sandbox_verdict: Optional[str] = None
     llm_is_malicious: Optional[bool] = None
     llm_explanation: Optional[str] = None
 
@@ -54,8 +58,18 @@ def decide(
         explanation = state.llm_explanation or LLM_BLOCKED_EXPLANATION
         return VerdictDecision("blocked", explanation, summary)
 
+    # A confident terminal sandbox verdict of "malicious" blocks even when the
+    # LLM never ran (the LLM only resolves the grey needs_more_context band).
+    if state.sandbox_verdict == "malicious":
+        return VerdictDecision("blocked", SANDBOX_MALICIOUS_EXPLANATION, summary)
+
     if state.sandbox_timeout:
         decision: Decision = "blocked" if timeout_default == "blocked" else "warning"
         return VerdictDecision(decision, SANDBOX_TIMEOUT_EXPLANATION, summary)
+
+    # The sandbox errored out (could not analyze): partial evidence -> warning,
+    # never a confident "allowed".
+    if state.sandbox_verdict == "error":
+        return VerdictDecision("warning", SANDBOX_ERROR_EXPLANATION, summary)
 
     return VerdictDecision("allowed", None, summary)

@@ -9,6 +9,7 @@ on:
 
 permissions:
   contents: read   # checkout only — no write needed
+  pull-requests: read   # dorny/paths-filter lists changed files via the PR API
 
 # Cancel superseded runs on the same branch/PR to save runner minutes.
 concurrency:
@@ -17,11 +18,33 @@ concurrency:
 
 jobs:
 
+  # Detect which suites a PR affects (see .github/filters.yml). Each suite runs
+  # only when its own sources or the shared zt_shared lib change; a docs-only PR
+  # runs no test job at all.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      test-core: ${{ steps.filter.outputs.test-core }}
+      test-ml-layer: ${{ steps.filter.outputs.test-ml-layer }}
+      test-core-backend: ${{ steps.filter.outputs.test-core-backend }}
+      test-verdict-layer: ${{ steps.filter.outputs.test-verdict-layer }}
+      test-llm-layer: ${{ steps.filter.outputs.test-llm-layer }}
+      test-sandbox-layer: ${{ steps.filter.outputs.test-sandbox-layer }}
+      test-frontend: ${{ steps.filter.outputs.test-frontend }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: .github/filters.yml
+
   # ────────────────────────────────────────────────────────────────────────────
   # packages/core — Pydantic event models + Kafka producer/consumer
   # Foundation of the whole pipeline: all other Python packages depend on it.
   # ────────────────────────────────────────────────────────────────────────────
   test-core:
+    needs: changes
+    if: ${{ needs.changes.outputs.test-core == 'true' }}
     name: Test · packages/core
     runs-on: ubuntu-latest
 
@@ -51,9 +74,10 @@ jobs:
   # Depends on test-core: validates the foundation before building on it.
   # ────────────────────────────────────────────────────────────────────────────
   test-ml-layer:
+    needs: changes
+    if: ${{ needs.changes.outputs.test-ml-layer == 'true' }}
     name: Test · apps/workers/ml_layer
     runs-on: ubuntu-latest
-    needs: test-core
 
     steps:
       - uses: actions/checkout@v4
@@ -91,6 +115,8 @@ jobs:
   # the Kafka code path).
   # ────────────────────────────────────────────────────────────────────────────
   test-sandbox-layer:
+    needs: changes
+    if: ${{ needs.changes.outputs.test-sandbox-layer == 'true' }}
     name: Test · apps/workers/sandbox_layer (pure core)
     runs-on: ubuntu-latest
 
@@ -141,6 +167,8 @@ jobs:
   # apps/core-backend — FastAPI API Gateway
   # ────────────────────────────────────────────────────────────────────────────
   test-core-backend:
+    needs: changes
+    if: ${{ needs.changes.outputs.test-core-backend == 'true' }}
     name: Test · apps/core-backend
     runs-on: ubuntu-latest
 
@@ -164,3 +192,114 @@ jobs:
       - name: pytest — 100 % coverage enforced
         working-directory: apps/core-backend
         run: poetry run pytest --cov --cov-report=term-missing
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # apps/workers/verdict_layer — Saga / decision matrix (Redis state, no I/O tests)
+  # ────────────────────────────────────────────────────────────────────────────
+  test-verdict-layer:
+    needs: changes
+    if: ${{ needs.changes.outputs.test-verdict-layer == 'true' }}
+    name: Test · apps/workers/verdict_layer
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Python + Poetry
+        uses: ./.github/actions/python-setup
+        with:
+          python-version: "3.11"
+          working-directory: apps/workers/verdict_layer
+      - name: Ruff lint
+        working-directory: apps/workers/verdict_layer
+        run: poetry run ruff check .
+      - name: MyPy strict type check
+        working-directory: apps/workers/verdict_layer
+        run: poetry run mypy src/
+      - name: pytest — 100 % coverage enforced (fail_under set in pyproject.toml)
+        working-directory: apps/workers/verdict_layer
+        run: poetry run pytest --cov --cov-report=term-missing
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # apps/workers/llm_layer — semantic analysis pipeline (HF/vLLM client mocked)
+  # ────────────────────────────────────────────────────────────────────────────
+  test-llm-layer:
+    needs: changes
+    if: ${{ needs.changes.outputs.test-llm-layer == 'true' }}
+    name: Test · apps/workers/llm_layer
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Python + Poetry
+        uses: ./.github/actions/python-setup
+        with:
+          python-version: "3.11"
+          working-directory: apps/workers/llm_layer
+      - name: Ruff lint
+        working-directory: apps/workers/llm_layer
+        run: poetry run ruff check .
+      - name: MyPy strict type check
+        working-directory: apps/workers/llm_layer
+        run: poetry run mypy src/
+      - name: pytest — 100 % coverage enforced (fail_under set in pyproject.toml)
+        working-directory: apps/workers/llm_layer
+        run: poetry run pytest --cov --cov-report=term-missing
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # apps/frontend — Vue 3 + WXT extension (Vitest unit tests + vue-tsc typecheck)
+  # ────────────────────────────────────────────────────────────────────────────
+  test-frontend:
+    needs: changes
+    if: ${{ needs.changes.outputs.test-frontend == 'true' }}
+    name: Test · apps/frontend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"   # listr2 (via wxt) requires node >= 22.13
+          cache: npm
+          cache-dependency-path: apps/frontend/package-lock.json
+      - name: Install dependencies
+        working-directory: apps/frontend
+        run: npm ci
+      - name: Generate WXT types
+        # wxt prepare generates .wxt/ type declarations (incl. import.meta.env);
+        # without it vue-tsc fails on a fresh checkout (TS2339).
+        working-directory: apps/frontend
+        run: npx wxt prepare
+      - name: Typecheck (vue-tsc)
+        working-directory: apps/frontend
+        run: npm run typecheck
+      - name: Unit tests (Vitest)
+        working-directory: apps/frontend
+        run: npm run test:unit
+
+  # Single stable status for branch protection — require THIS instead of the
+  # per-suite jobs, which are scoped and may be skipped. Passes when every suite
+  # succeeded or was legitimately skipped.
+  tests-result:
+    name: Tests result
+    if: ${{ always() }}
+    needs:
+      - changes
+      - test-core
+      - test-ml-layer
+      - test-core-backend
+      - test-verdict-layer
+      - test-llm-layer
+      - test-sandbox-layer
+      - test-frontend
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail if any test suite failed
+        run: |
+          for r in "${{ needs.changes.result }}" "${{ needs.test-core.result }}" \
+                   "${{ needs.test-ml-layer.result }}" "${{ needs.test-core-backend.result }}" \
+                   "${{ needs.test-verdict-layer.result }}" "${{ needs.test-llm-layer.result }}" \
+                   "${{ needs.test-sandbox-layer.result }}" "${{ needs.test-frontend.result }}"; do
+            echo "suite result: $r"
+            if [ "$r" = "failure" ] || [ "$r" = "cancelled" ]; then
+              echo "::error::a required test suite failed"
+              exit 1
+            fi
+          done
+          echo "All test suites passed or were skipped."

@@ -88,3 +88,99 @@ updates:
     ignore:
       - dependency-name: python
         update-types: ["version-update:semver-major", "version-update:semver-minor"]
+
+  # ── Python — apps/core-backend ──────────────────────────────────────────────
+  - package-ecosystem: pip
+    directory: /apps/core-backend
+    schedule:
+      interval: weekly
+      day: monday
+      time: "08:00"
+      timezone: Europe/Paris
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+    labels: [dependencies, python]
+    groups:
+      core-backend:
+        patterns: ["*"]
+
+  # ── Python — apps/workers/verdict_layer ─────────────────────────────────────
+  - package-ecosystem: pip
+    directory: /apps/workers/verdict_layer
+    schedule:
+      interval: weekly
+      day: monday
+      time: "08:00"
+      timezone: Europe/Paris
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+    labels: [dependencies, python]
+    groups:
+      verdict-layer:
+        patterns: ["*"]
+
+  # ── Python — apps/workers/llm_layer ─────────────────────────────────────────
+  - package-ecosystem: pip
+    directory: /apps/workers/llm_layer
+    schedule:
+      interval: weekly
+      day: monday
+      time: "08:00"
+      timezone: Europe/Paris
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+    labels: [dependencies, python]
+    groups:
+      llm-layer:
+        patterns: ["*"]
+
+  # ── npm — apps/frontend (Vue 3 + WXT extension) ─────────────────────────────
+  - package-ecosystem: npm
+    directory: /apps/frontend
+    schedule:
+      interval: weekly
+      day: monday
+      time: "08:00"
+      timezone: Europe/Paris
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+    labels: [dependencies, frontend]
+    groups:
+      frontend:
+        patterns: ["*"]
+
+  # ── Docker — llm_layer image ────────────────────────────────────────────────
+  - package-ecosystem: docker
+    directory: /apps/workers/llm_layer
+    schedule:
+      interval: weekly
+      day: monday
+      time: "08:00"
+      timezone: Europe/Paris
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+    labels: [dependencies, docker]
+    groups:
+      llm-layer-docker:
+        patterns: ["*"]
+
+  # ── Docker — sinkhole (INetSim) ─────────────────────────────────────────────
+  - package-ecosystem: docker
+    directory: /apps/sinkhole
+    schedule:
+      interval: weekly
+      day: monday
+      time: "08:00"
+      timezone: Europe/Paris
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+    labels: [dependencies, docker]
+    groups:
+      sinkhole:
+        patterns: ["*"]

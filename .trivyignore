@@ -54,6 +54,12 @@ CVE-2026-26960
 CVE-2026-29786
 # CVE-2026-31802 — node-tar file overwrite via drive-relative symlink traversal (HIGH)
 CVE-2026-31802
+# CVE-2026-48815 — sigstore certificateOIDs verification constraints silently
+# dropped (HIGH). At usr/local/lib/node_modules/npm/node_modules/sigstore —
+# npm's own provenance-verification dependency, used only during npm
+# install/publish signature checks. npm is never invoked at container runtime
+# (only `node pdf_runner.js`), so this code path is unreachable in the pod.
+CVE-2026-48815
 
 # ── urllib3 (Python, sandbox agents) ────────────────────────────────────────
 # urllib3==2.2.1 is installed in ubuntu-sandbox and ubuntu-pdf-sandbox as a

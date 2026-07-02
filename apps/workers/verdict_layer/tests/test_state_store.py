@@ -35,6 +35,16 @@ class TestUpdateAndGet:
         assert state.sandbox_timeout is False
         assert state.sandbox_iocs == iocs
 
+    async def test_update_sandbox_stores_verdict(self, store) -> None:
+        await store.update_sandbox("job-v", iocs=[], timeout=False, verdict="malicious")
+        state = await store.get_state("job-v")
+        assert state.sandbox_verdict == "malicious"
+
+    async def test_update_sandbox_without_verdict_is_none(self, store) -> None:
+        await store.update_sandbox("job-nv", iocs=[], timeout=False)
+        state = await store.get_state("job-nv")
+        assert state.sandbox_verdict is None
+
     async def test_update_llm_then_get(self, store) -> None:
         await store.update_llm("job-3", is_malicious=True, explanation="bad stuff")
         state = await store.get_state("job-3")
@@ -82,6 +92,31 @@ class TestCompletion:
         await store.mark_sandbox_timeout("job-timeout-complete")
         await store.update_llm("job-timeout-complete", is_malicious=False, explanation="clean")
         assert await store.is_complete("job-timeout-complete") is True
+
+    async def test_is_complete_true_on_terminal_verdict_without_llm(self, store) -> None:
+        # F-A: a terminal sandbox verdict means no LLM result is coming.
+        await store.update_ml("job-term", score=10)
+        await store.update_sandbox("job-term", iocs=[], timeout=False, verdict="benign")
+        assert await store.is_complete("job-term") is True
+
+    async def test_is_complete_true_on_sandbox_timeout_without_llm(self, store) -> None:
+        await store.update_ml("job-to", score=10)
+        await store.update_sandbox("job-to", iocs=[], timeout=True, verdict=None)
+        assert await store.is_complete("job-to") is True
+
+    async def test_is_complete_false_on_grey_verdict_without_llm(self, store) -> None:
+        # needs_more_context still escalates to the LLM -> not complete yet.
+        await store.update_ml("job-grey", score=10)
+        await store.update_sandbox(
+            "job-grey", iocs=[], timeout=False, verdict="needs_more_context"
+        )
+        assert await store.is_complete("job-grey") is False
+
+    async def test_is_complete_false_on_unknown_verdict_without_llm(self, store) -> None:
+        # None verdict is unknown -> the LLM runs (silence is not benign).
+        await store.update_ml("job-unk", score=10)
+        await store.update_sandbox("job-unk", iocs=[], timeout=False, verdict=None)
+        assert await store.is_complete("job-unk") is False
 
 
 class TestArrivalTimestamp:

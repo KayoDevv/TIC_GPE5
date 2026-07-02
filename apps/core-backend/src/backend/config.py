@@ -27,6 +27,14 @@ class Settings(BaseSettings):
     jwt_audience: str = "zero-trust-api"
     jwt_algorithm: str = "RS256"
 
+    # --- Dev auth bypass (LOCAL ONLY) ---
+    # When AUTH_DEV_MODE=true, JWT signature verification is skipped and a fixed
+    # dev identity is returned. This exists so the pipeline is testable locally
+    # before the SSO/JWKS integration lands. NEVER enable in production.
+    auth_dev_mode: bool = False
+    auth_dev_sub: str = "dev-user"
+    auth_dev_tenant_id: str = "dev-tenant"
+
     # --- Upload ---
     max_file_size_bytes: int = 35 * 1024 * 1024  # 35 MB
 

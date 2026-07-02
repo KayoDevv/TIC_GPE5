@@ -4,8 +4,35 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+  pull-requests: read   # dorny/paths-filter lists changed files via the PR API
+
+concurrency:
+  group: ci-lint-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
+  # Each linter runs only when files it cares about change (see .github/filters.yml).
+  # A PR that touches none of them (e.g. Python-only or docs-only) runs no linter.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      yaml: ${{ steps.filter.outputs.lint-yaml }}
+      k8s: ${{ steps.filter.outputs.lint-k8s }}
+      docker: ${{ steps.filter.outputs.lint-docker }}
+      compose: ${{ steps.filter.outputs.lint-compose }}
+      terraform: ${{ steps.filter.outputs.lint-terraform }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: .github/filters.yml
+
   yaml-lint:
+    needs: changes
+    if: ${{ needs.changes.outputs.yaml == 'true' }}
     name: YAML Syntax Check
     runs-on: ubuntu-latest
     steps:
@@ -25,6 +52,8 @@ jobs:
           echo "$FILES" | xargs yamllint -c .yamllint.yml
 
   kube-validate:
+    needs: changes
+    if: ${{ needs.changes.outputs.k8s == 'true' }}
     name: Kubernetes Manifest Validation
     runs-on: ubuntu-latest
     steps:
@@ -74,6 +103,8 @@ jobs:
           done
 
   dockerfile-lint:
+    needs: changes
+    if: ${{ needs.changes.outputs.docker == 'true' }}
     name: Dockerfile Lint
     runs-on: ubuntu-latest
     steps:
@@ -98,6 +129,8 @@ jobs:
           done <<< "$FILES"
 
   docker-compose-validate:
+    needs: changes
+    if: ${{ needs.changes.outputs.compose == 'true' }}
     name: Docker Compose Validation
     runs-on: ubuntu-latest
     steps:
@@ -117,6 +150,8 @@ jobs:
           done <<< "$FILES"
 
   terraform-validate:
+    needs: changes
+    if: ${{ needs.changes.outputs.terraform == 'true' }}
     name: Terraform Validation
     runs-on: ubuntu-latest
     steps:
@@ -147,3 +182,24 @@ jobs:
 
       - name: Validate Terraform
         run: terraform -chdir=infrastructure/terraform validate
+
+  # Single stable status for branch protection — the individual linters are
+  # scoped and may be skipped. Passes when every linter succeeded or was skipped.
+  lint-result:
+    name: Lint result
+    if: ${{ always() }}
+    needs: [changes, yaml-lint, kube-validate, dockerfile-lint, docker-compose-validate, terraform-validate]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail if any linter failed
+        run: |
+          for r in "${{ needs.changes.result }}" "${{ needs.yaml-lint.result }}" \
+                   "${{ needs.kube-validate.result }}" "${{ needs.dockerfile-lint.result }}" \
+                   "${{ needs.docker-compose-validate.result }}" "${{ needs.terraform-validate.result }}"; do
+            echo "linter result: $r"
+            if [ "$r" = "failure" ] || [ "$r" = "cancelled" ]; then
+              echo "::error::a required linter failed"
+              exit 1
+            fi
+          done
+          echo "All linters passed or were skipped."

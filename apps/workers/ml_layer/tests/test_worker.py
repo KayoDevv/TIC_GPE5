@@ -10,7 +10,7 @@ from uuid import uuid4
 import pytest
 from zt_shared.models.events import EmailContext, FileRequestedEvent
 
-from ml_layer.worker import ML_SLA_MS, MlWorker
+from ml_layer.worker import ML_SLA_MS, MlWorker, main
 
 
 def _make_event(s3_url: str = "s3://bucket/key") -> FileRequestedEvent:
@@ -152,3 +152,20 @@ async def test_publish_result_no_warn_within_sla(
     with caplog.at_level("WARNING"):
         await worker._publish_result(uuid4(), 10, ["t"], time.perf_counter())
     assert not any("SLA breach" in r.message for r in caplog.records)
+
+
+async def test_main_starts_and_stops_worker() -> None:
+    instance = AsyncMock()
+    with patch("ml_layer.worker.MlWorker", return_value=instance):
+        await main()
+    instance.start.assert_awaited_once()
+    instance.stop.assert_awaited_once()
+
+
+async def test_main_handles_keyboard_interrupt() -> None:
+    instance = AsyncMock()
+    instance.start.side_effect = KeyboardInterrupt
+    with patch("ml_layer.worker.MlWorker", return_value=instance):
+        await main()
+    # stop() must still run via the finally block.
+    instance.stop.assert_awaited_once()

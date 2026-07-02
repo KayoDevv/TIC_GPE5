@@ -74,6 +74,23 @@ class TestCompletion:
         await saga.on_sandbox_result("job-5", iocs=[], timeout=False)
         assert len(emitter.calls) == 0
 
+    async def test_terminal_benign_verdict_emits_allowed_without_llm(self, store) -> None:
+        # F-A: a terminal sandbox verdict must resolve without waiting for the LLM.
+        emitter = _EmitRecorder()
+        saga = _make_saga(store, emitter)
+        await saga.on_ml_result("job-10", score=10)
+        await saga.on_sandbox_result("job-10", iocs=[], timeout=False, verdict="benign")
+        assert len(emitter.calls) == 1
+        assert emitter.calls[0][1]["final_decision"] == "allowed"
+
+    async def test_terminal_malicious_verdict_emits_blocked_without_llm(self, store) -> None:
+        emitter = _EmitRecorder()
+        saga = _make_saga(store, emitter)
+        await saga.on_ml_result("job-11", score=10)
+        await saga.on_sandbox_result("job-11", iocs=[], timeout=False, verdict="malicious")
+        assert len(emitter.calls) == 1
+        assert emitter.calls[0][1]["final_decision"] == "blocked"
+
 
 class TestReaper:
     async def test_reap_emits_warning_for_expired_job(self, store) -> None:

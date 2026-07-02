@@ -12,10 +12,12 @@ class TestApp:
         """The app must start and /api/v1/health must return 200."""
         with (
             patch("backend.main.KafkaPublisher") as mock_publisher_cls,
+            patch("backend.main.KafkaSubscriber") as mock_subscriber_cls,
             patch("backend.main.create_s3_client") as mock_s3_factory,
         ):
             mock_publisher = AsyncMock()
             mock_publisher_cls.return_value = mock_publisher
+            mock_subscriber_cls.return_value = AsyncMock()
             mock_s3_factory.return_value = MagicMock()
 
             app = create_app()
@@ -31,10 +33,12 @@ class TestApp:
         """The lifespan must call start() and stop() on the KafkaPublisher."""
         with (
             patch("backend.main.KafkaPublisher") as mock_publisher_cls,
+            patch("backend.main.KafkaSubscriber") as mock_subscriber_cls,
             patch("backend.main.create_s3_client") as mock_s3_factory,
         ):
             mock_publisher = AsyncMock()
             mock_publisher_cls.return_value = mock_publisher
+            mock_subscriber_cls.return_value = AsyncMock()
             mock_s3_factory.return_value = MagicMock()
 
             app = create_app()
@@ -44,3 +48,23 @@ class TestApp:
 
             mock_publisher.start.assert_awaited_once()
             mock_publisher.stop.assert_awaited_once()
+
+    async def test_lifespan_starts_and_stops_verdict_consumer(self) -> None:
+        """The lifespan must run the verdict.result consumer and stop it on exit."""
+        with (
+            patch("backend.main.KafkaPublisher") as mock_publisher_cls,
+            patch("backend.main.KafkaSubscriber") as mock_subscriber_cls,
+            patch("backend.main.create_s3_client") as mock_s3_factory,
+        ):
+            mock_publisher_cls.return_value = AsyncMock()
+            mock_subscriber = AsyncMock()
+            mock_subscriber_cls.return_value = mock_subscriber
+            mock_s3_factory.return_value = MagicMock()
+
+            app = create_app()
+
+            async with lifespan(app):
+                assert app.state.verdict_subscriber is mock_subscriber
+
+            mock_subscriber.start.assert_called_once()
+            mock_subscriber.stop.assert_awaited_once()

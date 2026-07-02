@@ -36,7 +36,10 @@ def _sandbox_timed_out(event: SandboxLayerResultEvent) -> bool:
 async def handle_sandbox_event(saga: VerdictSaga, event: SandboxLayerResultEvent) -> None:
     iocs = [ioc.model_dump() for ioc in event.iocs]
     await saga.on_sandbox_result(
-        str(event.job_id), iocs=iocs, timeout=_sandbox_timed_out(event)
+        str(event.job_id),
+        iocs=iocs,
+        timeout=_sandbox_timed_out(event),
+        verdict=event.verdict,
     )
 
 

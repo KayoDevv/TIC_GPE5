@@ -1,6 +1,8 @@
 import logging
 from typing import Any, Awaitable, Callable
 
+from zt_shared.models.events import VerdictResultEvent
+
 logger = logging.getLogger(__name__)
 
 # Type alias for the callback that sends the verdict to the WebSocket
@@ -45,3 +47,18 @@ class VerdictDispatcher:
 
         await callback(verdict_data)
         logger.info(f"Verdict dispatched for job {job_id}")
+
+
+def build_verdict_handler(
+    dispatcher: VerdictDispatcher,
+) -> Callable[[VerdictResultEvent], Awaitable[None]]:
+    """Return a Kafka handler that forwards verdict.result events to the dispatcher.
+
+    Wired to a ``KafkaSubscriber`` in the app lifespan so a verdict emitted by the
+    Verdict Layer reaches the WebSocket that is waiting on its job_id.
+    """
+
+    async def handle(event: VerdictResultEvent) -> None:
+        await dispatcher.dispatch(str(event.job_id), event.model_dump(mode="json"))
+
+    return handle

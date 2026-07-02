@@ -139,3 +139,20 @@ class TestVerifyJwt:
 
             with pytest.raises(ValueError, match="INVALID_TOKEN"):
                 await verify_jwt("not.a.real.token", SETTINGS)
+
+
+class TestDevMode:
+    """AUTH_DEV_MODE bypasses signature verification for local testing."""
+
+    async def test_dev_mode_returns_fixed_identity_without_jwks(self) -> None:
+        dev_settings = Settings(
+            auth_dev_mode=True,
+            auth_dev_sub="local-dev",
+            auth_dev_tenant_id="local-tenant",
+        )
+        # _get_public_key must NOT be called (it raises NotImplementedError),
+        # so a passing call proves the bypass short-circuits before JWKS.
+        result = await verify_jwt("any-garbage-token", dev_settings)
+
+        assert result.sub == "local-dev"
+        assert result.tenant_id == "local-tenant"

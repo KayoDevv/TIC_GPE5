@@ -1,4 +1,9 @@
-from verdict_layer.decision_matrix import JobState, decide
+from verdict_layer.decision_matrix import (
+    SANDBOX_ERROR_EXPLANATION,
+    SANDBOX_MALICIOUS_EXPLANATION,
+    JobState,
+    decide,
+)
 
 
 class TestEarlyExitMlScore:
@@ -80,6 +85,41 @@ class TestAllowed:
         )
         result = decide(state, ml_block_threshold=90, timeout_default="warning")
         assert result.final_decision == "allowed"
+
+
+class TestSandboxVerdict:
+    """A terminal sandbox verdict resolves the job even when the LLM never ran."""
+
+    def test_sandbox_malicious_blocks(self) -> None:
+        state = JobState(ml_score=20, sandbox_received=True, sandbox_verdict="malicious")
+        result = decide(state, ml_block_threshold=90, timeout_default="warning")
+        assert result.final_decision == "blocked"
+        assert result.user_explanation == SANDBOX_MALICIOUS_EXPLANATION
+
+    def test_sandbox_benign_allows(self) -> None:
+        state = JobState(ml_score=20, sandbox_received=True, sandbox_verdict="benign")
+        result = decide(state, ml_block_threshold=90, timeout_default="warning")
+        assert result.final_decision == "allowed"
+
+    def test_sandbox_error_warns(self) -> None:
+        state = JobState(ml_score=20, sandbox_received=True, sandbox_verdict="error")
+        result = decide(state, ml_block_threshold=90, timeout_default="warning")
+        assert result.final_decision == "warning"
+        assert result.user_explanation == SANDBOX_ERROR_EXPLANATION
+
+    def test_ml_critical_wins_over_sandbox_malicious(self) -> None:
+        state = JobState(ml_score=99, sandbox_received=True, sandbox_verdict="malicious")
+        result = decide(state, ml_block_threshold=90, timeout_default="warning")
+        assert result.user_explanation != SANDBOX_MALICIOUS_EXPLANATION
+
+    def test_timeout_wins_over_sandbox_error(self) -> None:
+        # A job that both errored and timed out should read as a timeout.
+        state = JobState(
+            ml_score=20, sandbox_received=True, sandbox_timeout=True, sandbox_verdict="error"
+        )
+        result = decide(state, ml_block_threshold=90, timeout_default="warning")
+        assert result.final_decision == "warning"
+        assert result.user_explanation != SANDBOX_ERROR_EXPLANATION
 
 
 class TestTechnicalSummary:

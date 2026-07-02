@@ -77,22 +77,42 @@ class TestWebSocketRoute:
             "timestamp": "2025-01-01T00:00:00Z",
         }
 
-        with patch("backend.routes.ws.authenticate_websocket", new_callable=AsyncMock) as mock_auth:
+        # Capture the event loop the WS handler runs on (recorded when the route
+        # registers its callback). The verdict must be dispatched *on that loop*
+        # via run_coroutine_threadsafe — dispatching from a foreign loop only sets
+        # the asyncio.Event's flag without waking the idle loop, so it would not be
+        # observed until the next timer tick (the 130s timeout). In production the
+        # verdict consumer and the WS share one loop, so this races correctly.
+        dispatcher = app.state.verdict_dispatcher
+        captured: dict[str, asyncio.AbstractEventLoop] = {}
+        original_register = dispatcher.register
+
+        def _register_capturing_loop(jid: str, cb: object) -> None:
+            captured["loop"] = asyncio.get_running_loop()
+            original_register(jid, cb)  # type: ignore[arg-type]
+
+        with (
+            patch("backend.routes.ws.authenticate_websocket", new_callable=AsyncMock) as mock_auth,
+            patch("backend.routes.ws.get_settings") as mock_settings,
+            patch.object(dispatcher, "register", _register_capturing_loop),
+        ):
             mock_auth.return_value = True
+            # Cap the verdict wait so any future delivery regression fails in
+            # seconds, not the full 130s production timeout.
+            mock_settings.return_value = MagicMock(ws_verdict_timeout_seconds=8)
 
             from starlette.testclient import TestClient
 
             client = TestClient(app)
 
-            def dispatch_after_delay():
-                """Dispatch verdict from a separate thread after a short delay."""
+            def dispatch_after_delay() -> None:
+                """Dispatch the verdict on the WS handler's loop after a short delay."""
                 import time
 
                 time.sleep(0.1)
-                dispatcher = app.state.verdict_dispatcher
-                loop = asyncio.new_event_loop()
-                loop.run_until_complete(dispatcher.dispatch(job_id, verdict_payload))
-                loop.close()
+                asyncio.run_coroutine_threadsafe(
+                    dispatcher.dispatch(job_id, verdict_payload), captured["loop"]
+                ).result(timeout=5)
 
             with client.websocket_connect(f"/api/v1/ws/{job_id}?token={token}") as ws:
                 thread = threading.Thread(target=dispatch_after_delay)

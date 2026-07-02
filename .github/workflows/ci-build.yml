@@ -13,22 +13,48 @@ on:
 
 permissions:
   contents: read
+  pull-requests: read   # dorny/paths-filter lists changed files via the PR API
 
 concurrency:
   group: ci-build-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
+  # Detect which services a PR touches (see .github/filters.yml). Only those get
+  # built/scanned; a PR that touches nothing buildable builds nothing.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      services: ${{ steps.filter.outputs.changes }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: .github/filters.yml
+
   load-matrix:
+    needs: changes
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.read.outputs.matrix }}
+      has: ${{ steps.read.outputs.has }}
     steps:
       - uses: actions/checkout@v4
       - id: read
-        run: echo "matrix=$(jq -c . .github/service-matrix.json)" >> "$GITHUB_OUTPUT"
+        # Intersect the full service matrix with the changed filter names.
+        env:
+          CHANGED: ${{ needs.changes.outputs.services }}
+        run: |
+          M=$(jq -c --argjson ch "$CHANGED" \
+            '{include: [.include[] | select(.name as $n | $ch | index($n))]}' \
+            .github/service-matrix.json)
+          echo "matrix=$M" >> "$GITHUB_OUTPUT"
+          echo "has=$(echo "$M" | jq '.include | length > 0')" >> "$GITHUB_OUTPUT"
+          echo "Building: $(echo "$M" | jq -c '[.include[].name]')"
 
   build:
+    if: ${{ needs.load-matrix.outputs.has == 'true' }}
     name: Build · ${{ matrix.name }}
     needs: load-matrix
     runs-on: ubuntu-latest
@@ -78,3 +104,25 @@ jobs:
           ignore-unfixed: true
           severity: CRITICAL,HIGH
           trivyignores: .trivyignore
+
+  # Single stable status for branch protection. Because `build` is a scoped
+  # matrix (it produces no check contexts when nothing relevant changed),
+  # require THIS job in the branch ruleset instead of the per-service builds —
+  # otherwise a PR that touches no service would wait forever on a check that
+  # never runs. Passes when builds succeeded or were legitimately skipped.
+  build-result:
+    name: Build result
+    if: ${{ always() }}
+    needs: [changes, load-matrix, build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail if any upstream job failed
+        run: |
+          for r in "${{ needs.changes.result }}" "${{ needs.load-matrix.result }}" "${{ needs.build.result }}"; do
+            echo "upstream result: $r"
+            if [ "$r" = "failure" ] || [ "$r" = "cancelled" ]; then
+              echo "::error::a required build job failed"
+              exit 1
+            fi
+          done
+          echo "All builds passed or were skipped."

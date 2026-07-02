@@ -1,0 +1,118 @@
+# Shared path filters for dorny/paths-filter (used by ci-build + ci-tests).
+#
+# Goal: a PR only builds/tests the services it actually touches. If a PR changes
+# nothing a filter cares about (e.g. docs-only), no build/test job runs at all.
+#
+# Rules baked in:
+#   * every Python worker depends on the shared zt_shared lib (packages/core) ->
+#     a change there rebuilds/tests every Python service.
+#   * a change to the CI plumbing itself (these files) rebuilds everything, so a
+#     pipeline change can never silently skip a service.
+#   * Docker filter names MUST match the "name" fields in service-matrix.json.
+
+# CI plumbing — touch any of these and everything is in scope.
+_global: &global
+  - '.github/workflows/ci-build.yml'
+  - '.github/workflows/ci-tests.yml'
+  - '.github/filters.yml'
+  - '.github/service-matrix.json'
+  - '.github/actions/**'
+  - '.trivyignore'   # affects every image CVE scan -> rescan all services
+
+# Shared Python library — every worker installs it as a local path dependency.
+_shared_py: &shared_py
+  - 'packages/core/**'
+
+# ── Docker images (names == service-matrix.json .name) ──────────────────────
+core-backend:
+  - *global
+  - *shared_py
+  - 'apps/core-backend/**'
+ml-layer:
+  - *global
+  - *shared_py
+  - 'apps/workers/ml_layer/**'
+llm-layer:
+  - *global
+  - *shared_py
+  - 'apps/workers/llm_layer/**'
+verdict-layer:
+  - *global
+  - *shared_py
+  - 'apps/workers/verdict_layer/**'
+minio-watcher:
+  - *global
+  - 'apps/workers/minio_watcher/**'
+frontend:
+  - *global
+  - 'apps/frontend/**'
+# The three sandbox images share one source tree -> any change rebuilds all three.
+sandbox-consumer:
+  - *global
+  - *shared_py
+  - 'apps/workers/sandbox_layer/**'
+sandbox-agent:
+  - *global
+  - 'apps/workers/sandbox_layer/**'
+sandbox-pdf-agent:
+  - *global
+  - 'apps/workers/sandbox_layer/**'
+
+# ── Lint concerns (ci-lint job gates) ───────────────────────────────────────
+lint-yaml:
+  - '.github/workflows/ci-lint.yml'
+  - '**/*.yml'
+  - '**/*.yaml'
+lint-k8s:
+  - '.github/workflows/ci-lint.yml'
+  - 'infrastructure/**'
+lint-docker:
+  - '.github/workflows/ci-lint.yml'
+  - '**/Dockerfile*'
+lint-compose:
+  - '.github/workflows/ci-lint.yml'
+  - '**/docker-compose*.yml'
+  - '**/docker-compose*.yaml'
+lint-terraform:
+  - '.github/workflows/ci-lint.yml'
+  - '**/*.tf'
+  - '**/*.tfvars'
+
+# ── Contract / schema gates ─────────────────────────────────────────────────
+schemas:
+  - 'packages/kafka-schemas/**'
+  - '.github/workflows/schema-compatibility.yml'
+  - 'scripts/ci/check_schema_compat.py'
+contract:
+  - 'apps/workers/sandbox_layer/**'
+  - 'apps/workers/llm_layer/**'
+  - 'packages/kafka-schemas/sandbox_layer.result.json'
+  - 'packages/kafka-schemas/file.requested.json'
+  - '.github/workflows/sandbox-llm-contract.yml'
+
+# ── Test suites (ci-tests job gates) ────────────────────────────────────────
+test-core:
+  - *global
+  - 'packages/core/**'
+test-ml-layer:
+  - *global
+  - *shared_py
+  - 'apps/workers/ml_layer/**'
+test-core-backend:
+  - *global
+  - *shared_py
+  - 'apps/core-backend/**'
+test-verdict-layer:
+  - *global
+  - *shared_py
+  - 'apps/workers/verdict_layer/**'
+test-llm-layer:
+  - *global
+  - *shared_py
+  - 'apps/workers/llm_layer/**'
+test-sandbox-layer:
+  - *global
+  - 'apps/workers/sandbox_layer/**'
+test-frontend:
+  - *global
+  - 'apps/frontend/**'
