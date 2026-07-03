@@ -4,6 +4,7 @@ namespace: sandbox
 resources:
   # namespace `sandbox`: owned by Terraform (infrastructure/terraform/namespaces.tf)
   # rbac + networkpolicy: owned by Terraform (rbac.tf, networkpolicy.tf)
+  - secret-s3.yaml
   - consumer-deployment.yaml
   - keda-scaledobject.yaml
   # analysis-job-template.yaml is applied dynamically by the consumer,

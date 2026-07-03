@@ -50,6 +50,22 @@ spec:
               value: "$(NODE_IP):9000"
             - name: AGENT_MINIO_ENDPOINT
               value: "$(NODE_IP):9000"
+            # Presign endpoint: the host signed here must equal the detonation
+            # agent's ALLOWED_DOWNLOAD_HOSTS (in-cluster DNS name, NOT a node IP)
+            # so the pod's SSRF guard accepts the URL and its sinkhole hostAlias
+            # can pin it to MinIO's ClusterIP.
+            - name: MINIO_PRESIGN_ENDPOINT
+              value: "minio.minio.svc.cluster.local:9000"
+            - name: MINIO_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: sandbox-s3
+                  key: ACCESS_KEY
+            - name: MINIO_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: sandbox-s3
+                  key: SECRET_KEY
             # Constants — not dependent on the host IP.
             - name: KAFKA_TOPIC_IN
               value: "file.requested"

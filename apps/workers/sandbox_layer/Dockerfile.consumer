@@ -24,7 +24,8 @@ RUN pip install --no-cache-dir \
     aiokafka==0.10.0 \
     kubernetes==29.0.0 \
     structlog==24.1.0 \
-    pydantic==2.7.1
+    pydantic==2.7.1 \
+    boto3==1.34.69
 
 # Source code
 COPY apps/workers/sandbox_layer/consumer.py ./consumer.py

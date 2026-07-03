@@ -1,16 +1,17 @@
 name: Deploy core pipeline (OpenVPN + SSH)
 
-# Deploys the core analysis pipeline (redis + backend/ml/verdict/llm) to GPE-NYX
-# from a GitHub-HOSTED runner, using the same OpenVPN+SSH pattern as
-# deploy-monitoring.yml.
+# Deploys the core analysis pipeline (redis + backend/ml/verdict/llm) AND the
+# sandbox layer (sandbox-consumer) to GPE-NYX from a GitHub-HOSTED runner, using
+# the same OpenVPN+SSH pattern as deploy-monitoring.yml.
 #
 # Triggering:
 #   * runs AFTER "CD - Build, Push & Deploy" succeeds on main (workflow_run) so
 #     the sha- tagged images are already in GHCR before we pin them — no race.
 #   * the `detect` job then SKIPS unless the merge actually touched a pipeline
-#     image's source / manifest. So a docs / frontend / sandbox-only merge does
-#     NOT redeploy the pipeline (no pointless rollout).
-#   * workflow_dispatch always deploys (manual override).
+#     OR sandbox image's source / manifest. Each namespace rolls independently:
+#     a pipeline-only change won't touch sandbox and vice-versa. A docs /
+#     frontend-only merge redeploys nothing.
+#   * workflow_dispatch always deploys both (manual override).
 #
 # Required secrets (already provisioned): VPN_OVPN, SSH_HOST, SSH_USER,
 # SSH_PRIVATE_KEY. VM prerequisites (one-time): `ghcr-pull` imagePullSecret +
@@ -46,8 +47,10 @@ jobs:
     if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     outputs:
       deploy: ${{ steps.check.outputs.deploy }}
+      pipeline: ${{ steps.check.outputs.pipeline }}   # roll the pipeline namespace
+      sandbox: ${{ steps.check.outputs.sandbox }}     # roll the sandbox-consumer
       short: ${{ steps.check.outputs.short }}
-      services: ${{ steps.check.outputs.services }}   # workers whose IMAGE was rebuilt
+      services: ${{ steps.check.outputs.services }}   # pipeline workers whose IMAGE was rebuilt
     steps:
       - uses: actions/checkout@v4
         with:
@@ -75,14 +78,31 @@ jobs:
           svc=$(echo $svc | xargs -n1 2>/dev/null | sort -u | xargs || true)
           echo "services=$svc" >> "$GITHUB_OUTPUT"
 
-          # Deploy if any image was rebuilt, a manifest changed, or manual dispatch.
+          dispatch=${{ github.event_name == 'workflow_dispatch' }}
+
+          # Pipeline ns: roll if a pipeline image was rebuilt or a pipeline manifest changed.
           manifest=false
           echo "$DIFF" | grep -qE '^infrastructure/k8s-manifests/applications/pipeline/' && manifest=true
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ] || [ -n "$svc" ] || [ "$manifest" = "true" ]; then
-            echo "deploy -> services=[$svc] manifest=$manifest dispatch=${{ github.event_name == 'workflow_dispatch' }}"
+          pipeline=false
+          { [ "$dispatch" = "true" ] || [ -n "$svc" ] || [ "$manifest" = "true" ]; } && pipeline=true
+          echo "pipeline=$pipeline" >> "$GITHUB_OUTPUT"
+
+          # Sandbox ns: roll if the sandbox source or its manifests changed. A
+          # _global change (handled above via $svc) rebuilds every image incl. the
+          # sandbox consumer, so mirror that here too.
+          sandbox=false
+          if [ "$dispatch" = "true" ] \
+             || echo "$DIFF" | grep -qE '^(apps/workers/sandbox_layer/|infrastructure/k8s-manifests/applications/sandbox/)' \
+             || echo "$DIFF" | grep -qE "$GLOBAL"; then
+            sandbox=true
+          fi
+          echo "sandbox=$sandbox" >> "$GITHUB_OUTPUT"
+
+          if [ "$pipeline" = "true" ] || [ "$sandbox" = "true" ]; then
+            echo "deploy -> pipeline=$pipeline (services=[$svc] manifest=$manifest) sandbox=$sandbox dispatch=$dispatch"
             echo "deploy=true" >> "$GITHUB_OUTPUT"
           else
-            echo "no pipeline change -> skip"; echo "deploy=false" >> "$GITHUB_OUTPUT"
+            echo "no pipeline/sandbox change -> skip"; echo "deploy=false" >> "$GITHUB_OUTPUT"
           fi
 
   deploy:
@@ -119,6 +139,7 @@ jobs:
             "${REMOTE_KUBECONFIG:+KUBECONFIG=$REMOTE_KUBECONFIG} kubectl get nodes -o wide"
 
       - name: Ship pipeline manifests to VM
+        if: ${{ needs.detect.outputs.pipeline == 'true' }}
         run: |
           set -euo pipefail
           tar czf - -C infrastructure/k8s-manifests/applications pipeline \
@@ -126,6 +147,7 @@ jobs:
             'rm -rf ~/charon-deploy/pipeline && mkdir -p ~/charon-deploy && tar xzf - -C ~/charon-deploy'
 
       - name: Apply pipeline (pin rebuilt services to new sha, keep the rest)
+        if: ${{ needs.detect.outputs.pipeline == 'true' }}
         run: |
           ssh $SSH_OPTS "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
             "OWNER=$OWNER SHORT='${{ needs.detect.outputs.short }}' CHANGED='${{ needs.detect.outputs.services }}' KC=$REMOTE_KUBECONFIG bash -seuo pipefail" <<'REMOTE'
@@ -152,6 +174,35 @@ jobs:
             # Roll (and wait on) only what actually changed.
             for s in $CHANGED; do k -n pipeline rollout status "deploy/$s" --timeout=180s; done
             k -n pipeline get pods -o wide
+          REMOTE
+
+      - name: Ship sandbox manifests to VM
+        if: ${{ needs.detect.outputs.sandbox == 'true' }}
+        run: |
+          set -euo pipefail
+          tar czf - -C infrastructure/k8s-manifests/applications sandbox \
+          | ssh $SSH_OPTS "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
+            'rm -rf ~/charon-deploy/sandbox && mkdir -p ~/charon-deploy && tar xzf - -C ~/charon-deploy'
+
+      - name: Apply sandbox (pin sandbox-consumer to new sha)
+        if: ${{ needs.detect.outputs.sandbox == 'true' }}
+        run: |
+          ssh $SSH_OPTS "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
+            "OWNER=$OWNER SHORT='${{ needs.detect.outputs.short }}' KC=$REMOTE_KUBECONFIG bash -seuo pipefail" <<'REMOTE'
+            k() { KUBECONFIG=${KC:-$HOME/.kube/config} kubectl "$@"; }
+            cd ~/charon-deploy/sandbox
+            # ns/RBAC/NetworkPolicy are Terraform-owned and NOT in this kustomization;
+            # apply only touches the consumer Deployment, its S3 secret and the KEDA
+            # ScaledObject. Pin the just-built image so the rollout is deterministic.
+            {
+              echo ""
+              echo "images:"
+              echo "  - name: ghcr.io/$OWNER/charon-sandbox-consumer"
+              echo "    newTag: sha-$SHORT"
+            } >> kustomization.yaml
+            k apply -k .
+            k -n sandbox rollout status deploy/sandbox-consumer --timeout=180s
+            k -n sandbox get pods -o wide
           REMOTE
 
       - name: Disconnect VPN

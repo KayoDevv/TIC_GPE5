@@ -54,6 +54,21 @@ TIMEOUT_S       = int(os.getenv("SANDBOX_TIMEOUT_S", "180"))
 PUBLISH_MARGIN_S = 60  # extra wall-clock after analysis for the Job to publish its result
 MINIO_ENDPOINT  = os.getenv("MINIO_ENDPOINT", "minio.minio.svc.cluster.local:9000")
 
+# Presign: core-backend emits an s3:// path, but the detonation pod runs with NO
+# cloud credentials (automount_service_account_token=False, no S3 client) and its
+# agent only fetches http(s) (SSRF guard). So the consumer — which does hold the
+# MinIO creds — turns s3://bucket/key into a short-lived presigned https URL the
+# pod can GET without secrets. The signed host MUST match the agent's
+# ALLOWED_DOWNLOAD_HOSTS (default minio.minio.svc.cluster.local), so presign
+# against the in-cluster DNS name, not a node IP.
+MINIO_PRESIGN_ENDPOINT = os.getenv("MINIO_PRESIGN_ENDPOINT", "minio.minio.svc.cluster.local:9000")
+MINIO_USE_TLS   = os.getenv("MINIO_USE_TLS", "false").strip().lower() in ("1", "true", "yes")
+MINIO_ACCESS_KEY = os.getenv("MINIO_ACCESS_KEY", "minioadmin")
+MINIO_SECRET_KEY = os.getenv("MINIO_SECRET_KEY", "minioadmin")
+MINIO_REGION    = os.getenv("MINIO_REGION", "us-east-1")
+# TTL must outlive Job queueing + quota retries + detonation (active_deadline).
+PRESIGN_TTL_S   = int(os.getenv("SANDBOX_PRESIGN_TTL_S", "900"))
+
 # Pod hardening knobs (env-overridable so dev can opt out).
 RUNTIME_CLASS   = os.getenv("SANDBOX_RUNTIME_CLASS", "").strip() or None  # "gvisor" in prod, else runc
 RUN_AS_USER     = int(os.getenv("SANDBOX_RUN_AS_USER", "10001"))          # 0 = root (legacy); image ships UID 10001
@@ -104,6 +119,43 @@ KAFKA_ADVERTISED_HOSTS = [
 # ---------------------------------------------------------------------------
 # File type detection
 # ---------------------------------------------------------------------------
+
+def _presign(s3_url: str) -> str:
+    """Turn an ``s3://bucket/key`` path into a short-lived presigned ``https``
+    (or ``http``) GET URL the credential-less detonation pod can fetch.
+
+    http(s) URLs are returned unchanged (already fetchable); a non-s3 scheme is
+    passed through so the agent's SSRF guard rejects it explicitly.
+    """
+    parsed = urlparse(s3_url)
+    if parsed.scheme in ("http", "https"):
+        return s3_url
+    if parsed.scheme != "s3":
+        return s3_url
+
+    bucket = parsed.netloc
+    key = parsed.path.lstrip("/")
+    scheme = "https" if MINIO_USE_TLS else "http"
+
+    import boto3  # lazy: keeps import-time light and test collection dep-free
+    from botocore.config import Config as BotoConfig
+
+    s3 = boto3.client(
+        "s3",
+        endpoint_url=f"{scheme}://{MINIO_PRESIGN_ENDPOINT}",
+        aws_access_key_id=MINIO_ACCESS_KEY,
+        aws_secret_access_key=MINIO_SECRET_KEY,
+        region_name=MINIO_REGION,
+        # path-style (bucket in the path) — MinIO doesn't do vhost by default,
+        # and it keeps the signed host == MINIO_PRESIGN_ENDPOINT.
+        config=BotoConfig(signature_version="s3v4", s3={"addressing_style": "path"}),
+    )
+    return s3.generate_presigned_url(
+        "get_object",
+        Params={"Bucket": bucket, "Key": key},
+        ExpiresIn=PRESIGN_TTL_S,
+    )
+
 
 def _detect_file_type(s3_url: str) -> str:
     """Detect file type via magic bytes (HTTP Range 0-7): "elf", "pdf", or "unknown"."""
@@ -397,8 +449,16 @@ async def _handle(
         log.error("Missing s3_url — skipping", job_id=job_id)
         return
 
+    # Backend emits s3://; the detonation pod fetches http(s) with no creds.
+    # Presign once, then use the fetchable URL for BOTH detection and the Job.
+    try:
+        fetch_url = _presign(s3_url)
+    except Exception as exc:
+        log.exception("Presign failed — skipping", job_id=job_id, error=str(exc))
+        return
+
     # File type detection before creating the Job
-    file_type = _detect_file_type(s3_url)
+    file_type = _detect_file_type(fetch_url)
     log.info("File type detected", job_id=job_id, file_type=file_type)
 
     # First attempt runs immediately (delay 0); the rest wait per _QUOTA_RETRY_DELAYS.
@@ -413,7 +473,7 @@ async def _handle(
             )
             await asyncio.sleep(delay)
         try:
-            job_name = _create_analysis_job(batch_api, job_id, s3_url, email_context, file_type)
+            job_name = _create_analysis_job(batch_api, job_id, fetch_url, email_context, file_type)
             log.info("K8s Job created", job_id=job_id, job_name=job_name)
             return
         except Exception as exc:
