@@ -49,6 +49,7 @@ jobs:
       deploy: ${{ steps.check.outputs.deploy }}
       pipeline: ${{ steps.check.outputs.pipeline }}   # roll the pipeline namespace
       sandbox: ${{ steps.check.outputs.sandbox }}     # roll the sandbox-consumer
+      sandbox_rebuilt: ${{ steps.check.outputs.sandbox_rebuilt }}  # consumer IMAGE was rebuilt
       short: ${{ steps.check.outputs.short }}
       services: ${{ steps.check.outputs.services }}   # pipeline workers whose IMAGE was rebuilt
     steps:
@@ -97,6 +98,17 @@ jobs:
             sandbox=true
           fi
           echo "sandbox=$sandbox" >> "$GITHUB_OUTPUT"
+
+          # Was the consumer IMAGE rebuilt this merge? (source or _global change).
+          # If not (e.g. a manifest-only merge), the apply keeps the running image
+          # instead of pinning a sha- tag that cd-deploy never pushed.
+          sandbox_rebuilt=false
+          if [ "$dispatch" = "true" ] \
+             || echo "$DIFF" | grep -qE '^apps/workers/sandbox_layer/' \
+             || echo "$DIFF" | grep -qE "$GLOBAL"; then
+            sandbox_rebuilt=true
+          fi
+          echo "sandbox_rebuilt=$sandbox_rebuilt" >> "$GITHUB_OUTPUT"
 
           if [ "$pipeline" = "true" ] || [ "$sandbox" = "true" ]; then
             echo "deploy -> pipeline=$pipeline (services=[$svc] manifest=$manifest) sandbox=$sandbox dispatch=$dispatch"
@@ -184,21 +196,36 @@ jobs:
           | ssh $SSH_OPTS "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
             'rm -rf ~/charon-deploy/sandbox && mkdir -p ~/charon-deploy && tar xzf - -C ~/charon-deploy'
 
-      - name: Apply sandbox (pin sandbox-consumer to new sha)
+      - name: Apply sandbox (pin sandbox-consumer, keep rest)
         if: ${{ needs.detect.outputs.sandbox == 'true' }}
         run: |
           ssh $SSH_OPTS "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
-            "OWNER=$OWNER SHORT='${{ needs.detect.outputs.short }}' KC=$REMOTE_KUBECONFIG bash -seuo pipefail" <<'REMOTE'
+            "OWNER=$OWNER SHORT='${{ needs.detect.outputs.short }}' REBUILT='${{ needs.detect.outputs.sandbox_rebuilt }}' KC=$REMOTE_KUBECONFIG bash -seuo pipefail" <<'REMOTE'
             k() { KUBECONFIG=${KC:-$HOME/.kube/config} kubectl "$@"; }
             cd ~/charon-deploy/sandbox
+            # The consumer pulls from private GHCR but the sandbox ns may lack the
+            # pull secret — clone it once from the pipeline ns (same registry creds).
+            if ! k -n sandbox get secret ghcr-pull >/dev/null 2>&1; then
+              k -n pipeline get secret ghcr-pull -o yaml \
+                | grep -vE '^\s*(namespace|resourceVersion|uid|creationTimestamp):' \
+                | k apply -n sandbox -f -
+            fi
+            # Rebuilt this merge -> pin the new sha; otherwise keep the running image
+            # (cd-deploy only pushes a sha- tag when the consumer SOURCE changed).
+            if [ "$REBUILT" = "true" ]; then
+              tag="sha-$SHORT"
+            else
+              cur=$(k -n sandbox get deploy/sandbox-consumer -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || true)
+              tag="${cur##*:}"; [ -z "$tag" ] && tag="sha-$SHORT"
+            fi
             # ns/RBAC/NetworkPolicy are Terraform-owned and NOT in this kustomization;
             # apply only touches the consumer Deployment, its S3 secret and the KEDA
-            # ScaledObject. Pin the just-built image so the rollout is deterministic.
+            # ScaledObject.
             {
               echo ""
               echo "images:"
               echo "  - name: ghcr.io/$OWNER/charon-sandbox-consumer"
-              echo "    newTag: sha-$SHORT"
+              echo "    newTag: $tag"
             } >> kustomization.yaml
             k apply -k .
             k -n sandbox rollout status deploy/sandbox-consumer --timeout=180s

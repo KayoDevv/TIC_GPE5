@@ -27,6 +27,12 @@ spec:
         app: sandbox-consumer
     spec:
       serviceAccountName: sandbox-consumer
+      # The consumer image is pulled from private GHCR (CD sha-pins it), so it
+      # needs the pull secret — unlike the agent images (:v1), which stay on the
+      # import model since detonation Jobs run with no pull secret. The deploy
+      # clones ghcr-pull from the pipeline ns if it's missing here.
+      imagePullSecrets:
+        - name: ghcr-pull
       containers:
         - name: consumer
           image: ghcr.io/kayodevv/charon-sandbox-consumer:latest  # bumped by CI
