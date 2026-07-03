@@ -93,18 +93,17 @@ jobs:
           # sandbox consumer, so mirror that here too.
           sandbox=false
           if [ "$dispatch" = "true" ] \
-             || echo "$DIFF" | grep -qE '^(apps/workers/sandbox_layer/|infrastructure/k8s-manifests/applications/sandbox/)' \
+             || echo "$DIFF" | grep -qE '^(apps/workers/sandbox_layer/|infrastructure/k8s-manifests/(applications/sandbox/|overlays/))' \
              || echo "$DIFF" | grep -qE "$GLOBAL"; then
             sandbox=true
           fi
           echo "sandbox=$sandbox" >> "$GITHUB_OUTPUT"
 
           # Was the consumer IMAGE rebuilt this merge? (source or _global change).
-          # If not (e.g. a manifest-only merge), the apply keeps the running image
-          # instead of pinning a sha- tag that cd-deploy never pushed.
+          # If not — a manifest-only merge OR a manual dispatch — the apply keeps
+          # the running image instead of pinning a sha- tag cd-deploy never pushed.
           sandbox_rebuilt=false
-          if [ "$dispatch" = "true" ] \
-             || echo "$DIFF" | grep -qE '^apps/workers/sandbox_layer/' \
+          if echo "$DIFF" | grep -qE '^apps/workers/sandbox_layer/' \
              || echo "$DIFF" | grep -qE "$GLOBAL"; then
             sandbox_rebuilt=true
           fi
@@ -192,17 +191,20 @@ jobs:
         if: ${{ needs.detect.outputs.sandbox == 'true' }}
         run: |
           set -euo pipefail
-          tar czf - -C infrastructure/k8s-manifests/applications sandbox \
+          # Ship the overlays/prod overlay AND the base it references (its
+          # kustomization uses ../../applications/sandbox), preserving the
+          # k8s-manifests layout so the relative path resolves on the node.
+          tar czf - -C infrastructure/k8s-manifests overlays/prod applications/sandbox \
           | ssh $SSH_OPTS "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
-            'rm -rf ~/charon-deploy/sandbox && mkdir -p ~/charon-deploy && tar xzf - -C ~/charon-deploy'
+            'rm -rf ~/charon-deploy/km && mkdir -p ~/charon-deploy/km && tar xzf - -C ~/charon-deploy/km'
 
-      - name: Apply sandbox (pin sandbox-consumer, keep rest)
+      - name: Apply sandbox (overlays/prod — in-cluster DNS + gVisor)
         if: ${{ needs.detect.outputs.sandbox == 'true' }}
         run: |
           ssh $SSH_OPTS "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
             "OWNER=$OWNER SHORT='${{ needs.detect.outputs.short }}' REBUILT='${{ needs.detect.outputs.sandbox_rebuilt }}' KC=$REMOTE_KUBECONFIG bash -seuo pipefail" <<'REMOTE'
             k() { KUBECONFIG=${KC:-$HOME/.kube/config} kubectl "$@"; }
-            cd ~/charon-deploy/sandbox
+            cd ~/charon-deploy/km
             # The consumer pulls from private GHCR but the sandbox ns may lack the
             # pull secret — clone it once from the pipeline ns (same registry creds).
             if ! k -n sandbox get secret ghcr-pull >/dev/null 2>&1; then
@@ -211,24 +213,39 @@ jobs:
                 | k apply -n sandbox -f -
             fi
             # Rebuilt this merge -> pin the new sha; otherwise keep the running image
-            # (cd-deploy only pushes a sha- tag when the consumer SOURCE changed).
+            # (cd-deploy only pushes a sha- tag when the consumer SOURCE changed;
+            # a manifest-only merge or manual dispatch keeps whatever runs now).
             if [ "$REBUILT" = "true" ]; then
               tag="sha-$SHORT"
             else
               cur=$(k -n sandbox get deploy/sandbox-consumer -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || true)
               tag="${cur##*:}"; [ -z "$tag" ] && tag="sha-$SHORT"
             fi
-            # ns/RBAC/NetworkPolicy are Terraform-owned and NOT in this kustomization;
-            # apply only touches the consumer Deployment, its S3 secret and the KEDA
-            # ScaledObject.
+            # Apply the prod OVERLAY (base = ns-scoped consumer/secret/KEDA;
+            # overlay wires in-cluster Kafka/MinIO DNS + gVisor). Pin the image in
+            # the overlay's images: (replace its `images: []` placeholder).
+            grep -vE '^images:\s*\[\]\s*$' overlays/prod/kustomization.yaml > overlays/prod/kustomization.yaml.tmp
+            mv overlays/prod/kustomization.yaml.tmp overlays/prod/kustomization.yaml
             {
               echo ""
               echo "images:"
               echo "  - name: ghcr.io/$OWNER/charon-sandbox-consumer"
               echo "    newTag: $tag"
-            } >> kustomization.yaml
-            k apply -k .
+            } >> overlays/prod/kustomization.yaml
+            k apply -k overlays/prod
             k -n sandbox rollout status deploy/sandbox-consumer --timeout=180s
+            # The consumer has no readiness probe, so "rolled out" can mask a pod
+            # that Runs then crashes seconds later (e.g. bad Kafka endpoint). Give
+            # it a moment and fail loudly if it's restarting.
+            sleep 12
+            rs=$(k -n sandbox get pods -l app=sandbox-consumer \
+                   -o jsonpath='{range .items[*]}{.status.containerStatuses[0].restartCount}{"\n"}{end}' \
+                 | sort -rn | head -1)
+            if [ "${rs:-0}" -gt 0 ]; then
+              echo "::error:: sandbox-consumer restarted ${rs}x after rollout — crashlooping"
+              k -n sandbox logs deploy/sandbox-consumer --tail=40 || true
+              exit 1
+            fi
             k -n sandbox get pods -o wide
           REMOTE
 
