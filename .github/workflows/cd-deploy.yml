@@ -33,6 +33,14 @@ jobs:
   # ── Detect which services changed (scope the build like ci-build) ──────────
   changes:
     runs-on: ubuntu-latest
+    # Skip build/push (and the deploy that chains off it) for Dependabot bumps:
+    # they're already validated on the PR by ci-build/ci-tests, so rebuilding the
+    # image and rolling the cluster on every bump merge just burns Actions minutes.
+    # Manual dispatch always runs. Prefixes come from .github/dependabot.yml.
+    if: >-
+      ${{ github.event_name == 'workflow_dispatch' ||
+          (!startsWith(github.event.head_commit.message, 'chore(deps') &&
+           !startsWith(github.event.head_commit.message, 'ci(deps')) }}
     outputs:
       services: ${{ steps.filter.outputs.changes }}
     steps:

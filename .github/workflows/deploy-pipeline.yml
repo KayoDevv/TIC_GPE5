@@ -44,7 +44,12 @@ jobs:
   # pipeline manifest (and cd-deploy succeeded). Manual dispatch always deploys.
   detect:
     runs-on: ubuntu-latest
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    # Never deploy Dependabot bumps: cd-deploy skips building them, so pinning
+    # their sha would ImagePullBackOff anyway. Manual dispatch always deploys.
+    if: >-
+      ${{ (github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success') &&
+          !startsWith(github.event.workflow_run.head_commit.message, 'chore(deps') &&
+          !startsWith(github.event.workflow_run.head_commit.message, 'ci(deps') }}
     outputs:
       deploy: ${{ steps.check.outputs.deploy }}
       pipeline: ${{ steps.check.outputs.pipeline }}   # roll the pipeline namespace
