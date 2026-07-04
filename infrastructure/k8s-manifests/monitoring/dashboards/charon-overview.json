@@ -16,7 +16,7 @@
         "refresh": 2,
         "includeAll": true,
         "multi": false,
-        "allValue": ".+",
+        "allValue": "(core-backend|ml-layer|verdict-layer|llm-layer|sandbox-consumer)",
         "current": { "text": "All", "value": "$__all" }
       },
       {

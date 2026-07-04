@@ -68,6 +68,10 @@ jobs:
             "KC=$REMOTE_KUBECONFIG bash -seuo pipefail" <<'REMOTE'
             k() { KUBECONFIG=${KC:-$HOME/.kube/config} kubectl "$@"; }
             k apply -k ~/charon-deploy/monitoring
+            # Dashboards/datasources are provisioned from ConfigMaps with stable
+            # names, so `apply` alone won't restart Grafana — force a reload so
+            # dashboard edits always take effect (its file-watch needs inotify).
+            k -n monitoring rollout restart deploy/grafana
             echo "--- waiting for rollouts ---"
             for d in prometheus kube-state-metrics loki grafana; do
               k -n monitoring rollout status "deploy/$d" --timeout=180s
