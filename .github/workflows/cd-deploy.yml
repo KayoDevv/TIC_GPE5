@@ -1,80 +1,55 @@
 name: CD - Build, Push & Deploy
 
-# Triggered when a PR is merged into main (or manually via workflow_dispatch).
-# Flow: build Docker images → Trivy CVE scan → push to ghcr.io → deploy (stub).
+# Build + Trivy-scan + push EVERY service image to GHCR on a VERSION TAG
+# (git tag v*), tagged with that version; deploy-pipeline.yml then rolls them
+# onto GPE-NYX. Plain main pushes build/deploy NOTHING — a release is a
+# deliberate, versioned event (and dependabot bumps, which never tag, no longer
+# trigger any build/deploy).
 #
-# Registry: ghcr.io (GitHub Container Registry) using GITHUB_TOKEN — no extra
-# secrets needed. Image names are derived from .github/service-matrix.json.
-# OWNER is forced lowercase because the GitHub repo name has an uppercase letter
-# and OCI image references must be lowercase.
+#   Release: git tag v1.3.0 && git push origin v1.3.0
+#   Manual:  workflow_dispatch with the `tag` input (e.g. v1.3.0-hotfix)
 #
-# Tagging: sha- + latest on every merge (rebuild-on-merge). The archived
-# version-tagged images (publish-images.yml) have been consolidated here.
+# Registry: ghcr.io via GITHUB_TOKEN. Image names come from service-matrix.json.
+# OWNER is lowercased (OCI refs must be lowercase; the repo owner has a capital).
 
 on:
   push:
-    branches: [main]
+    tags: ['v*']
   workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Image tag to build (e.g. v1.3.0)'
+        required: true
 
 permissions:
   contents: read
   packages: write
 
-# One deploy at a time. If a second push lands while a deploy is running,
-# it queues — never cancels — to avoid leaving the cluster in a partial state.
 concurrency:
-  group: deploy-production
+  group: release-production
   cancel-in-progress: false
 
 env:
   OWNER: kayodevv     # forced lowercase — github.repository_owner = "KayoDevv"
 
 jobs:
-  # ── Detect which services changed (scope the build like ci-build) ──────────
-  changes:
-    runs-on: ubuntu-latest
-    # Skip build/push (and the deploy that chains off it) for Dependabot bumps:
-    # they're already validated on the PR by ci-build/ci-tests, so rebuilding the
-    # image and rolling the cluster on every bump merge just burns Actions minutes.
-    # Manual dispatch always runs. Prefixes come from .github/dependabot.yml.
-    if: >-
-      ${{ github.event_name == 'workflow_dispatch' ||
-          (!startsWith(github.event.head_commit.message, 'chore(deps') &&
-           !startsWith(github.event.head_commit.message, 'ci(deps')) }}
-    outputs:
-      services: ${{ steps.filter.outputs.changes }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dorny/paths-filter@v3
-        id: filter
-        with:
-          filters: .github/filters.yml
-
-  # ── Load shared service matrix, filtered to the changed services ───────────
+  # A version tag releases the whole matrix at that version — no change-scoping
+  # (diffing a tag against its parent isn't the "what shipped in this release").
   load-matrix:
-    needs: changes
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.read.outputs.matrix }}
-      has: ${{ steps.read.outputs.has }}
     steps:
       - uses: actions/checkout@v4
       - id: read
-        env:
-          CHANGED: ${{ needs.changes.outputs.services }}
         run: |
-          M=$(jq -c --argjson ch "$CHANGED" \
-            '{include: [.include[] | select(.name as $n | $ch | index($n))]}' \
-            .github/service-matrix.json)
+          M=$(jq -c '{include: .include}' .github/service-matrix.json)
           echo "matrix=$M" >> "$GITHUB_OUTPUT"
-          echo "has=$(echo "$M" | jq '.include | length > 0')" >> "$GITHUB_OUTPUT"
-          echo "Building+pushing: $(echo "$M" | jq -c '[.include[].name]')"
+          echo "Releasing: $(echo "$M" | jq -c '[.include[].name]')"
 
-  # ── Build & push images ────────────────────────────────────────────────────
   build-and-push:
     name: Build & Push · ${{ matrix.name }}
     needs: load-matrix
-    if: ${{ needs.load-matrix.outputs.has == 'true' }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -111,8 +86,10 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/${{ env.OWNER }}/${{ matrix.image }}
+          # tag push -> the tag name (v1.3.0); manual dispatch -> the input tag.
           tags: |
-            type=sha,prefix=sha-
+            type=ref,event=tag
+            type=raw,value=${{ github.event.inputs.tag }},enable=${{ github.event_name == 'workflow_dispatch' }}
             type=raw,value=latest
 
       # Build locally first so Trivy can scan before anything is published.
@@ -155,18 +132,15 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.name }}
           cache-to: type=gha,mode=max,scope=${{ matrix.name }}
 
-  # ── Summary ─────────────────────────────────────────────────────────────────
-  # The cluster apply is a SEPARATE workflow: deploy-pipeline.yml runs on this
-  # workflow's success (OpenVPN + SSH into GPE-NYX, pull the just-pushed images
-  # from GHCR). GPE-NYX is a private VM but IS reachable from a hosted runner via
-  # the OpenVPN pattern (secrets VPN_OVPN / SSH_* — see deploy-monitoring.yml).
+  # deploy-pipeline.yml runs on this workflow's success (OpenVPN + SSH into
+  # GPE-NYX) and rolls the just-pushed version tag onto the cluster.
   summary:
     name: Summary
     runs-on: ubuntu-latest
     needs: build-and-push
     if: ${{ always() && needs.build-and-push.result == 'success' }}
     steps:
-      - name: Note pushed images
+      - name: Note released images
         run: |
-          echo "Images pushed to ghcr.io/${{ env.OWNER }} — SHA ${{ github.sha }}"
-          echo "deploy-pipeline.yml will apply them over OpenVPN+SSH."
+          echo "Released ghcr.io/${{ env.OWNER }}/charon-* at ${{ github.ref_name }}"
+          echo "deploy-pipeline.yml will roll this version onto GPE-NYX."

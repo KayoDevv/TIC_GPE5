@@ -1,17 +1,16 @@
 name: Deploy core pipeline (OpenVPN + SSH)
 
-# Deploys the core analysis pipeline (redis + backend/ml/verdict/llm) AND the
-# sandbox layer (sandbox-consumer) to GPE-NYX from a GitHub-HOSTED runner, using
-# the same OpenVPN+SSH pattern as deploy-monitoring.yml.
+# Rolls the pipeline (redis + backend/ml/verdict/llm) AND the sandbox-consumer
+# onto GPE-NYX AT A VERSION TAG, from a GitHub-hosted runner over OpenVPN + SSH
+# (same pattern as deploy-monitoring.yml).
 #
-# Triggering:
-#   * runs AFTER "CD - Build, Push & Deploy" succeeds on main (workflow_run) so
-#     the sha- tagged images are already in GHCR before we pin them — no race.
-#   * the `detect` job then SKIPS unless the merge actually touched a pipeline
-#     OR sandbox image's source / manifest. Each namespace rolls independently:
-#     a pipeline-only change won't touch sandbox and vice-versa. A docs /
-#     frontend-only merge redeploys nothing.
-#   * workflow_dispatch always deploys both (manual override).
+# Triggering (deploy is a versioned event, never a plain main push):
+#   * runs AFTER "CD - Build, Push & Deploy" succeeds for a v* tag (workflow_run),
+#     so the version-tagged images are already in GHCR before we pin them.
+#   * workflow_dispatch with a `version` input deploys/rolls back to any existing
+#     tag (e.g. v1.2.0) without rebuilding.
+# A cd-deploy run that wasn't a v* tag (e.g. a manual build) is skipped here —
+# dispatch this workflow with the version to roll it.
 #
 # Required secrets (already provisioned): VPN_OVPN, SSH_HOST, SSH_USER,
 # SSH_PRIVATE_KEY. VM prerequisites (one-time): `ghcr-pull` imagePullSecret +
@@ -19,11 +18,14 @@ name: Deploy core pipeline (OpenVPN + SSH)
 # + kafka-allow NetworkPolicy. See applications/pipeline/README.md.
 
 on:
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Image tag to deploy (e.g. v1.3.0)'
+        required: true
   workflow_run:
     workflows: ["CD - Build, Push & Deploy"]
     types: [completed]
-    branches: [main]
 
 permissions:
   contents: read
@@ -40,85 +42,35 @@ env:
   REMOTE_KUBECONFIG: ""
 
 jobs:
-  # Deploy only when the triggering merge changed a pipeline image's source or a
-  # pipeline manifest (and cd-deploy succeeded). Manual dispatch always deploys.
+  # Resolve the version to deploy: the dispatch input, or the tag that triggered
+  # cd-deploy (workflow_run.head_branch is the tag name for a tag push). Deploy
+  # only for a real v* version — a non-tag cd-deploy run is skipped.
   detect:
     runs-on: ubuntu-latest
-    # Never deploy Dependabot bumps: cd-deploy skips building them, so pinning
-    # their sha would ImagePullBackOff anyway. Manual dispatch always deploys.
-    if: >-
-      ${{ (github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success') &&
-          !startsWith(github.event.workflow_run.head_commit.message, 'chore(deps') &&
-          !startsWith(github.event.workflow_run.head_commit.message, 'ci(deps') }}
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     outputs:
       deploy: ${{ steps.check.outputs.deploy }}
-      pipeline: ${{ steps.check.outputs.pipeline }}   # roll the pipeline namespace
-      sandbox: ${{ steps.check.outputs.sandbox }}     # roll the sandbox-consumer
-      sandbox_rebuilt: ${{ steps.check.outputs.sandbox_rebuilt }}  # consumer IMAGE was rebuilt
-      short: ${{ steps.check.outputs.short }}
-      services: ${{ steps.check.outputs.services }}   # pipeline workers whose IMAGE was rebuilt
+      version: ${{ steps.check.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 2
-          ref: ${{ github.event.workflow_run.head_sha || github.ref }}
       - id: check
+        env:
+          DISPATCH_VERSION: ${{ github.event.inputs.version }}
+          RUN_TAG: ${{ github.event.workflow_run.head_branch }}
         run: |
           set -euo pipefail
-          # cd-deploy's docker/metadata-action tags images `sha-<7-char short>`,
-          # so we pin the SHORT sha, not the full one.
-          echo "short=$(git rev-parse --short=7 HEAD)" >> "$GITHUB_OUTPUT"
-
-          DIFF=$(git diff --name-only HEAD~1 HEAD || true)
-          # A _global change makes cd-deploy rebuild every service (mirror that).
-          GLOBAL='^(\.github/workflows/(ci-build|ci-tests|cd-deploy)\.yml|\.github/service-matrix\.json|\.github/filters\.yml|\.trivyignore|\.github/actions/)'
-          svc=""
-          if echo "$DIFF" | grep -qE "$GLOBAL"; then
-            svc="core-backend ml-layer verdict-layer llm-layer"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            version="$DISPATCH_VERSION"
           else
-            echo "$DIFF" | grep -qE '^(apps/core-backend/|packages/core/)'          && svc="$svc core-backend"
-            echo "$DIFF" | grep -qE '^(apps/workers/ml_layer/|packages/core/)'       && svc="$svc ml-layer"
-            echo "$DIFF" | grep -qE '^(apps/workers/verdict_layer/|packages/core/)'  && svc="$svc verdict-layer"
-            echo "$DIFF" | grep -qE '^(apps/workers/llm_layer/|packages/core/)'      && svc="$svc llm-layer"
+            version="$RUN_TAG"
           fi
-          svc=$(echo $svc | xargs -n1 2>/dev/null | sort -u | xargs || true)
-          echo "services=$svc" >> "$GITHUB_OUTPUT"
-
-          dispatch=${{ github.event_name == 'workflow_dispatch' }}
-
-          # Pipeline ns: roll if a pipeline image was rebuilt or a pipeline manifest changed.
-          manifest=false
-          echo "$DIFF" | grep -qE '^infrastructure/k8s-manifests/applications/pipeline/' && manifest=true
-          pipeline=false
-          { [ "$dispatch" = "true" ] || [ -n "$svc" ] || [ "$manifest" = "true" ]; } && pipeline=true
-          echo "pipeline=$pipeline" >> "$GITHUB_OUTPUT"
-
-          # Sandbox ns: roll if the sandbox source or its manifests changed. A
-          # _global change (handled above via $svc) rebuilds every image incl. the
-          # sandbox consumer, so mirror that here too.
-          sandbox=false
-          if [ "$dispatch" = "true" ] \
-             || echo "$DIFF" | grep -qE '^(apps/workers/sandbox_layer/|infrastructure/k8s-manifests/(applications/sandbox/|overlays/))' \
-             || echo "$DIFF" | grep -qE "$GLOBAL"; then
-            sandbox=true
-          fi
-          echo "sandbox=$sandbox" >> "$GITHUB_OUTPUT"
-
-          # Was the consumer IMAGE rebuilt this merge? (source or _global change).
-          # If not — a manifest-only merge OR a manual dispatch — the apply keeps
-          # the running image instead of pinning a sha- tag cd-deploy never pushed.
-          sandbox_rebuilt=false
-          if echo "$DIFF" | grep -qE '^apps/workers/sandbox_layer/' \
-             || echo "$DIFF" | grep -qE "$GLOBAL"; then
-            sandbox_rebuilt=true
-          fi
-          echo "sandbox_rebuilt=$sandbox_rebuilt" >> "$GITHUB_OUTPUT"
-
-          if [ "$pipeline" = "true" ] || [ "$sandbox" = "true" ]; then
-            echo "deploy -> pipeline=$pipeline (services=[$svc] manifest=$manifest) sandbox=$sandbox dispatch=$dispatch"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if printf '%s' "$version" | grep -qE '^v[0-9]'; then
+            echo "deploy -> version=$version"
             echo "deploy=true" >> "$GITHUB_OUTPUT"
           else
-            echo "no pipeline/sandbox change -> skip"; echo "deploy=false" >> "$GITHUB_OUTPUT"
+            echo "cd-deploy run was not a v* tag ('$version') -> skip"
+            echo "(dispatch this workflow with a version input to deploy manually)"
+            echo "deploy=false" >> "$GITHUB_OUTPUT"
           fi
 
   deploy:
@@ -127,7 +79,10 @@ jobs:
     runs-on: ubuntu-latest
     environment: production
     steps:
+      # Deploy the manifests AT the released tag, so manifests and images match.
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.detect.outputs.version }}
 
       - name: Install OpenVPN client
         run: sudo apt-get update && sudo apt-get install -y openvpn
@@ -155,59 +110,46 @@ jobs:
             "${REMOTE_KUBECONFIG:+KUBECONFIG=$REMOTE_KUBECONFIG} kubectl get nodes -o wide"
 
       - name: Ship pipeline manifests to VM
-        if: ${{ needs.detect.outputs.pipeline == 'true' }}
         run: |
           set -euo pipefail
           tar czf - -C infrastructure/k8s-manifests/applications pipeline \
           | ssh $SSH_OPTS "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
             'rm -rf ~/charon-deploy/pipeline && mkdir -p ~/charon-deploy && tar xzf - -C ~/charon-deploy'
 
-      - name: Apply pipeline (pin rebuilt services to new sha, keep the rest)
-        if: ${{ needs.detect.outputs.pipeline == 'true' }}
+      - name: Apply pipeline (pin every service to the release version)
         run: |
           ssh $SSH_OPTS "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
-            "OWNER=$OWNER SHORT='${{ needs.detect.outputs.short }}' CHANGED='${{ needs.detect.outputs.services }}' KC=$REMOTE_KUBECONFIG bash -seuo pipefail" <<'REMOTE'
+            "OWNER=$OWNER VERSION='${{ needs.detect.outputs.version }}' KC=$REMOTE_KUBECONFIG bash -seuo pipefail" <<'REMOTE'
             k() { KUBECONFIG=${KC:-$HOME/.kube/config} kubectl "$@"; }
             cd ~/charon-deploy/pipeline
-            # Build a kustomize image override: rebuilt workers -> sha-SHORT;
-            # untouched workers -> whatever tag they currently run (so apply -k
-            # doesn't reset them to :latest and roll them needlessly).
             {
               echo ""
               echo "images:"
               for s in core-backend ml-layer verdict-layer llm-layer; do
-                if echo " $CHANGED " | grep -q " $s "; then
-                  tag="sha-$SHORT"
-                else
-                  cur=$(k -n pipeline get deploy/$s -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || true)
-                  tag="${cur##*:}"; [ -z "$tag" ] && tag="sha-$SHORT"
-                fi
                 echo "  - name: ghcr.io/$OWNER/charon-$s"
-                echo "    newTag: $tag"
+                echo "    newTag: $VERSION"
               done
             } >> kustomization.yaml
             k apply -k .
-            # Roll (and wait on) only what actually changed.
-            for s in $CHANGED; do k -n pipeline rollout status "deploy/$s" --timeout=180s; done
+            for s in core-backend ml-layer verdict-layer llm-layer; do
+              k -n pipeline rollout status "deploy/$s" --timeout=180s
+            done
             k -n pipeline get pods -o wide
           REMOTE
 
       - name: Ship sandbox manifests to VM
-        if: ${{ needs.detect.outputs.sandbox == 'true' }}
         run: |
           set -euo pipefail
-          # Ship the overlays/prod overlay AND the base it references (its
-          # kustomization uses ../../applications/sandbox), preserving the
-          # k8s-manifests layout so the relative path resolves on the node.
+          # Ship overlays/prod AND the base it references (../../applications/sandbox),
+          # preserving the k8s-manifests layout so the relative path resolves.
           tar czf - -C infrastructure/k8s-manifests overlays/prod applications/sandbox \
           | ssh $SSH_OPTS "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
             'rm -rf ~/charon-deploy/km && mkdir -p ~/charon-deploy/km && tar xzf - -C ~/charon-deploy/km'
 
       - name: Apply sandbox (overlays/prod — in-cluster DNS + gVisor)
-        if: ${{ needs.detect.outputs.sandbox == 'true' }}
         run: |
           ssh $SSH_OPTS "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
-            "OWNER=$OWNER SHORT='${{ needs.detect.outputs.short }}' REBUILT='${{ needs.detect.outputs.sandbox_rebuilt }}' KC=$REMOTE_KUBECONFIG bash -seuo pipefail" <<'REMOTE'
+            "OWNER=$OWNER VERSION='${{ needs.detect.outputs.version }}' KC=$REMOTE_KUBECONFIG bash -seuo pipefail" <<'REMOTE'
             k() { KUBECONFIG=${KC:-$HOME/.kube/config} kubectl "$@"; }
             cd ~/charon-deploy/km
             # The consumer pulls from private GHCR but the sandbox ns may lack the
@@ -217,31 +159,22 @@ jobs:
                 | grep -vE '^\s*(namespace|resourceVersion|uid|creationTimestamp):' \
                 | k apply -n sandbox -f -
             fi
-            # Rebuilt this merge -> pin the new sha; otherwise keep the running image
-            # (cd-deploy only pushes a sha- tag when the consumer SOURCE changed;
-            # a manifest-only merge or manual dispatch keeps whatever runs now).
-            if [ "$REBUILT" = "true" ]; then
-              tag="sha-$SHORT"
-            else
-              cur=$(k -n sandbox get deploy/sandbox-consumer -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || true)
-              tag="${cur##*:}"; [ -z "$tag" ] && tag="sha-$SHORT"
-            fi
-            # Apply the prod OVERLAY (base = ns-scoped consumer/secret/KEDA;
-            # overlay wires in-cluster Kafka/MinIO DNS + gVisor). Pin the image in
-            # the overlay's images: (replace its `images: []` placeholder).
+            # Apply the prod OVERLAY (base = ns-scoped consumer/secret/KEDA; overlay
+            # wires in-cluster Kafka/MinIO DNS + gVisor). Pin the consumer to the
+            # release version in the overlay's images: (replace its `[]` placeholder).
             grep -vE '^images:\s*\[\]\s*$' overlays/prod/kustomization.yaml > overlays/prod/kustomization.yaml.tmp
             mv overlays/prod/kustomization.yaml.tmp overlays/prod/kustomization.yaml
             {
               echo ""
               echo "images:"
               echo "  - name: ghcr.io/$OWNER/charon-sandbox-consumer"
-              echo "    newTag: $tag"
+              echo "    newTag: $VERSION"
             } >> overlays/prod/kustomization.yaml
             k apply -k overlays/prod
             k -n sandbox rollout status deploy/sandbox-consumer --timeout=180s
             # The consumer has no readiness probe, so "rolled out" can mask a pod
-            # that Runs then crashes seconds later (e.g. bad Kafka endpoint). Give
-            # it a moment and fail loudly if it's restarting.
+            # that Runs then crashes seconds later. Give it a moment and fail loud
+            # if it's restarting.
             sleep 12
             rs=$(k -n sandbox get pods -l app=sandbox-consumer \
                    -o jsonpath='{range .items[*]}{.status.containerStatuses[0].restartCount}{"\n"}{end}' \
