@@ -59,6 +59,11 @@ spec:
       containers:
         - name: kube-state-metrics
           image: registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.13.0
+          # Collect ONLY the resources we chart + hold RBAC for. Without this KSM
+          # tries every default type (Secrets, ConfigMaps, Ingresses…) and spams
+          # "forbidden" — and we deliberately don't grant it Secret access.
+          args:
+            - --resources=nodes,pods,services,endpoints,namespaces,resourcequotas,persistentvolumeclaims,replicationcontrollers,deployments,replicasets,statefulsets,daemonsets,jobs,cronjobs,horizontalpodautoscalers
           ports:
             - containerPort: 8080
               name: metrics
