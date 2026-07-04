@@ -1,0 +1,25 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# In-house observability: Prometheus (metrics, 24h) + Loki (logs, 48h) + Alloy
+# (log collector) + node-exporter + kube-state-metrics + Grafana (NodePort 30300).
+# Nothing leaves the VM. See README.md.
+resources:
+  - namespace.yaml
+  - prometheus.yaml
+  - node-exporter.yaml
+  - kube-state-metrics.yaml
+  - loki.yaml
+  - alloy.yaml
+  - grafana.yaml
+
+# The dashboard JSON becomes a ConfigMap Grafana provisions on boot. Stable name
+# (no hash suffix) so grafana.yaml can mount it directly.
+configMapGenerator:
+  - name: grafana-dashboard-charon
+    namespace: monitoring
+    files:
+      - dashboards/charon-overview.json
+
+generatorOptions:
+  disableNameSuffixHash: true

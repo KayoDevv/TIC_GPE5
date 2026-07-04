@@ -1,0 +1,14 @@
+# In-cluster observability stack for GPE-NYX (logs + metrics), kept entirely
+# in-house (nothing leaves the VM — GDPR-safe for a security product).
+#
+# This namespace is NOT Calico default-deny (unlike kafka/minio/sandbox/etc.),
+# so the stack can scrape the kubelet and its own components without extra
+# NetworkPolicies. Prometheus reads container metrics from the kubelet/cAdvisor
+# (node), node-exporter (node), and kube-state-metrics (API) — it never needs
+# ingress into the app pods. Alloy reads pod logs via the API (pods/log RBAC).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: monitoring
+  labels:
+    app.kubernetes.io/part-of: charon-observability

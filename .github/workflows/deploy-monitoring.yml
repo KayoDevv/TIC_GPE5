@@ -1,0 +1,84 @@
+name: Deploy monitoring (OpenVPN + SSH)
+
+# One-off / on-demand deploy of the in-house observability stack (Prometheus +
+# Loki + Alloy + node-exporter + kube-state-metrics + Grafana) to GPE-NYX over
+# OpenVPN + SSH. Manual only — it's infra, not part of the app release train.
+#
+#   Actions ▸ Deploy monitoring ▸ Run workflow      (or: gh workflow run deploy-monitoring.yml)
+#
+# Grafana lands on NodePort 30300 (admin / charon-observe — rotate for prod).
+# Required secrets: VPN_OVPN, SSH_HOST, SSH_USER, SSH_PRIVATE_KEY.
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-monitoring
+  cancel-in-progress: false
+
+env:
+  SSH_OPTS: "-i ~/.ssh/id_deploy -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts"
+  REMOTE_KUBECONFIG: ""
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install OpenVPN client
+        run: sudo apt-get update && sudo apt-get install -y openvpn
+
+      - name: Connect to OpenVPN
+        run: |
+          set -euo pipefail
+          echo "${{ secrets.VPN_OVPN }}" > vpn.ovpn
+          sudo openvpn --config vpn.ovpn --daemon --log vpn.log --writepid vpn.pid
+          echo "Waiting for tun0..."
+          timeout 60 bash -c 'until ip link show tun0 >/dev/null 2>&1; do sleep 2; done' \
+            || { echo "::error::VPN tunnel did not come up"; sudo cat vpn.log; exit 1; }
+          ip -br a show tun0
+
+      - name: Setup SSH key
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+
+      - name: Reachability check (SSH + K3s)
+        run: |
+          ssh $SSH_OPTS "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
+            "${REMOTE_KUBECONFIG:+KUBECONFIG=$REMOTE_KUBECONFIG} kubectl get nodes -o wide"
+
+      - name: Ship monitoring manifests to VM
+        run: |
+          set -euo pipefail
+          tar czf - -C infrastructure/k8s-manifests monitoring \
+          | ssh $SSH_OPTS "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
+            'rm -rf ~/charon-deploy/monitoring && mkdir -p ~/charon-deploy && tar xzf - -C ~/charon-deploy'
+
+      - name: Apply monitoring stack
+        run: |
+          ssh $SSH_OPTS "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
+            "KC=$REMOTE_KUBECONFIG bash -seuo pipefail" <<'REMOTE'
+            k() { KUBECONFIG=${KC:-$HOME/.kube/config} kubectl "$@"; }
+            k apply -k ~/charon-deploy/monitoring
+            echo "--- waiting for rollouts ---"
+            for d in prometheus kube-state-metrics loki grafana; do
+              k -n monitoring rollout status "deploy/$d" --timeout=180s
+            done
+            k -n monitoring rollout status ds/node-exporter --timeout=120s
+            k -n monitoring rollout status ds/alloy --timeout=120s
+            echo "--- pods ---"; k -n monitoring get pods -o wide
+            NODE_IP=$(k get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}')
+            echo "==> Grafana: http://${NODE_IP}:30300  (admin / charon-observe)"
+          REMOTE
+
+      - name: Disconnect VPN
+        if: always()
+        run: sudo test -f vpn.pid && sudo kill "$(cat vpn.pid)" || true
