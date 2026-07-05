@@ -80,7 +80,7 @@ jobs:
     environment: production
     steps:
       # Deploy the manifests AT the released tag, so manifests and images match.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.detect.outputs.version }}
 

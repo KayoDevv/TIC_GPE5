@@ -26,8 +26,8 @@ jobs:
     outputs:
       schemas: ${{ steps.filter.outputs.schemas }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: dorny/paths-filter@v3
+      - uses: actions/checkout@v7
+      - uses: dorny/paths-filter@v4
         id: filter
         with:
           filters: .github/filters.yml
@@ -48,7 +48,7 @@ jobs:
           - verdict_layer.result.json
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # Full history so `git show origin/main:...` can reach the base schema.
           fetch-depth: 0

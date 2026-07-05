@@ -27,8 +27,8 @@ jobs:
     outputs:
       services: ${{ steps.filter.outputs.changes }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: dorny/paths-filter@v3
+      - uses: actions/checkout@v7
+      - uses: dorny/paths-filter@v4
         id: filter
         with:
           filters: .github/filters.yml
@@ -40,7 +40,7 @@ jobs:
       matrix: ${{ steps.read.outputs.matrix }}
       has: ${{ steps.read.outputs.has }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - id: read
         # Intersect the full service matrix with the changed filter names.
         env:
@@ -63,7 +63,7 @@ jobs:
       matrix: ${{ fromJSON(needs.load-matrix.outputs.matrix) }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Check Dockerfile exists
         id: check
@@ -82,7 +82,7 @@ jobs:
       # Build with load:true so Trivy can scan the image before we approve merge.
       - name: Build image (local, pre-scan)
         if: steps.check.outputs.exists == 'true'
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: ${{ matrix.dockerfile }}

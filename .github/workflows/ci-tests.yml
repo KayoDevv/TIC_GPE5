@@ -32,8 +32,8 @@ jobs:
       test-sandbox-layer: ${{ steps.filter.outputs.test-sandbox-layer }}
       test-frontend: ${{ steps.filter.outputs.test-frontend }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: dorny/paths-filter@v3
+      - uses: actions/checkout@v7
+      - uses: dorny/paths-filter@v4
         id: filter
         with:
           filters: .github/filters.yml
@@ -49,7 +49,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Setup Python + Poetry
         uses: ./.github/actions/python-setup
@@ -80,7 +80,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Setup Python + Poetry
         uses: ./.github/actions/python-setup
@@ -121,14 +121,14 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
 
       - name: Cache pip packages
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ~/.cache/pip
           key: pip-sandbox-${{ runner.os }}-${{ hashFiles('apps/workers/sandbox_layer/**/*.py') }}
@@ -173,7 +173,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Setup Python + Poetry
         uses: ./.github/actions/python-setup
@@ -202,7 +202,7 @@ jobs:
     name: Test · apps/workers/verdict_layer
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Setup Python + Poetry
         uses: ./.github/actions/python-setup
         with:
@@ -227,7 +227,7 @@ jobs:
     name: Test · apps/workers/llm_layer
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Setup Python + Poetry
         uses: ./.github/actions/python-setup
         with:
@@ -252,8 +252,8 @@ jobs:
     name: Test · apps/frontend
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
         with:
           node-version: "22"   # listr2 (via wxt) requires node >= 22.13
           cache: npm
