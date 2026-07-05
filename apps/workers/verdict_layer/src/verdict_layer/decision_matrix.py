@@ -6,6 +6,10 @@ from typing import Any, Literal, Optional
 Decision = Literal["allowed", "blocked", "warning"]
 
 ML_BLOCKED_EXPLANATION = "Blocked: static analysis assigned a critical risk score."
+ML_DISPUTED_EXPLANATION = (
+    "Warning: static analysis flagged this file, but behavioral analysis did not "
+    "confirm it as malicious."
+)
 LLM_BLOCKED_EXPLANATION = "Blocked: semantic analysis identified malicious intent."
 SANDBOX_TIMEOUT_EXPLANATION = "Partial analysis: the behavioral sandbox did not respond in time."
 SANDBOX_MALICIOUS_EXPLANATION = "Blocked: behavioral analysis confirmed malicious activity."
@@ -44,16 +48,9 @@ def _is_ml_critical(state: JobState, ml_block_threshold: int) -> bool:
     return state.ml_score is not None and state.ml_score > ml_block_threshold
 
 
-def decide(
-    state: JobState,
-    ml_block_threshold: int,
-    timeout_default: str,
+def _behavioral_decision(
+    state: JobState, timeout_default: str, summary: dict[str, Any]
 ) -> VerdictDecision:
-    summary = _build_summary(state)
-
-    if _is_ml_critical(state, ml_block_threshold):
-        return VerdictDecision("blocked", ML_BLOCKED_EXPLANATION, summary)
-
     if state.llm_is_malicious is True:
         explanation = state.llm_explanation or LLM_BLOCKED_EXPLANATION
         return VerdictDecision("blocked", explanation, summary)
@@ -73,3 +70,22 @@ def decide(
         return VerdictDecision("warning", SANDBOX_ERROR_EXPLANATION, summary)
 
     return VerdictDecision("allowed", None, summary)
+
+
+def decide(
+    state: JobState,
+    ml_block_threshold: int,
+    timeout_default: str,
+) -> VerdictDecision:
+    summary = _build_summary(state)
+    behavioral = _behavioral_decision(state, timeout_default, summary)
+
+    # A critical ML score no longer solo-blocks: the behavioral pipeline
+    # (sandbox + LLM) can clear a file the static model flagged, so a single
+    # over-confident layer cannot block a document the sandbox found benign.
+    if _is_ml_critical(state, ml_block_threshold):
+        if behavioral.final_decision == "allowed":
+            return VerdictDecision("warning", ML_DISPUTED_EXPLANATION, summary)
+        return VerdictDecision("blocked", ML_BLOCKED_EXPLANATION, summary)
+
+    return behavioral

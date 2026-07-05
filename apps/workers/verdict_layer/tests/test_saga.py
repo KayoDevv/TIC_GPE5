@@ -39,13 +39,28 @@ def _make_saga(store, emitter, timeout_seconds=125) -> VerdictSaga:
     )
 
 
-class TestEarlyExit:
-    async def test_high_ml_score_emits_blocked_immediately(self, store) -> None:
+class TestMlCritical:
+    async def test_high_ml_alone_does_not_emit(self, store) -> None:
         emitter = _EmitRecorder()
         saga = _make_saga(store, emitter)
         await saga.on_ml_result("job-1", score=95)
+        assert emitter.calls == []
+
+    async def test_high_ml_with_malicious_sandbox_blocks(self, store) -> None:
+        emitter = _EmitRecorder()
+        saga = _make_saga(store, emitter)
+        await saga.on_ml_result("job-1", score=95)
+        await saga.on_sandbox_result("job-1", iocs=[], timeout=False, verdict="malicious")
         assert len(emitter.calls) == 1
         assert emitter.calls[0][1]["final_decision"] == "blocked"
+
+    async def test_high_ml_cleared_by_benign_sandbox_warns(self, store) -> None:
+        emitter = _EmitRecorder()
+        saga = _make_saga(store, emitter)
+        await saga.on_ml_result("job-1", score=99)
+        await saga.on_sandbox_result("job-1", iocs=[], timeout=False, verdict="benign")
+        assert len(emitter.calls) == 1
+        assert emitter.calls[0][1]["final_decision"] == "warning"
 
 
 class TestCompletion:
@@ -130,8 +145,9 @@ class TestEmitFailure:
         emitter = _EmitRecorder(fail=True)
         saga = _make_saga(store, emitter)
 
+        await saga.on_ml_result("job-9", score=95)
         with pytest.raises(RuntimeError):
-            await saga.on_ml_result("job-9", score=95)
+            await saga.on_sandbox_result("job-9", iocs=[], timeout=False, verdict="malicious")
 
         # Lock must be free again so a retry can re-resolve
         assert await store.try_acquire_verdict_lock("job-9") is True
@@ -139,13 +155,13 @@ class TestEmitFailure:
     async def test_retry_succeeds_after_emit_failure(self, store) -> None:
         failing = _EmitRecorder(fail=True)
         saga_fail = _make_saga(store, failing)
+        await saga_fail.on_ml_result("job-10", score=95)
         with pytest.raises(RuntimeError):
-            await saga_fail.on_ml_result("job-10", score=95)
-        await store.release_verdict_lock("job-10")
+            await saga_fail.on_sandbox_result("job-10", iocs=[], timeout=False, verdict="malicious")
 
         working = _EmitRecorder()
         saga_ok = _make_saga(store, working)
-        await saga_ok.on_ml_result("job-10", score=95)
+        await saga_ok.on_sandbox_result("job-10", iocs=[], timeout=False, verdict="malicious")
         assert len(working.calls) == 1
 
     async def test_resolve_skips_when_lock_already_held(self, store) -> None:
@@ -154,5 +170,6 @@ class TestEmitFailure:
         assert await store.try_acquire_verdict_lock("job-11") is True
 
         await saga.on_ml_result("job-11", score=99)
+        await saga.on_sandbox_result("job-11", iocs=[], timeout=False, verdict="malicious")
 
         assert emitter.calls == []

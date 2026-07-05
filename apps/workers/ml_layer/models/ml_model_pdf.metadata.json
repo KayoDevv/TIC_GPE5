@@ -22,7 +22,9 @@
     "pdf_has_submitform",
     "pdf_has_goto_remote",
     "pdf_object_stream_count",
-    "pdf_incremental_updates"
+    "pdf_incremental_updates",
+    "pdf_has_jbig2",
+    "pdf_has_richmedia"
   ],
-  "threshold": 0.7403483767214227
+  "threshold": 0.7509031102699215
 }

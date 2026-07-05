@@ -1,4 +1,5 @@
 from verdict_layer.decision_matrix import (
+    ML_DISPUTED_EXPLANATION,
     SANDBOX_ERROR_EXPLANATION,
     SANDBOX_MALICIOUS_EXPLANATION,
     JobState,
@@ -6,25 +7,32 @@ from verdict_layer.decision_matrix import (
 )
 
 
-class TestEarlyExitMlScore:
-    """Rule 1: ml_score > 90 -> immediate blocked (highest priority)."""
-
-    def test_ml_score_above_threshold_blocks(self) -> None:
-        state = JobState(ml_score=95)
+class TestMlCriticalRequiresCorroboration:
+    def test_ml_critical_blocks_when_sandbox_malicious(self) -> None:
+        state = JobState(ml_score=95, sandbox_received=True, sandbox_verdict="malicious")
         result = decide(state, ml_block_threshold=90, timeout_default="warning")
         assert result.final_decision == "blocked"
 
-    def test_ml_score_exactly_threshold_does_not_block(self) -> None:
-        """Strictly greater than 90 — exactly 90 is not enough on its own."""
+    def test_ml_critical_downgrades_to_warning_when_sandbox_benign(self) -> None:
+        state = JobState(ml_score=99, sandbox_received=True, sandbox_verdict="benign")
+        result = decide(state, ml_block_threshold=90, timeout_default="warning")
+        assert result.final_decision == "warning"
+        assert result.user_explanation == ML_DISPUTED_EXPLANATION
+
+    def test_ml_critical_disputed_by_clean_llm(self) -> None:
+        state = JobState(
+            ml_score=99,
+            sandbox_received=True,
+            sandbox_verdict="needs_more_context",
+            llm_is_malicious=False,
+        )
+        result = decide(state, ml_block_threshold=90, timeout_default="warning")
+        assert result.final_decision == "warning"
+
+    def test_ml_exactly_threshold_does_not_trigger(self) -> None:
         state = JobState(ml_score=90, llm_is_malicious=False, sandbox_received=True)
         result = decide(state, ml_block_threshold=90, timeout_default="warning")
         assert result.final_decision == "allowed"
-
-    def test_ml_score_above_threshold_wins_over_clean_llm(self) -> None:
-        """Even if the LLM says clean, a high ML score blocks."""
-        state = JobState(ml_score=99, llm_is_malicious=False)
-        result = decide(state, ml_block_threshold=90, timeout_default="warning")
-        assert result.final_decision == "blocked"
 
 
 class TestLlmMalicious:

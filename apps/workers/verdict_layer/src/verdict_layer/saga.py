@@ -29,9 +29,6 @@ class VerdictSaga:
 
     async def on_ml_result(self, job_id: str, score: int) -> None:
         await self._store.update_ml(job_id, score=score)
-        if score > self._ml_threshold:
-            await self._resolve(job_id)
-            return
         await self._resolve_if_complete(job_id)
 
     async def on_sandbox_result(
