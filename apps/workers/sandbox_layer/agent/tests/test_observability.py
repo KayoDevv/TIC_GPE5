@@ -1,6 +1,6 @@
 """D-obs — low-observability beacon (knowing when we probably missed).
 
-Pure tests on core.scoring.low_observability_alert. The run_OpusV1.4 miss went
+Pure tests on core.scoring.low_observability_alert. The run_v1.4 miss went
 by silently; this beacon must light up on that exact shape (no liveness, or a
 quiet zero-score benign) so operators can grep/alert on it — even after the D1
 guard escalated the verdict.

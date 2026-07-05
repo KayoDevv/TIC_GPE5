@@ -422,7 +422,6 @@ The script applies all three rules **recursively**: it walks nested `object` pro
 | `infrastructure/k8s-manifests/overlays/prod/consumer-env-patch.yaml` | Consumer env for prod |
 | `.github/service-matrix.json` | Shared 9-service matrix — single source of truth for `ci-build.yml` and `cd-deploy.yml` |
 | `docs/ci-cd.md` | This document |
-| `CLAUDE.md` | Full project reference for Claude Code |
 
 ### Modified files
 

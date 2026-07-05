@@ -98,7 +98,7 @@ def low_observability_alert(
     """D-obs — beacon for a verdict that must not pass silently.
 
     Returns a short reason when the run carries the signature of a probable
-    miss (the contentless pattern that let the run_OpusV1.4 0.000 slip through),
+    miss (the contentless pattern that let the run_v1.4 0.000 slip through),
     so operators can grep/alert on it EVEN when the D1 guard already escalated
     the verdict. We can only fix what we can see; the original miss went by
     unnoticed. None when a normal, trustworthy execution was observed.

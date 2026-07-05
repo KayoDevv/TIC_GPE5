@@ -68,7 +68,7 @@ report:
 # Golden baseline (M3 anti-regression) — freezes the verdicts of a reference run,
 # then compares every new run against this baseline BEFORE merging a scoring
 # change. The baseline (hashes + scores only) is committed to git.
-#   make -f scripts/validation/Makefile golden-freeze RUN_ID=run_OpusV1.4
+#   make -f scripts/validation/Makefile golden-freeze RUN_ID=run_v1.4
 #   make -f scripts/validation/Makefile golden-compare RUN_ID=<new_run>
 golden-freeze:
 	@[ -n "$(RUN_ID)" ] || { echo "ERROR: RUN_ID required (reference run to freeze)"; exit 1; }

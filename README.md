@@ -46,7 +46,7 @@ SLA < 500 ms                                    SLA < 120 s
 | **Core Backend** | Python, FastAPI | Entry point: validates (≤ 35 MB), uploads to S3/MinIO, emits Kafka event, pushes verdict via WebSocket | — |
 | **ML Layer** | Python, LightGBM/ONNX Runtime | Static analysis: entropy, PE sections, imports/exports → risk score 0–100 | < 500 ms |
 | **Sandbox Layer** | Python, K8s `batch/v1 Job` (hardened `runc` + seccomp, gVisor optional) | Behavioral detonation in isolated containers, `strace` + state-diff + `/proc` forensics → IOC list (MITRE ATT&CK) | < 120 s |
-| **LLM Layer** | Python, vLLM, Llama-3-8B | Correlates email context + sandbox IOCs → binary decision + human-readable explanation | 3–5 s |
+| **LLM Layer** | Python, vLLM, Llama-3.3-70B | Correlates email context + sandbox IOCs → binary decision + human-readable explanation | 3–5 s |
 | **Verdict Layer** | Python, Redis | Saga aggregator: collects async results, applies decision matrix, emits final verdict | — |
 
 ### Decision matrix

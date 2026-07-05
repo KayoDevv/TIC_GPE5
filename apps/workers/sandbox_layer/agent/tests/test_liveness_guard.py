@@ -1,6 +1,6 @@
 """D1 + M4 — "absence of signal != benign" guard and liveness observable.
 
-Pure tests, no I/O. Pin the security property that closed the run_OpusV1.4
+Pure tests, no I/O. Pin the security property that closed the run_v1.4
 miss (malicious at score 0.000 classified benign because nothing ran):
 
   - execution_liveness: normal run = exit 0 + meaningful syscall activity;
@@ -61,7 +61,7 @@ def test_liveness_fails_on_timeout_no_exit_code():
 # ---------------------------------------------------------------------------
 
 def test_zero_score_without_liveness_is_never_benign():
-    # The run_OpusV1.4 miss: score 0.000, nothing ran -> must escalate.
+    # The run_v1.4 miss: score 0.000, nothing ran -> must escalate.
     verdict, reason = guarded_verdict(0.0, 0.15, 0.04, liveness_ok=False)
     assert verdict == "needs_more_context"
     assert reason == "no_liveness"

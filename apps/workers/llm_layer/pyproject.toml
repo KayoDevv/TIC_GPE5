@@ -2,7 +2,7 @@
 name = "llm-layer"
 version = "0.1.0"
 description = "LLM Layer — The Semantic Analyst worker for GPE-ETNA (CHARON)"
-authors = ["Antigravity <ai@zero-trust.local>"]
+authors = ["tisser_f <tisser_f@etna-alternance.net>"]
 packages = [{ include = "llm_layer", from = "src" }]
 
 [tool.poetry.dependencies]

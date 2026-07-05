@@ -2,7 +2,7 @@
 name = "zt-shared"
 version = "0.1.0"
 description = "Core Library for Kafka events and Pydantic validation"
-authors = [{name = "Antigravity", email = "ai@zero-trust.local"}]
+authors = [{name = "tisser_f", email = "tisser_f@etna-alternance.net"}]
 readme = "README.md"
 requires-python = ">=3.9"
 dynamic = ["dependencies"]

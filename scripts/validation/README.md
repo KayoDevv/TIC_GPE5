@@ -234,7 +234,7 @@ change (`core/scoring.py`, weights, thresholds) behind a comparison:
 
 ```bash
 # 1. Freeze the reference run (once) → scripts/validation/golden/baseline.json
-make -f scripts/validation/Makefile golden-freeze RUN_ID=run_OpusV1.4
+make -f scripts/validation/Makefile golden-freeze RUN_ID=run_v1.4
 git add scripts/validation/golden/baseline.json && git commit -m "test: golden run baseline"
 
 # 2. After a scoring change: replay the SAME corpus under a new RUN_ID, then

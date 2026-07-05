@@ -1,5 +1,5 @@
 {
-  "run_id": "run_OpusV1.4",
+  "run_id": "run_v1.4",
   "frozen_at": "2026-06-10T05:57:00+00:00",
   "thresholds": {
     "suspicious": 0.04,

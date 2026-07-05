@@ -135,8 +135,8 @@ provisioning:
 
 # ─────────────────────────────────────────────────────────────────────
 # Internal service — name `kafka` (DNS kafka.kafka.svc.cluster.local:9092).
-# Aligned with overlays/prod, the KEDA ScaledObject, analysis-job-template,
-# and CLAUDE.md — no service alias needed (the chart uses this name natively).
+# Aligned with overlays/prod, the KEDA ScaledObject, and the analysis-job-template
+# — no service alias needed (the chart uses this name natively).
 # ─────────────────────────────────────────────────────────────────────
 service:
   type: ClusterIP

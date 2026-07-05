@@ -20,7 +20,7 @@ _TOKEN_PATTERNS = [
     r"<</?SYS>>",                   # Llama-2 system block
     r"</?s>",                       # BOS / EOS sentinels
     r"<(?:start|end)_of_turn>",     # Gemma turn markers
-    r"\n\n(?:Human|Assistant|System):",  # Anthropic-style turn boundary
+    r"\n\n(?:Human|Assistant|System):",  # conversational turn boundary
 ]
 _TOKEN_RE = re.compile("|".join(_TOKEN_PATTERNS), re.IGNORECASE)
 

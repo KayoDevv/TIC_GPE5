@@ -12,7 +12,7 @@ sample bytes or filenames — so it is safe to commit.
 Usage (on the VM, where validation/*.duckdb live):
 
     # 1. Freeze the reference run (writes scripts/validation/golden/baseline.json)
-    python3 -m scripts.validation.golden freeze --run-id run_OpusV1.4
+    python3 -m scripts.validation.golden freeze --run-id run_v1.4
 
     # 2. After a scoring change, replay the SAME corpus under a new run id,
     #    then compare against the frozen baseline:

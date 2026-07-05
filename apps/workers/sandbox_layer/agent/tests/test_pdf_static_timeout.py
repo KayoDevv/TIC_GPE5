@@ -1,6 +1,6 @@
 """D1 follow-up — a defeated static probe is a signal, not an absence of signal.
 
-Root cause of the fb87d8a7 miss (run_OpusV1.4 + run_after_D1): the sample made
+Root cause of the fb87d8a7 miss (run_v1.4 + run_after_D1): the sample made
 pdfid hang past its timeout; the failure was silently converted into score 0.0
 => benign. These tests pin the new behaviour: probe timeout => score 0.2
 (0.06 through the 0.30 hypothesis weight => needs_more_context band), with an

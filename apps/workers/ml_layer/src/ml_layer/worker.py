@@ -21,7 +21,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("ml_layer.worker")
 
-# Hard SLA for the ML Layer (see CLAUDE.md). Breaches are logged as warnings so
+# Hard SLA for the ML Layer. Breaches are logged as warnings so
 # the latency budget can be monitored without changing the verdict contract.
 ML_SLA_MS = 500
 
