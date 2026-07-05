@@ -19,6 +19,7 @@ on:
 
 permissions:
   contents: read
+  packages: read
 
 concurrency:
   group: import-sandbox-agents
@@ -34,18 +35,24 @@ jobs:
     runs-on: ubuntu-latest
     environment: production
     steps:
-      - uses: actions/checkout@v4
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
-
-      - name: Build agent images (linux/amd64, load into local docker)
+      # Pull the already-built current images from GHCR and retag to :v1 (the tag
+      # the credential-less detonation Jobs reference). Avoids rebuilding — the
+      # pdf-agent Dockerfile downloads mupdf from mupdf.com at build time, which
+      # is slow/flaky on a cold runner.
+      - name: Pull current agent images + retag :v1
         run: |
           set -euo pipefail
-          docker build --platform linux/amd64 -t "$AGENT_IMAGE" \
-            -f apps/workers/sandbox_layer/Dockerfile.agent .
-          docker build --platform linux/amd64 -t "$PDF_IMAGE" \
-            -f apps/workers/sandbox_layer/Dockerfile.pdf-agent .
+          docker pull ghcr.io/kayodevv/ubuntu-sandbox:latest
+          docker pull ghcr.io/kayodevv/ubuntu-pdf-sandbox:latest
+          docker tag ghcr.io/kayodevv/ubuntu-sandbox:latest "$AGENT_IMAGE"
+          docker tag ghcr.io/kayodevv/ubuntu-pdf-sandbox:latest "$PDF_IMAGE"
           docker image ls | grep ubuntu-
 
       - name: Install OpenVPN client
