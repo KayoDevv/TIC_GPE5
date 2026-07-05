@@ -6,7 +6,7 @@
 #   docker build -t ghcr.io/kayodevv/charon-llm-layer:latest \
 #                -f apps/workers/llm_layer/Dockerfile .
 
-FROM python:3.12-slim
+FROM python:3.14-slim
 
 WORKDIR /app
 
