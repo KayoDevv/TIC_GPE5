@@ -1,4 +1,14 @@
+"""Static PDF analysis: ONNX inference plus threshold-calibrated risk scoring.
+
+The tuned decision threshold lives in a sidecar next to the model; scores are
+calibrated so ``risk_score > 90`` matches the Verdict Layer's block boundary.
+``load_threshold`` and ``calibrate_score`` are shared with offline evaluation so
+it scores files exactly as production does.
+"""
+
 import asyncio
+import json
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -6,51 +16,81 @@ import onnxruntime as ort
 
 from ml_layer.features.pdf import FEATURE_ORDER, PDFFeatureExtractor
 
+_SCORE_SCALE = 100
+_MAX_BENIGN_SCORE = 90.0
+_MIN_MALICIOUS_SCORE = 91
+_MALICIOUS_SCORE_SPAN = float(_SCORE_SCALE - _MIN_MALICIOUS_SCORE)
+
+_HIGH_ENTROPY_THRESHOLD = 7.0
+_SUSPICIOUS_JS_TAG_THRESHOLD = 5
+_KNOWN_MALWARE_SCORE = 90
+_HIGH_RISK_SCORE = 70
+
+
+def _metadata_path(model_path: str) -> Path:
+    return Path(model_path).with_suffix(".metadata.json")
+
+
+def load_threshold(model_path: str) -> float | None:
+    meta_path = _metadata_path(model_path)
+    if not meta_path.exists():
+        return None
+    metadata = json.loads(meta_path.read_text())
+    threshold = metadata.get("threshold")
+    return float(threshold) if threshold is not None else None
+
+
+def calibrate_score(proba: float, threshold: float | None) -> int:
+    if threshold is None or not 0.0 < threshold < 1.0:
+        return int(proba * _SCORE_SCALE)
+    if proba < threshold:
+        return int(_MAX_BENIGN_SCORE * proba / threshold)
+    malicious_span = _MALICIOUS_SCORE_SPAN * (proba - threshold) / (1.0 - threshold)
+    return _MIN_MALICIOUS_SCORE + int(malicious_span)
+
 
 class StaticAnalyzer:
     def __init__(self, model_path: str) -> None:
         self.session = ort.InferenceSession(model_path)
         self.input_name = self.session.get_inputs()[0].name
+        self.n_features = self._resolve_n_features()
+        self.threshold = load_threshold(model_path)
         self.extractor = PDFFeatureExtractor()
 
-    def _score(self, result: Any) -> int:
-        """Map the ONNX output to a 0-100 risk score.
+    def _resolve_n_features(self) -> int:
+        shape = self.session.get_inputs()[0].shape
+        feature_dim = shape[1] if isinstance(shape, (list, tuple)) and len(shape) > 1 else None
+        return feature_dim if isinstance(feature_dim, int) else len(FEATURE_ORDER)
 
-        The LightGBM→ONNX export returns ``result[1]`` as the per-class
-        probabilities (``result[1][0][1]`` is the malicious probability).
-        Any deviation in the output shape falls back to a neutral score of 0.
-        """
+    def _score(self, result: Any) -> int:
         try:
             proba = float(result[1][0][1])
         except (IndexError, KeyError, TypeError, ValueError):
             return 0
-        return int(proba * 100)
+        return calibrate_score(proba, self.threshold)
 
     async def analyze(self, data: bytes) -> tuple[int, list[str]]:
-        """Extract features and run ONNX inference. Returns (risk_score, tags)."""
-        # 1. Feature extraction (CPU intensive, run in thread).
         features = await asyncio.to_thread(self.extractor.extract, data)
 
-        # 2. Prepare input in the canonical FEATURE_ORDER the model was trained on.
-        X = np.array([[features[k] for k in FEATURE_ORDER]], dtype=np.float32)
+        model_features = [features[k] for k in FEATURE_ORDER[: self.n_features]]
+        model_input = np.array([model_features], dtype=np.float32)
 
-        # 3. Inference (run in thread to not block the event loop).
-        result = await asyncio.to_thread(self.session.run, None, {self.input_name: X})
+        result = await asyncio.to_thread(self.session.run, None, {self.input_name: model_input})
         risk_score = self._score(result)
 
         tags: list[str] = []
-        if features.get("entropy", 0) > 7.0:
+        if features.get("entropy", 0) > _HIGH_ENTROPY_THRESHOLD:
             tags.append("high_entropy")
         if features.get("pdf_has_javascript", 0) > 0:
             tags.append("has_javascript")
-        if features.get("pdf_suspicious_js_count", 0) > 5:
+        if features.get("pdf_suspicious_js_count", 0) > _SUSPICIOUS_JS_TAG_THRESHOLD:
             tags.append("suspicious_js")
         if features.get("pdf_has_launch", 0) > 0:
             tags.append("has_launch_action")
 
-        if risk_score > 90:
+        if risk_score > _KNOWN_MALWARE_SCORE:
             tags.append("known_malware")
-        elif risk_score > 70:
+        elif risk_score > _HIGH_RISK_SCORE:
             tags.append("high_risk")
 
         return risk_score, tags

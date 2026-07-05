@@ -1,9 +1,8 @@
-"""PDF static feature extraction using pikepdf.
+"""Static PDF feature extraction with pikepdf.
 
-All public surface is the ``PDFFeatureExtractor`` class and the
-``FEATURE_ORDER`` constant.  Both training and inference must use the
-same ``FEATURE_ORDER`` so that the numpy vector fed to the ONNX model
-is always aligned with what was used during training.
+The public surface is ``PDFFeatureExtractor`` and ``FEATURE_ORDER``. Training and
+inference must share ``FEATURE_ORDER`` so the vector fed to the ONNX model always
+matches what the model was trained on. ``FEATURE_ORDER`` is append-only.
 """
 
 from __future__ import annotations
@@ -11,13 +10,42 @@ from __future__ import annotations
 import io
 import re
 from collections import deque
+from dataclasses import dataclass, field
 from typing import Any
+from urllib.parse import urlparse
 
 import pikepdf
 
 from ml_layer.features.common import shannon_entropy
 
-# Canonical feature order — never reorder; append only.
+
+@dataclass
+class _Signals:
+    js_found: bool = False
+    openaction_found: bool = False
+    aa_found: bool = False
+    embedded_file_found: bool = False
+    launch_found: bool = False
+    acroform_found: bool = False
+    xfa_found: bool = False
+    submitform_found: bool = False
+    goto_remote_found: bool = False
+    jbig2_found: bool = False
+    richmedia_found: bool = False
+    uri_count: int = 0
+    uri_external_count: int = 0
+    object_stream_count: int = 0
+    encoding_layers: int = 0
+    stream_count: int = 0
+    suspicious_js_count: int = 0
+    stream_entropies: list[float] = field(default_factory=list)
+    uri_domains: set[str] = field(default_factory=set)
+
+
+# Append-only. The first block is legacy static structure; the "modern" block
+# targets today's multi-page, JS-free, URL-driven malware; the exploit block is
+# informed by the CIC-Evasive feature set. Files trained on an older, shorter
+# FEATURE_ORDER stay compatible because the analyzer slices to the model width.
 FEATURE_ORDER: list[str] = [
     "entropy",
     "max_stream_entropy",
@@ -35,16 +63,23 @@ FEATURE_ORDER: list[str] = [
     "pdf_suspicious_js_count",
     "pdf_encoding_layers",
     "pdf_uri_count",
+    "pdf_parse_error",
+    "pdf_uri_external_count",
+    "pdf_uri_distinct_domains",
+    "pdf_has_submitform",
+    "pdf_has_goto_remote",
+    "pdf_object_stream_count",
+    "pdf_incremental_updates",
+    "pdf_has_jbig2",
+    "pdf_has_richmedia",
 ]
 
-# Patterns that indicate obfuscated / malicious JavaScript inside a PDF stream.
 _SUSPICIOUS_JS_PATTERNS: list[re.Pattern[bytes]] = [
     re.compile(rb"eval\s*\("),
     re.compile(rb"unescape\s*\("),
     re.compile(rb"String\.fromCharCode\s*\("),
 ]
 
-# Filter names that are stacked in malicious PDFs to hide payloads.
 _ENCODING_FILTERS = frozenset(
     {
         "/FlateDecode",
@@ -55,23 +90,18 @@ _ENCODING_FILTERS = frozenset(
     }
 )
 
-# ── Performance caps ──────────────────────────────────────────────────────────
-# Sample only the first 1 MB of raw file bytes for whole-file entropy.
-# Entropy stabilises quickly; reading more just burns CPU on large documents.
+_EOF_MARKER = b"%%EOF"
+_JBIG2_FILTER = "/JBIG2Decode"
+_OBJECT_STREAM_TYPE = "/ObjStm"
+_RICHMEDIA = "/RichMedia"
+
+# Performance caps: entropy stabilises within the first megabyte; oversized
+# streams are images/fonts, not scripts; and the security-relevant objects of a
+# huge benign document appear early, so the walk is bounded.
 _ENTROPY_SAMPLE_BYTES: int = 1_000_000
-
-# Maximum *compressed* stream length (bytes) we will attempt to decompress.
-# Streams larger than this are almost certainly images or fonts — not JS.
-# Skipping them avoids multi-second decompression for huge embedded objects.
-_MAX_STREAM_COMPRESSED_BYTES: int = 5_000_000  # 5 MB
-
-# After decompression, cap body at this many bytes for entropy / JS scanning.
-_MAX_STREAM_BODY_BYTES: int = 512_000  # 512 KB
-
-# Maximum PDF objects visited by the BFS.  Large benign documents can have
-# tens of thousands of objects; the security-relevant ones appear early.
+_MAX_STREAM_COMPRESSED_BYTES: int = 5_000_000
+_MAX_STREAM_BODY_BYTES: int = 512_000
 _MAX_BFS_OBJECTS: int = 3_000
-# ─────────────────────────────────────────────────────────────────────────────
 
 
 def _zero_features() -> dict[str, float]:
@@ -79,24 +109,13 @@ def _zero_features() -> dict[str, float]:
 
 
 def _compute_filter_depth(filters: Any) -> int:
-    """Return the encoding filter stack depth for a /Filter value.
-
-    *filters* is either a ``pikepdf.Array`` (stacked filters) or a single
-    ``pikepdf.Name``.  Only filters in ``_ENCODING_FILTERS`` contribute.
-    """
     if isinstance(filters, pikepdf.Array):
         return sum(1 for f in filters if str(f) in _ENCODING_FILTERS)
     return 1 if str(filters) in _ENCODING_FILTERS else 0
 
 
 def _read_stream_body(obj: pikepdf.Stream) -> bytes | None:
-    """Return the decoded body of *obj* (capped to ``_MAX_STREAM_BODY_BYTES``).
-
-    Returns ``None`` on any read error or when the compressed size exceeds
-    ``_MAX_STREAM_COMPRESSED_BYTES`` (those are images / fonts, not scripts).
-    """
     try:
-        # Check the on-disk (compressed) length before decompressing.
         length_obj = obj.get("/Length")
         if length_obj is not None and int(length_obj) > _MAX_STREAM_COMPRESSED_BYTES:
             return None
@@ -107,7 +126,6 @@ def _read_stream_body(obj: pikepdf.Stream) -> bytes | None:
 
 
 def _get_stream_dict_values(obj: pikepdf.Stream) -> list[Any]:
-    """Return ``list(obj.stream_dict.values())``, or ``[]`` on any error."""
     try:
         return list(obj.stream_dict.values())  # type: ignore[operator]
     except Exception:  # noqa: BLE001
@@ -115,61 +133,101 @@ def _get_stream_dict_values(obj: pikepdf.Stream) -> list[Any]:
 
 
 def _scan_js_content(value: Any, suspicious_js_count: list[int]) -> None:
-    """Extract and scan JavaScript content for suspicious patterns.
-
-    Uses try/except so that both direct and indirect (reference-wrapped)
-    pikepdf stream objects are handled correctly.
-    """
     body: bytes | None = None
-
-    # Try reading as a stream first (handles pikepdf.Stream and indirect refs).
     try:
         body = value.read_bytes()
     except Exception:  # noqa: BLE001
         pass
-
-    # Fall back to raw bytes for inline string objects.
     if body is None:
         try:
             body = bytes(value)
         except Exception:  # noqa: BLE001
             pass
-
     if body is not None:
         for pattern in _SUSPICIOUS_JS_PATTERNS:
             suspicious_js_count[0] += len(pattern.findall(body))
 
 
-def _extract_object_signals(
-    pdf: pikepdf.Pdf,
-    *,
-    js_found: list[bool],
-    openaction_found: list[bool],
-    aa_found: list[bool],
-    embedded_file_found: list[bool],
-    launch_found: list[bool],
-    acroform_found: list[bool],
-    xfa_found: list[bool],
-    uri_count: list[int],
-    encoding_layers: list[int],
-    stream_count: list[int],
-    stream_entropies: list[float],
-    suspicious_js_count: list[int],
-) -> None:
-    """Iterative BFS walk over all PDF objects to collect security signals.
+def _record_uri(value: Any, sig: _Signals) -> None:
+    try:
+        url = str(value).strip()
+    except Exception:  # noqa: BLE001
+        return
+    parsed = urlparse(url)
+    if parsed.scheme in ("http", "https"):
+        sig.uri_external_count += 1
+        if parsed.netloc:
+            sig.uri_domains.add(parsed.netloc.lower())
 
-    Uses a visited-id set to break circular references that would otherwise
-    cause unbounded recursion in a naive recursive approach.
 
-    The walk is capped at ``_MAX_BFS_OBJECTS`` to bound runtime on very large
-    benign documents (government reports, textbooks, etc.) that can contain
-    tens of thousands of embedded font / image objects.
-    """
+def _record_action(value: Any, sig: _Signals) -> None:
+    name = str(value)
+    if name == "/SubmitForm":
+        sig.submitform_found = True
+    elif name in ("/GoToR", "/GoToE"):
+        sig.goto_remote_found = True
+
+
+def _filters_contain(filters: Any, name: str) -> bool:
+    if isinstance(filters, pikepdf.Array):
+        return any(str(f) == name for f in filters)
+    return str(filters) == name
+
+
+def _is_richmedia(key_str: str, value: Any) -> bool:
+    return key_str == _RICHMEDIA or (key_str == "/Subtype" and str(value) == _RICHMEDIA)
+
+
+def _inspect_dict_entry(key_str: str, value: Any, sig: _Signals) -> None:
+    if _is_richmedia(key_str, value):
+        sig.richmedia_found = True
+    if key_str in ("/JS", "/JavaScript"):
+        sig.js_found = True
+        counter = [0]
+        _scan_js_content(value, counter)
+        sig.suspicious_js_count += counter[0]
+    elif key_str == "/OpenAction":
+        sig.openaction_found = True
+    elif key_str == "/AA":
+        sig.aa_found = True
+    elif key_str in ("/EmbeddedFile", "/EmbeddedFiles", "/EF"):
+        sig.embedded_file_found = True
+    elif key_str == "/Launch":
+        sig.launch_found = True
+    elif key_str == "/AcroForm":
+        sig.acroform_found = True
+    elif key_str == "/XFA":
+        sig.xfa_found = True
+    elif key_str == "/URI":
+        sig.uri_count += 1
+        _record_uri(value, sig)
+    elif key_str == "/S":
+        _record_action(value, sig)
+
+
+def _inspect_stream(obj: pikepdf.Stream, sig: _Signals, queue: deque[Any]) -> None:
+    sig.stream_count += 1
+    filters = obj.get("/Filter")
+    if filters is not None:
+        sig.encoding_layers = max(sig.encoding_layers, _compute_filter_depth(filters))
+        if _filters_contain(filters, _JBIG2_FILTER):
+            sig.jbig2_found = True
+    if str(obj.get("/Type")) == _OBJECT_STREAM_TYPE:
+        sig.object_stream_count += 1
+    body = _read_stream_body(obj)
+    if body is not None:
+        sig.stream_entropies.append(shannon_entropy(body))
+        for pattern in _SUSPICIOUS_JS_PATTERNS:
+            sig.suspicious_js_count += len(pattern.findall(body))
+    for value in _get_stream_dict_values(obj):
+        queue.append(value)
+
+
+def _extract_object_signals(pdf: pikepdf.Pdf, *, sig: _Signals) -> None:
     visited: set[int] = set()
     queue: deque[Any] = deque(pdf.objects)
 
     while queue:
-        # Hard cap — stop once we've visited enough objects.
         if len(visited) >= _MAX_BFS_OBJECTS:
             break
 
@@ -180,73 +238,18 @@ def _extract_object_signals(
         visited.add(obj_id)
 
         if isinstance(obj, pikepdf.Stream):
-            stream_count[0] += 1
-
-            # Encoding filter stack depth.
-            filters = obj.get("/Filter")
-            if filters is not None:
-                depth = _compute_filter_depth(filters)
-                encoding_layers[0] = max(encoding_layers[0], depth)
-
-            # Stream body entropy + suspicious JS scan (with size caps).
-            body = _read_stream_body(obj)
-            if body is not None:
-                stream_entropies.append(shannon_entropy(body))
-                # Scan every stream body for JS obfuscation patterns —
-                # malicious PDFs embed JS in any stream, not just /JS-keyed ones.
-                for pattern in _SUSPICIOUS_JS_PATTERNS:
-                    suspicious_js_count[0] += len(pattern.findall(body))
-
-            # Enqueue stream dictionary entries for further inspection.
-            for value in _get_stream_dict_values(obj):
-                queue.append(value)
-
+            _inspect_stream(obj, sig, queue)
         elif isinstance(obj, pikepdf.Dictionary):
             for key, value in obj.items():
-                key_str = str(key)
-
-                if key_str in ("/JS", "/JavaScript"):
-                    js_found[0] = True
-                    _scan_js_content(value, suspicious_js_count)
-
-                if key_str == "/OpenAction":
-                    openaction_found[0] = True
-                if key_str == "/AA":
-                    aa_found[0] = True
-                # /EmbeddedFiles = Names tree for attachments
-                # /EF = embedded file dict inside a file spec
-                if key_str in ("/EmbeddedFile", "/EmbeddedFiles", "/EF"):
-                    embedded_file_found[0] = True
-                if key_str == "/Launch":
-                    launch_found[0] = True
-                if key_str == "/AcroForm":
-                    acroform_found[0] = True
-                if key_str == "/XFA":
-                    xfa_found[0] = True
-                if key_str == "/URI":
-                    uri_count[0] += 1
-
+                _inspect_dict_entry(str(key), value, sig)
                 queue.append(value)
-
         elif isinstance(obj, pikepdf.Array):
             for item in obj:
                 queue.append(item)
 
 
 class PDFFeatureExtractor:
-    """Extract 16 static security features from a PDF byte payload.
-
-    This class is **synchronous** — in an async context wrap calls with
-    ``asyncio.to_thread(extractor.extract, data)``.
-    """
-
     def extract(self, data: bytes) -> dict[str, float]:
-        """Return a feature dict aligned with ``FEATURE_ORDER``.
-
-        On any ``pikepdf.PdfError`` (corrupt / encrypted PDF) returns all
-        zeros with ``pdf_parse_error = 1.0`` appended as a side-channel key
-        (not part of ``FEATURE_ORDER`` — used by the dispatcher for tagging).
-        """
         features = _zero_features()
 
         try:
@@ -255,67 +258,42 @@ class PDFFeatureExtractor:
             features["pdf_parse_error"] = 1.0
             return features
 
-        # Entropy is only meaningful for parseable PDFs.
-        # Sample at most _ENTROPY_SAMPLE_BYTES — entropy stabilises quickly
-        # and reading the full file on a 50 MB document is prohibitively slow.
         features["entropy"] = shannon_entropy(data[:_ENTROPY_SAMPLE_BYTES])
 
-        # Header version (e.g. "%PDF-1.7" → 1.7).
         try:
             features["pdf_header_version"] = float(pdf.pdf_version)
         except (ValueError, AttributeError):
             pass
 
-        # Page count.
         try:
             features["pdf_page_count"] = float(len(pdf.pages))
         except Exception:  # noqa: BLE001
             pass
 
-        # Object count (count all indirect objects).
         features["pdf_object_count"] = float(len(list(pdf.objects)))
+        features["pdf_incremental_updates"] = float(data.count(_EOF_MARKER))
 
-        # Accumulators for iterative walk.
-        js_found: list[bool] = [False]
-        openaction_found: list[bool] = [False]
-        aa_found: list[bool] = [False]
-        embedded_file_found: list[bool] = [False]
-        launch_found: list[bool] = [False]
-        acroform_found: list[bool] = [False]
-        xfa_found: list[bool] = [False]
-        uri_count: list[int] = [0]
-        encoding_layers: list[int] = [0]
-        stream_count: list[int] = [0]
-        stream_entropies: list[float] = []
-        suspicious_js_count: list[int] = [0]
+        sig = _Signals()
+        _extract_object_signals(pdf, sig=sig)
 
-        _extract_object_signals(
-            pdf,
-            js_found=js_found,
-            openaction_found=openaction_found,
-            aa_found=aa_found,
-            embedded_file_found=embedded_file_found,
-            launch_found=launch_found,
-            acroform_found=acroform_found,
-            xfa_found=xfa_found,
-            uri_count=uri_count,
-            encoding_layers=encoding_layers,
-            stream_count=stream_count,
-            stream_entropies=stream_entropies,
-            suspicious_js_count=suspicious_js_count,
-        )
-
-        features["pdf_stream_count"] = float(stream_count[0])
-        features["max_stream_entropy"] = max(stream_entropies) if stream_entropies else 0.0
-        features["pdf_has_javascript"] = 1.0 if js_found[0] else 0.0
-        features["pdf_has_openaction"] = 1.0 if openaction_found[0] else 0.0
-        features["pdf_has_auto_action"] = 1.0 if aa_found[0] else 0.0
-        features["pdf_has_embedded_file"] = 1.0 if embedded_file_found[0] else 0.0
-        features["pdf_has_launch"] = 1.0 if launch_found[0] else 0.0
-        features["pdf_has_acroform"] = 1.0 if acroform_found[0] else 0.0
-        features["pdf_has_xfa"] = 1.0 if xfa_found[0] else 0.0
-        features["pdf_suspicious_js_count"] = float(suspicious_js_count[0])
-        features["pdf_encoding_layers"] = float(encoding_layers[0])
-        features["pdf_uri_count"] = float(uri_count[0])
+        features["pdf_stream_count"] = float(sig.stream_count)
+        features["max_stream_entropy"] = max(sig.stream_entropies) if sig.stream_entropies else 0.0
+        features["pdf_has_javascript"] = 1.0 if sig.js_found else 0.0
+        features["pdf_has_openaction"] = 1.0 if sig.openaction_found else 0.0
+        features["pdf_has_auto_action"] = 1.0 if sig.aa_found else 0.0
+        features["pdf_has_embedded_file"] = 1.0 if sig.embedded_file_found else 0.0
+        features["pdf_has_launch"] = 1.0 if sig.launch_found else 0.0
+        features["pdf_has_acroform"] = 1.0 if sig.acroform_found else 0.0
+        features["pdf_has_xfa"] = 1.0 if sig.xfa_found else 0.0
+        features["pdf_suspicious_js_count"] = float(sig.suspicious_js_count)
+        features["pdf_encoding_layers"] = float(sig.encoding_layers)
+        features["pdf_uri_count"] = float(sig.uri_count)
+        features["pdf_uri_external_count"] = float(sig.uri_external_count)
+        features["pdf_uri_distinct_domains"] = float(len(sig.uri_domains))
+        features["pdf_has_submitform"] = 1.0 if sig.submitform_found else 0.0
+        features["pdf_has_goto_remote"] = 1.0 if sig.goto_remote_found else 0.0
+        features["pdf_object_stream_count"] = float(sig.object_stream_count)
+        features["pdf_has_jbig2"] = 1.0 if sig.jbig2_found else 0.0
+        features["pdf_has_richmedia"] = 1.0 if sig.richmedia_found else 0.0
 
         return features

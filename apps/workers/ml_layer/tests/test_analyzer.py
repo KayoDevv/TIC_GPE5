@@ -1,18 +1,29 @@
-"""Tests for ml_layer.analyzer.StaticAnalyzer."""
+"""Tests for ml_layer.analyzer: scoring, calibration, and metadata loading."""
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from ml_layer.analyzer import StaticAnalyzer
+from ml_layer.analyzer import StaticAnalyzer, calibrate_score
 from ml_layer.features.pdf import FEATURE_ORDER
+
+
+def _build_analyzer(model_path: str, shape: object) -> StaticAnalyzer:
+    with patch("ml_layer.analyzer.ort.InferenceSession") as mock_session_cls:
+        session = mock_session_cls.return_value
+        input_meta = MagicMock()
+        input_meta.name = "input"
+        input_meta.shape = shape
+        session.get_inputs.return_value = [input_meta]
+        return StaticAnalyzer(model_path)
 
 
 @pytest.fixture()
 def analyzer() -> StaticAnalyzer:
-    """StaticAnalyzer with a mocked ONNX session (no real model loaded)."""
     with patch("ml_layer.analyzer.ort.InferenceSession") as mock_session_cls:
         session = mock_session_cls.return_value
         input_meta = MagicMock()
@@ -69,7 +80,7 @@ async def test_analyze_high_risk_band(analyzer: StaticAnalyzer) -> None:
 
 
 async def test_analyze_malformed_output_falls_back_to_zero(analyzer: StaticAnalyzer) -> None:
-    _set_session(analyzer, [123])  # result[1] -> IndexError
+    _set_session(analyzer, [123])
     _set_features(analyzer, {"entropy": 1.0})
 
     score, tags = await analyzer.analyze(b"%PDF-1.7")
@@ -79,5 +90,61 @@ async def test_analyze_malformed_output_falls_back_to_zero(analyzer: StaticAnaly
 
 
 def test_score_value_error_falls_back_to_zero(analyzer: StaticAnalyzer) -> None:
-    # result[1][0][1] is not coercible to float -> ValueError branch.
     assert analyzer._score(["label", [["not-a-number", "nope"]]]) == 0
+
+
+class TestResolveNFeatures:
+    def test_concrete_feature_dim_from_model(self) -> None:
+        analyzer = _build_analyzer("dummy.onnx", [None, 12])
+        assert analyzer.n_features == 12
+
+    def test_dynamic_feature_dim_falls_back(self) -> None:
+        analyzer = _build_analyzer("dummy.onnx", [None, "dyn"])
+        assert analyzer.n_features == len(FEATURE_ORDER)
+
+    def test_short_shape_falls_back(self) -> None:
+        analyzer = _build_analyzer("dummy.onnx", [16])
+        assert analyzer.n_features == len(FEATURE_ORDER)
+
+    def test_non_sequence_shape_falls_back(self) -> None:
+        analyzer = _build_analyzer("dummy.onnx", MagicMock())
+        assert analyzer.n_features == len(FEATURE_ORDER)
+
+
+class TestThresholdMetadata:
+    def _analyzer_with_metadata(self, tmp_path: Path, metadata: dict | None) -> StaticAnalyzer:
+        model_path = tmp_path / "model.onnx"
+        if metadata is not None:
+            (tmp_path / "model.metadata.json").write_text(json.dumps(metadata))
+        return _build_analyzer(str(model_path), [None, len(FEATURE_ORDER)])
+
+    def test_no_sidecar_threshold_is_none(self, tmp_path: Path) -> None:
+        analyzer = self._analyzer_with_metadata(tmp_path, None)
+        assert analyzer.threshold is None
+
+    def test_threshold_loaded_from_sidecar(self, tmp_path: Path) -> None:
+        analyzer = self._analyzer_with_metadata(tmp_path, {"threshold": 0.83})
+        assert analyzer.threshold == 0.83
+
+    def test_null_threshold_is_none(self, tmp_path: Path) -> None:
+        analyzer = self._analyzer_with_metadata(tmp_path, {"threshold": None})
+        assert analyzer.threshold is None
+
+
+class TestCalibration:
+    def test_legacy_scaling_when_no_threshold(self) -> None:
+        assert calibrate_score(0.5, None) == 50
+
+    def test_legacy_scaling_when_threshold_degenerate(self) -> None:
+        assert calibrate_score(0.5, 1.0) == 50
+
+    def test_benign_side_maps_below_block_boundary(self) -> None:
+        assert calibrate_score(0.4, 0.8) == 45
+
+    def test_threshold_boundary_triggers_block(self) -> None:
+        score = calibrate_score(0.8, 0.8)
+        assert score == 91
+        assert score > 90
+
+    def test_max_proba_maps_to_100(self) -> None:
+        assert calibrate_score(1.0, 0.8) == 100

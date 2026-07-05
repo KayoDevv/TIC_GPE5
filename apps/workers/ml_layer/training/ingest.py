@@ -1,22 +1,15 @@
-"""Dataset ingestion: load PDF files and extract features into a DataFrame.
+"""Dataset ingestion: load labelled PDFs and extract features into a DataFrame.
 
-Supported input formats
------------------------
-1. Directory layout::
-
-       dataset_dir/
-           malicious/   ← PDF files labeled 1
-           benign/      ← PDF files labeled 0
-
-2. CSV file with columns ``path`` (absolute or relative) and ``label`` (0 or 1).
-
-The returned DataFrame has columns matching ``FEATURE_ORDER`` plus ``"label"``.
-Files that cannot be parsed are logged and skipped.
+Accepts a ``malicious/`` + ``benign/`` directory layout or a CSV of
+``path,label`` rows. Output columns are ``FEATURE_ORDER`` plus ``label`` and
+``sha256``; unreadable/pathological files are logged and skipped. An optional
+SHA-256-keyed CSV cache lets repeat runs skip pikepdf re-parsing.
 """
 
 from __future__ import annotations
 
 import csv
+import hashlib
 import logging
 import signal
 import warnings
@@ -30,27 +23,19 @@ from ml_layer.features.pdf import FEATURE_ORDER, PDFFeatureExtractor
 
 logger = logging.getLogger(__name__)
 
-# Per-file extraction timeout (seconds). With size caps in the extractor
-# (1 MB entropy sample, 512 KB stream body cap, 3K BFS object limit) any
-# legitimate PDF should finish in well under 5 s. 10 s is a generous safety net.
+# A per-file hard timeout guards against PDFs that make libqpdf spin; the result
+# wait adds a margin over it. Progress is logged every N files.
 _FILE_TIMEOUT_S = 10
-
-# Log a progress line after processing this many files.
+_RESULT_TIMEOUT_MARGIN_S = 5
 _PROGRESS_EVERY = 500
+_HASH_CHUNK_BYTES = 1 << 16
 
 
 def _timeout_handler(signum: int, frame: object) -> None:  # noqa: ARG001
     raise TimeoutError("PDF feature extraction timed out")
 
 
-def _extract_one(path: str, label: int) -> Optional[dict[str, float | int]]:
-    """Worker function executed in a subprocess.
-
-    Uses SIGALRM to enforce a hard per-file timeout so that pathological PDFs
-    (those that cause libqpdf to spin) cannot block the whole worker forever.
-    """
-    # Silence pikepdf's internal C-level noise (corrupt page trees, etc.) in
-    # worker processes — the pipeline log is already noisy enough.
+def _extract_one(path: str, label: int) -> Optional[dict[str, float | int | str]]:
     logging.getLogger("pikepdf._core").setLevel(logging.CRITICAL)
 
     signal.signal(signal.SIGALRM, _timeout_handler)
@@ -62,18 +47,13 @@ def _extract_one(path: str, label: int) -> Optional[dict[str, float | int]]:
             warnings.warn(f"Cannot read {path}: {exc}", stacklevel=2)
             return None
 
-        extractor = PDFFeatureExtractor()
-        features = extractor.extract(data)
-
-        # Drop the parse_error side-channel key — it's not in FEATURE_ORDER.
-        features.pop("pdf_parse_error", None)
-
-        # Ensure every FEATURE_ORDER key is present (fills zeros for missing ones).
-        row: dict[str, float | int] = {k: features.get(k, 0.0) for k in FEATURE_ORDER}
+        features = PDFFeatureExtractor().extract(data)
+        row: dict[str, float | int | str] = {k: features.get(k, 0.0) for k in FEATURE_ORDER}
         row["label"] = label
+        row["sha256"] = hashlib.sha256(data).hexdigest()
         return row
     finally:
-        signal.alarm(0)  # Always cancel the alarm before returning.
+        signal.alarm(0)
 
 
 def _collect_paths_from_dir(dataset_dir: Path) -> list[tuple[str, int]]:
@@ -83,8 +63,6 @@ def _collect_paths_from_dir(dataset_dir: Path) -> list[tuple[str, int]]:
         if not subdir.is_dir():
             logger.warning("Subdirectory not found, skipping: %s", subdir)
             continue
-        # Accept both *.pdf and extension-less files (hash-named samples from
-        # malware repositories such as MalwareBazaar / Contagio).
         for candidate in subdir.iterdir():
             if not candidate.is_file():
                 continue
@@ -102,22 +80,117 @@ def _collect_paths_from_csv(csv_path: Path) -> list[tuple[str, int]]:
     return pairs
 
 
-def load_dataset(source: str, max_workers: int = 4) -> pd.DataFrame:
-    """Load a labeled PDF dataset and extract features.
+def _file_sha256(path: str) -> Optional[str]:
+    digest = hashlib.sha256()
+    try:
+        with open(path, "rb") as f:
+            for chunk in iter(lambda: f.read(_HASH_CHUNK_BYTES), b""):
+                digest.update(chunk)
+    except OSError:
+        return None
+    return digest.hexdigest()
 
-    Parameters
-    ----------
-    source:
-        Path to either a directory (``malicious/`` + ``benign/`` layout)
-        or a CSV file (``path``, ``label`` columns).
-    max_workers:
-        Number of parallel processes for feature extraction.
 
-    Returns
-    -------
-    pd.DataFrame
-        One row per successfully parsed file. Columns: ``FEATURE_ORDER`` + ``["label"]``.
-    """
+def _load_cache(cache_path: str) -> dict[str, dict[str, float]]:
+    p = Path(cache_path)
+    if not p.exists():
+        return {}
+    cached = pd.read_csv(p, dtype={"sha256": str})
+    if any(col not in cached.columns for col in FEATURE_ORDER):
+        logger.info("Feature cache schema is stale (feature set changed) — rebuilding it")
+        return {}
+    cache: dict[str, dict[str, float]] = {}
+    for record in cached.to_dict(orient="records"):
+        cache[str(record["sha256"])] = {k: float(record[k]) for k in FEATURE_ORDER}
+    return cache
+
+
+def _save_cache(cache_path: str, cache: dict[str, dict[str, float]]) -> None:
+    records = [{"sha256": sha, **feats} for sha, feats in cache.items()]
+    df = pd.DataFrame(records, columns=["sha256", *FEATURE_ORDER])
+    Path(cache_path).parent.mkdir(parents=True, exist_ok=True)
+    df.to_csv(cache_path, index=False)
+
+
+def _log_progress(done: int, total: int, skipped: int) -> None:
+    if done % _PROGRESS_EVERY == 0 or done == total:
+        logger.info(
+            "Progress: %d / %d files processed (%.1f%%) — %d skipped so far",
+            done,
+            total,
+            100.0 * done / total,
+            skipped,
+        )
+
+
+def _extract_pairs(
+    pairs: list[tuple[str, int]], max_workers: int
+) -> tuple[list[tuple[str, dict[str, float | int | str]]], int]:
+    total = len(pairs)
+    path_rows: list[tuple[str, dict[str, float | int | str]]] = []
+    skipped = 0
+    done = 0
+
+    with ProcessPoolExecutor(max_workers=max_workers) as executor:
+        futures = {executor.submit(_extract_one, path, label): path for path, label in pairs}
+        for future in as_completed(futures):
+            path = futures[future]
+            done += 1
+            try:
+                result = future.result(timeout=_FILE_TIMEOUT_S + _RESULT_TIMEOUT_MARGIN_S)
+            except TimeoutError:
+                logger.warning("Timeout (>%ds) extracting %s — skipping", _FILE_TIMEOUT_S, path)
+                skipped += 1
+                continue
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Failed to extract features from %s: %s", path, exc)
+                skipped += 1
+                continue
+
+            if result is not None:
+                path_rows.append((path, result))
+            else:
+                skipped += 1
+
+            _log_progress(done, total, skipped)
+    return path_rows, skipped
+
+
+def _extract_with_cache(
+    pairs: list[tuple[str, int]], max_workers: int, cache_path: str
+) -> tuple[list[dict[str, float | int | str]], int]:
+    cache = _load_cache(cache_path)
+    rows: list[dict[str, float | int | str]] = []
+    misses: list[tuple[str, int]] = []
+    path_to_sha: dict[str, str] = {}
+
+    for path, label in pairs:
+        sha = _file_sha256(path)
+        if sha is not None and sha in cache:
+            rows.append({**cache[sha], "label": label, "sha256": sha})
+        else:
+            misses.append((path, label))
+            if sha is not None:
+                path_to_sha[path] = sha
+
+    logger.info("Feature cache: %d hits, %d misses", len(rows), len(misses))
+
+    skipped = 0
+    if misses:
+        path_rows, skipped = _extract_pairs(misses, max_workers)
+        for path, row in path_rows:
+            rows.append(row)
+            sha = path_to_sha.get(path)
+            if sha is not None:
+                cache[sha] = {k: float(row[k]) for k in FEATURE_ORDER}
+        _save_cache(cache_path, cache)
+
+    return rows, skipped
+
+
+def load_dataset(
+    source: str, max_workers: int = 4, cache_path: Optional[str] = None
+) -> pd.DataFrame:
     p = Path(source)
 
     if p.is_dir():
@@ -129,48 +202,20 @@ def load_dataset(source: str, max_workers: int = 4) -> pd.DataFrame:
 
     if not pairs:
         logger.warning("No files found in dataset source: %s", source)
-        return pd.DataFrame(columns=FEATURE_ORDER + ["label"])
+        return pd.DataFrame(columns=FEATURE_ORDER + ["label", "sha256"])
 
     total = len(pairs)
     logger.info(
         "Collected %d files — starting feature extraction with %d workers", total, max_workers
     )
 
-    rows: list[dict[str, float | int]] = []
-    skipped = 0
-    done = 0
+    if cache_path is None:
+        path_rows, skipped = _extract_pairs(pairs, max_workers)
+        rows = [row for _path, row in path_rows]
+    else:
+        rows, skipped = _extract_with_cache(pairs, max_workers, cache_path)
 
-    with ProcessPoolExecutor(max_workers=max_workers) as executor:
-        futures = {executor.submit(_extract_one, path, label): path for path, label in pairs}
-        for future in as_completed(futures):
-            path = futures[future]
-            done += 1
-            try:
-                result = future.result(timeout=_FILE_TIMEOUT_S + 5)
-            except TimeoutError:
-                logger.warning("Timeout (>%ds) extracting %s — skipping", _FILE_TIMEOUT_S, path)
-                skipped += 1
-                continue
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("Failed to extract features from %s: %s", path, exc)
-                skipped += 1
-                continue
-
-            if result is not None:
-                rows.append(result)
-            else:
-                skipped += 1
-
-            if done % _PROGRESS_EVERY == 0 or done == total:
-                logger.info(
-                    "Progress: %d / %d files processed (%.1f%%) — %d skipped so far",
-                    done,
-                    total,
-                    100.0 * done / total,
-                    skipped,
-                )
-
-    df = pd.DataFrame(rows, columns=FEATURE_ORDER + ["label"])
+    df = pd.DataFrame(rows, columns=FEATURE_ORDER + ["label", "sha256"])
     logger.info(
         "Ingestion complete: %d rows loaded, %d files skipped (total %d)",
         len(df),

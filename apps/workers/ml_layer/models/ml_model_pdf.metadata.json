@@ -1,0 +1,28 @@
+{
+  "feature_order": [
+    "entropy",
+    "max_stream_entropy",
+    "pdf_object_count",
+    "pdf_stream_count",
+    "pdf_page_count",
+    "pdf_header_version",
+    "pdf_has_javascript",
+    "pdf_has_openaction",
+    "pdf_has_auto_action",
+    "pdf_has_embedded_file",
+    "pdf_has_launch",
+    "pdf_has_acroform",
+    "pdf_has_xfa",
+    "pdf_suspicious_js_count",
+    "pdf_encoding_layers",
+    "pdf_uri_count",
+    "pdf_parse_error",
+    "pdf_uri_external_count",
+    "pdf_uri_distinct_domains",
+    "pdf_has_submitform",
+    "pdf_has_goto_remote",
+    "pdf_object_stream_count",
+    "pdf_incremental_updates"
+  ],
+  "threshold": 0.7403483767214227
+}

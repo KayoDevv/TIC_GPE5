@@ -78,16 +78,18 @@ class TestExtractOne:
 
     def test_returns_none_for_missing_file(self) -> None:
         import warnings
+
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             result = _extract_one("/nonexistent/path/file.pdf", 0)
         assert result is None
 
-    def test_parse_error_key_stripped(self, dataset_dir: Path) -> None:
+    def test_parse_error_is_a_feature(self, dataset_dir: Path) -> None:
         pdf_path = str(dataset_dir / "malicious" / "evil.pdf")
         result = _extract_one(pdf_path, 1)
         assert result is not None
-        assert "pdf_parse_error" not in result
+        assert result["pdf_parse_error"] == 0.0
+        assert "pdf_parse_error" in FEATURE_ORDER
 
 
 class TestCollectPathsFromDir:
@@ -174,7 +176,7 @@ class TestLoadDataset:
         (tmp_path / "benign").mkdir()
         df = load_dataset(str(tmp_path), max_workers=1)
         assert df.empty
-        assert list(df.columns) == FEATURE_ORDER + ["label"]
+        assert list(df.columns) == FEATURE_ORDER + ["label", "sha256"]
 
     def test_failed_extraction_skipped(self, dataset_dir: Path) -> None:
         # Corrupt one file so extraction raises inside the subprocess.
@@ -244,3 +246,48 @@ class TestLoadDataset:
 
         # Pipeline still succeeds — progress logging is side-effect only.
         assert len(df) == 2
+
+
+def _write_pdf_with_pages(path: Path, pages: int) -> None:
+    pdf = pikepdf.Pdf.new()
+    for _ in range(pages):
+        pdf.add_blank_page(page_size=(612, 792))
+    buf = io.BytesIO()
+    pdf.save(buf)
+    path.write_bytes(buf.getvalue())
+
+
+@pytest.fixture()
+def distinct_dataset_dir(tmp_path: Path) -> Path:
+    mal_dir = tmp_path / "malicious"
+    ben_dir = tmp_path / "benign"
+    mal_dir.mkdir()
+    ben_dir.mkdir()
+    _write_pdf_with_pages(mal_dir / "evil.pdf", pages=3)
+    _write_pdf_with_pages(ben_dir / "clean.pdf", pages=1)
+    return tmp_path
+
+
+class TestFeatureCache:
+    def test_cache_is_created_then_reused(self, distinct_dataset_dir: Path, tmp_path: Path) -> None:
+        cache_path = str(tmp_path / "features.csv")
+
+        df1 = load_dataset(str(distinct_dataset_dir), max_workers=1, cache_path=cache_path)
+        assert len(df1) == 2
+        assert Path(cache_path).exists()
+
+        with patch("training.ingest._extract_pairs") as mock_extract:
+            df2 = load_dataset(str(distinct_dataset_dir), max_workers=1, cache_path=cache_path)
+            mock_extract.assert_not_called()
+
+        assert len(df2) == 2
+        s1 = df1.sort_values("label").reset_index(drop=True)
+        s2 = df2.sort_values("label").reset_index(drop=True)
+        for key in FEATURE_ORDER:
+            assert s1[key].tolist() == s2[key].tolist()
+
+    def test_cache_preserves_labels(self, distinct_dataset_dir: Path, tmp_path: Path) -> None:
+        cache_path = str(tmp_path / "features.csv")
+        load_dataset(str(distinct_dataset_dir), max_workers=1, cache_path=cache_path)
+        df = load_dataset(str(distinct_dataset_dir), max_workers=1, cache_path=cache_path)
+        assert set(df["label"].tolist()) == {0, 1}

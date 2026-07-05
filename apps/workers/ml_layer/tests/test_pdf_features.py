@@ -14,9 +14,14 @@ from ml_layer.features.pdf import (
     FEATURE_ORDER,
     PDFFeatureExtractor,
     _compute_filter_depth,
+    _filters_contain,
     _get_stream_dict_values,
+    _inspect_dict_entry,
     _read_stream_body,
+    _record_action,
+    _record_uri,
     _scan_js_content,
+    _Signals,
 )
 
 
@@ -26,8 +31,8 @@ def extractor() -> PDFFeatureExtractor:
 
 
 class TestFeatureOrder:
-    def test_feature_order_has_16_entries(self) -> None:
-        assert len(FEATURE_ORDER) == 16
+    def test_feature_order_has_25_entries(self) -> None:
+        assert len(FEATURE_ORDER) == 25
 
     def test_feature_order_has_no_duplicates(self) -> None:
         assert len(FEATURE_ORDER) == len(set(FEATURE_ORDER))
@@ -50,6 +55,15 @@ class TestFeatureOrder:
             "pdf_suspicious_js_count",
             "pdf_encoding_layers",
             "pdf_uri_count",
+            "pdf_parse_error",
+            "pdf_uri_external_count",
+            "pdf_uri_distinct_domains",
+            "pdf_has_submitform",
+            "pdf_has_goto_remote",
+            "pdf_object_stream_count",
+            "pdf_incremental_updates",
+            "pdf_has_jbig2",
+            "pdf_has_richmedia",
         }
         assert set(FEATURE_ORDER) == expected
 
@@ -128,11 +142,13 @@ class TestExtractMaliciousPDF:
 
 
 class TestExtractCorruptPDF:
-    def test_corrupt_returns_zeros_for_feature_order_keys(
+    def test_corrupt_returns_zeros_for_structural_features(
         self, extractor: PDFFeatureExtractor, corrupt_pdf_bytes: bytes
     ) -> None:
         features = extractor.extract(corrupt_pdf_bytes)
         for key in FEATURE_ORDER:
+            if key == "pdf_parse_error":
+                continue
             assert features[key] == 0.0
 
     def test_corrupt_sets_parse_error_flag(
@@ -285,15 +301,11 @@ class TestHelperFunctions:
         assert _compute_filter_depth(pikepdf.Name("/DCTDecode")) == 0
 
     def test_array_of_two_known_filters_returns_two(self) -> None:
-        filters = pikepdf.Array(
-            [pikepdf.Name("/FlateDecode"), pikepdf.Name("/ASCIIHexDecode")]
-        )
+        filters = pikepdf.Array([pikepdf.Name("/FlateDecode"), pikepdf.Name("/ASCIIHexDecode")])
         assert _compute_filter_depth(filters) == 2
 
     def test_array_with_unknown_filter_only_counts_known(self) -> None:
-        filters = pikepdf.Array(
-            [pikepdf.Name("/FlateDecode"), pikepdf.Name("/DCTDecode")]
-        )
+        filters = pikepdf.Array([pikepdf.Name("/FlateDecode"), pikepdf.Name("/DCTDecode")])
         assert _compute_filter_depth(filters) == 1
 
     def test_empty_array_returns_zero(self) -> None:
@@ -487,6 +499,7 @@ class TestExceptionPaths:
 
         # The first call (whole-file entropy) must use at most _ENTROPY_SAMPLE_BYTES.
         from ml_layer.features.pdf import _ENTROPY_SAMPLE_BYTES
+
         assert sampled_lengths[0] <= _ENTROPY_SAMPLE_BYTES
 
     def test_stream_dict_values_enqueued(self, extractor: PDFFeatureExtractor) -> None:
@@ -518,3 +531,118 @@ class TestExceptionPaths:
 
         for key in FEATURE_ORDER:
             assert key in features
+
+
+class TestRecordUri:
+    def test_external_http_uri_counted_with_domain(self) -> None:
+        sig = _Signals()
+        _record_uri("https://evil.example.com/x", sig)
+        assert sig.uri_external_count == 1
+        assert sig.uri_domains == {"evil.example.com"}
+
+    def test_non_http_uri_ignored(self) -> None:
+        sig = _Signals()
+        _record_uri("mailto:hi@example.com", sig)
+        assert sig.uri_external_count == 0
+        assert sig.uri_domains == set()
+
+    def test_http_without_netloc_counts_but_adds_no_domain(self) -> None:
+        sig = _Signals()
+        _record_uri("http:", sig)
+        assert sig.uri_external_count == 1
+        assert sig.uri_domains == set()
+
+    def test_unstringable_value_is_ignored(self) -> None:
+        class _BadStr:
+            def __str__(self) -> str:
+                raise ValueError("boom")
+
+        sig = _Signals()
+        _record_uri(_BadStr(), sig)
+        assert sig.uri_external_count == 0
+
+
+class TestRecordAction:
+    def test_submitform(self) -> None:
+        sig = _Signals()
+        _record_action(pikepdf.Name("/SubmitForm"), sig)
+        assert sig.submitform_found is True
+
+    def test_goto_remote(self) -> None:
+        sig = _Signals()
+        _record_action(pikepdf.Name("/GoToR"), sig)
+        assert sig.goto_remote_found is True
+
+    def test_other_action_ignored(self) -> None:
+        sig = _Signals()
+        _record_action(pikepdf.Name("/GoTo"), sig)
+        assert sig.submitform_found is False
+        assert sig.goto_remote_found is False
+
+
+class TestInspectDictEntry:
+    def test_uri_entry_records_external(self) -> None:
+        sig = _Signals()
+        _inspect_dict_entry("/URI", "http://phish.example/login", sig)
+        assert sig.uri_count == 1
+        assert sig.uri_external_count == 1
+
+    def test_action_entry_routes_to_record_action(self) -> None:
+        sig = _Signals()
+        _inspect_dict_entry("/S", pikepdf.Name("/SubmitForm"), sig)
+        assert sig.submitform_found is True
+
+
+class TestModernStructuralFeatures:
+    def test_object_stream_counted(self, extractor: PDFFeatureExtractor) -> None:
+        pdf = pikepdf.Pdf.new()
+        pdf.add_blank_page(page_size=(612, 792))
+        buf = io.BytesIO()
+        pdf.save(buf, object_stream_mode=pikepdf.ObjectStreamMode.generate)
+        features = extractor.extract(buf.getvalue())
+        assert features["pdf_object_stream_count"] >= 1.0
+
+    def test_incremental_updates_at_least_one(self, extractor: PDFFeatureExtractor) -> None:
+        pdf = pikepdf.Pdf.new()
+        pdf.add_blank_page(page_size=(612, 792))
+        buf = io.BytesIO()
+        pdf.save(buf)
+        features = extractor.extract(buf.getvalue())
+        assert features["pdf_incremental_updates"] >= 1.0
+
+
+class TestExploitVectorFeatures:
+    def test_filters_contain_array(self) -> None:
+        arr = pikepdf.Array([pikepdf.Name("/FlateDecode"), pikepdf.Name("/JBIG2Decode")])
+        assert _filters_contain(arr, "/JBIG2Decode") is True
+        assert _filters_contain(arr, "/DCTDecode") is False
+
+    def test_filters_contain_single_name(self) -> None:
+        assert _filters_contain(pikepdf.Name("/JBIG2Decode"), "/JBIG2Decode") is True
+        assert _filters_contain(pikepdf.Name("/FlateDecode"), "/JBIG2Decode") is False
+
+    def test_jbig2_stream_detected(self, extractor: PDFFeatureExtractor) -> None:
+        pdf = pikepdf.Pdf.new()
+        pdf.add_blank_page(page_size=(612, 792))
+        stream = pdf.make_stream(b"\x00\x01\x02\x03")
+        stream.Filter = pikepdf.Name("/JBIG2Decode")
+        pdf.Root["/JBTest"] = pdf.make_indirect(stream)
+        buf = io.BytesIO()
+        pdf.save(buf)
+        features = extractor.extract(buf.getvalue())
+        assert features["pdf_has_jbig2"] == 1.0
+
+    def test_richmedia_via_key(self) -> None:
+        sig = _Signals()
+        _inspect_dict_entry("/RichMedia", "x", sig)
+        assert sig.richmedia_found is True
+
+    def test_richmedia_via_subtype_value(self) -> None:
+        sig = _Signals()
+        _inspect_dict_entry("/Subtype", pikepdf.Name("/RichMedia"), sig)
+        assert sig.richmedia_found is True
+
+    def test_richmedia_absent_for_other_subtype(self) -> None:
+        sig = _Signals()
+        _inspect_dict_entry("/Subtype", pikepdf.Name("/Widget"), sig)
+        assert sig.richmedia_found is False

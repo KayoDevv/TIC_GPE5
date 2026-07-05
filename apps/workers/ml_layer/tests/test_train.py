@@ -12,7 +12,7 @@ import pandas as pd
 import pytest
 
 from ml_layer.features.pdf import FEATURE_ORDER
-from training.train import FPR_TARGET, train
+from training.train import FPR_TARGET, _deduplicate, train
 
 
 def _make_synthetic_df(n_malicious: int = 60, n_benign: int = 140) -> pd.DataFrame:
@@ -61,6 +61,27 @@ class TestTrain:
         model, threshold = train(df)
         assert isinstance(threshold, float)
 
+    def test_trains_with_sha256_column(self) -> None:
+        df = _make_synthetic_df()
+        df["sha256"] = [f"hash_{i}" for i in range(len(df))]
+        df.loc[:19, "sha256"] = "dup"
+        model, threshold = train(df)
+        assert model is not None
+        assert isinstance(threshold, float)
+
+
+class TestDeduplicate:
+    def test_drops_exact_duplicates(self) -> None:
+        df = _make_synthetic_df(n_malicious=10, n_benign=10)
+        df["sha256"] = ["dup"] * 5 + [f"u{i}" for i in range(len(df) - 5)]
+        deduped = _deduplicate(df)
+        assert len(deduped) == 16
+        assert deduped["sha256"].is_unique
+
+    def test_noop_without_sha256(self) -> None:
+        df = _make_synthetic_df(n_malicious=10, n_benign=10)
+        assert len(_deduplicate(df)) == len(df)
+
 
 class TestExportToOnnx:
     def test_export_creates_onnx_file(self) -> None:
@@ -104,6 +125,29 @@ class TestExportToOnnx:
             outputs = session.run(None, {input_name: dummy})
             assert len(outputs) >= 2
 
+    def test_export_writes_metadata_sidecar_consumed_by_analyzer(self) -> None:
+        import json
+
+        from ml_layer.analyzer import StaticAnalyzer
+        from training.export import export_to_onnx
+
+        df = _make_synthetic_df()
+        model, threshold = train(df)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_path = os.path.join(tmpdir, "model.onnx")
+            export_to_onnx(model, output_path, threshold=threshold)
+
+            meta_path = Path(tmpdir) / "model.metadata.json"
+            assert meta_path.exists()
+            metadata = json.loads(meta_path.read_text())
+            assert metadata["threshold"] == threshold
+            assert metadata["feature_order"] == FEATURE_ORDER
+
+            analyzer = StaticAnalyzer(output_path)
+            assert analyzer.threshold == threshold
+            assert analyzer.n_features == len(FEATURE_ORDER)
+
     def test_export_raises_on_bad_onnx_output(self) -> None:
         """Simulate a model whose ONNX export produces fewer than 2 outputs."""
         from training.export import export_to_onnx
@@ -120,7 +164,7 @@ class TestExportToOnnx:
             tempfile.TemporaryDirectory() as tmpdir,
         ):
             output_path = os.path.join(tmpdir, "model.onnx")
-            with pytest.raises(RuntimeError, match="expected ≥ 2 outputs"):
+            with pytest.raises(RuntimeError, match="expected >= 2 outputs"):
                 export_to_onnx(model, output_path)
 
     def test_export_raises_on_wrong_proba_shape(self) -> None:
@@ -160,16 +204,17 @@ class TestPipeline:
         mal_dir.mkdir()
         ben_dir.mkdir()
 
-        def _make_pdf(path: Path) -> None:
+        def _make_pdf(path: Path, pages: int) -> None:
             pdf = pikepdf.Pdf.new()
-            pdf.add_blank_page(page_size=(612, 792))
+            for _ in range(pages):
+                pdf.add_blank_page(page_size=(612, 792))
             buf = io.BytesIO()
             pdf.save(buf)
             path.write_bytes(buf.getvalue())
 
         for i in range(10):
-            _make_pdf(mal_dir / f"mal_{i}.pdf")
-            _make_pdf(ben_dir / f"ben_{i}.pdf")
+            _make_pdf(mal_dir / f"mal_{i}.pdf", pages=i + 1)
+            _make_pdf(ben_dir / f"ben_{i}.pdf", pages=i + 11)
 
         output_path = str(tmp_path / "model.onnx")
         run(str(tmp_path), output_path, max_workers=1)
@@ -195,8 +240,7 @@ class TestPipeline:
         dataset = str(tmp_path)
 
         argv = ["pipeline", "--dataset", dataset, "--output", output, "--workers", "2"]
-        with patch("training.pipeline.run") as mock_run, \
-             patch.object(sys, "argv", argv):
+        with patch("training.pipeline.run") as mock_run, patch.object(sys, "argv", argv):
             main()
 
-        mock_run.assert_called_once_with(dataset, output, max_workers=2)
+        mock_run.assert_called_once_with(dataset, output, max_workers=2, cache_path=None)

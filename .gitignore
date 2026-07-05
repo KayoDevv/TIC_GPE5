@@ -30,6 +30,14 @@ build/
 *CLAUDE.md
 
 apps/workers/ml_layer/data/
+# Fetched malware / benign corpora + experiment holdouts — real malware, NEVER commit.
+apps/workers/ml_layer/data_*/
+# ML experiment artifacts: candidate models, backups, feature cache, FP dumps.
+apps/workers/ml_layer/models/*_v[0-9]*.onnx
+apps/workers/ml_layer/models/*_v[0-9]*.metadata.json
+apps/workers/ml_layer/models/*.onnx.bak
+apps/workers/ml_layer/models/.feature_cache*.csv
+apps/workers/ml_layer/models/false_positives.csv
 # Local productivity tools (not shared)
 memory/
 TASKS.md
