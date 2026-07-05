@@ -17,7 +17,7 @@
 # inetsim.org apt repo. Exact Perl dependency package names may need adjusting
 # at first build; this list covers INetSim 1.3.2's documented requirements.
 
-FROM debian:12-slim
+FROM debian:13-slim
 
 ENV DEBIAN_FRONTEND=noninteractive
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
