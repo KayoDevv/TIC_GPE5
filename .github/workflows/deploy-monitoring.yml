@@ -68,10 +68,11 @@ jobs:
             "KC=$REMOTE_KUBECONFIG bash -seuo pipefail" <<'REMOTE'
             k() { KUBECONFIG=${KC:-$HOME/.kube/config} kubectl "$@"; }
             k apply -k ~/charon-deploy/monitoring
-            # Dashboards/datasources are provisioned from ConfigMaps with stable
-            # names, so `apply` alone won't restart Grafana — force a reload so
-            # dashboard edits always take effect (its file-watch needs inotify).
-            k -n monitoring rollout restart deploy/grafana
+            # Grafana + Alloy read config from stable-named ConfigMaps, so `apply`
+            # alone won't restart them — force a reload so dashboard edits and
+            # Alloy relabel changes always take effect (their file-watch needs
+            # inotify, which may be exhausted).
+            k -n monitoring rollout restart deploy/grafana ds/alloy
             echo "--- waiting for rollouts ---"
             for d in prometheus kube-state-metrics loki grafana; do
               k -n monitoring rollout status "deploy/$d" --timeout=180s

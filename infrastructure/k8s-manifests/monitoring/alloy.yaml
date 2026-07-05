@@ -52,6 +52,15 @@ data:
         regex         = "(.+)"
         target_label  = "service"
       }
+      // Detonation Jobs carry no `app` label (only charon.io/role=analysis), so
+      // they'd land with an empty service and be invisible in the dashboard.
+      // Label them explicitly so the actual sandbox analysis is first-class.
+      rule {
+        source_labels = ["__meta_kubernetes_pod_label_charon_io_role"]
+        regex         = "analysis"
+        target_label  = "service"
+        replacement   = "sandbox-detonation"
+      }
       rule {
         source_labels = ["__meta_kubernetes_namespace"]
         target_label  = "namespace"
