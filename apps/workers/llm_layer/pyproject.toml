@@ -12,7 +12,7 @@ zt-shared = { path = "../../../packages/core", develop = true }
 httpx = "^0.28"
 
 [tool.poetry.group.dev.dependencies]
-pytest = "^8.3"
+pytest = ">=8.3,<10.0"
 pytest-asyncio = ">=0.24,<1.5"
 pytest-cov = ">=6,<8"
 respx = ">=0.22,<0.24"
