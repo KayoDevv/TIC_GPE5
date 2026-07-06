@@ -30,7 +30,7 @@ pytest-cov = "^7.1.0"
 ruff = "^0.15.20"
 mypy = "^1.13.0"
 moto = { version = "^5.0.0", extras = ["s3"] }
-types-boto3 = "^1.43.39"
+types-boto3 = "^1.43.40"
 
 [build-system]
 requires = ["poetry-core"]
