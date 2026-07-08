@@ -1,0 +1,11 @@
+# Single source of truth for the pipeline's infra endpoints (charon.internal zone).
+# Workers map their own env var name to these keys via configMapKeyRef.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: charon-endpoints
+  namespace: pipeline
+data:
+  KAFKA_BOOTSTRAP_SERVERS: "kafka.charon.internal:9092"
+  MINIO_ENDPOINT_URL: "http://minio.charon.internal:9000"
+  REDIS_URL: "redis://redis:6379/0"

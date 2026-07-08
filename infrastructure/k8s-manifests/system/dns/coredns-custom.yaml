@@ -1,0 +1,14 @@
+# CoreDNS internal zone via the coredns-custom mount (K3s imports *.override into
+# .:53). Cluster-resolver pods only; old FQDNs still resolve. See docs/coredns-endpoint-simplification-plan.md.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: coredns-custom
+  namespace: kube-system
+data:
+  charon.override: |
+    rewrite name exact kafka.charon.internal      kafka.kafka.svc.cluster.local
+    rewrite name exact minio.charon.internal      minio.minio.svc.cluster.local
+    rewrite name exact redis.charon.internal      redis.pipeline.svc.cluster.local
+    rewrite name exact prometheus.charon.internal prometheus.monitoring.svc.cluster.local
+    rewrite name exact loki.charon.internal       loki.monitoring.svc.cluster.local

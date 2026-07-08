@@ -5,6 +5,7 @@ namespace: pipeline
 # by Terraform (namespaces.tf, networkpolicy.tf). The `llm-secrets` secret
 # (HF_TOKEN) is created out-of-band and is NOT in this kustomization.
 resources:
+  - charon-endpoints.yaml
   - secret-s3.yaml
   - redis.yaml
   - core-backend.yaml

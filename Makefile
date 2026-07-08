@@ -211,13 +211,14 @@ status:
 # ══════════════════════════════════════════════════════════════════════════════
 
 .PHONY: configuration _apt-deps install-k3s install-kubectl install-helm install-docker install-k9s \
-        setup-kubeconfig setup-calico fix-dns-fai
+        setup-kubeconfig setup-calico fix-dns-fai setup-coredns-zone
 
-configuration: _apt-deps install-docker install-k3s install-kubectl install-helm install-k9s setup-kubeconfig setup-calico fix-dns-fai install
+configuration: _apt-deps install-docker install-k3s install-kubectl install-helm install-k9s setup-kubeconfig setup-calico fix-dns-fai setup-coredns-zone install
 	@echo ""
 	@echo "=== Configuration complete ==="
 	@echo "Tools installed: k3s, kubectl, helm, docker, k9s + Python deps."
 	@echo "kubeconfig in place, Calico CNI deployed (NetworkPolicy enforcement), ISP DNS fixed."
+	@echo "CoreDNS charon.internal zone active (short service aliases)."
 	@echo ""
 	@echo ">>> If docker was just added to your group: LOG OUT/LOG BACK IN"
 	@echo ">>> (or run 'newgrp docker') BEFORE 'make deploy-infra' / 'make launch'."
@@ -342,6 +343,14 @@ fix-dns-fai:
 	fi
 	sudo systemctl restart k3s
 	@echo "ISP DNS fixed (resolv-conf -> 1.1.1.1 / 8.8.8.8). k3s restarted."
+
+# Charon internal DNS zone (coredns-custom). Idempotent; additive.
+setup-coredns-zone:
+	@command -v kubectl >/dev/null 2>&1 || { echo "ERROR: kubectl not installed (make install-kubectl)."; exit 1; }
+	kubectl apply -k infrastructure/k8s-manifests/system/dns/
+	kubectl -n kube-system rollout restart deployment coredns
+	kubectl -n kube-system rollout status deployment coredns --timeout=120s
+	@echo "CoreDNS zone active: kafka|minio|redis|prometheus|loki.charon.internal"
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  K3s — DEPLOY (in-cluster infra)

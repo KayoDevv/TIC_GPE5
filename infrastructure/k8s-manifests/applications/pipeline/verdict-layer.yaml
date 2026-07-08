@@ -27,9 +27,9 @@ spec:
           imagePullPolicy: IfNotPresent
           env:
             - name: KAFKA_BOOTSTRAP_SERVERS
-              value: "kafka.kafka.svc.cluster.local:9092"
+              valueFrom: {configMapKeyRef: {name: charon-endpoints, key: KAFKA_BOOTSTRAP_SERVERS}}
             - name: REDIS_URL
-              value: "redis://redis:6379/0"
+              valueFrom: {configMapKeyRef: {name: charon-endpoints, key: REDIS_URL}}
           resources:
             requests: {cpu: "50m", memory: "96Mi"}
             limits: {cpu: "300m", memory: "256Mi"}

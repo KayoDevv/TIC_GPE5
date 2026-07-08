@@ -31,7 +31,7 @@ spec:
           env:
             # DEV profile: VLLM_URL is intentionally unset -> HF router.
             - name: KAFKA_BOOTSTRAP
-              value: "kafka.kafka.svc.cluster.local:9092"
+              valueFrom: {configMapKeyRef: {name: charon-endpoints, key: KAFKA_BOOTSTRAP_SERVERS}}
             - name: TOPIC_IN
               value: "sandbox_layer.result"
             - name: TOPIC_OUT
