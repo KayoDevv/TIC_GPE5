@@ -205,6 +205,18 @@ resource "kubernetes_network_policy_v1" "kafka_allow" {
         port     = "9093"
       }
     }
+    # KEDA reads consumer-group lag to scale sandbox-consumer.
+    ingress {
+      from {
+        namespace_selector {
+          match_labels = { "kubernetes.io/metadata.name" = "keda" }
+        }
+      }
+      ports {
+        protocol = "TCP"
+        port     = "9092"
+      }
+    }
     # DNS — the broker resolves its own advertised-listener service name.
     egress {
       to {
