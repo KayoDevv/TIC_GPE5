@@ -1,6 +1,12 @@
+<script setup lang="ts">
+const { themeClass } = useTheme();
+</script>
+
 <template>
-  <div>
-    <NuxtRouteAnnouncer />
-    <NuxtWelcome />
+  <div
+    :class="themeClass"
+    class="isolate relative min-h-screen bg-[var(--bg)] font-sans2 text-[var(--text)] antialiased transition-colors duration-500"
+  >
+    <NuxtPage />
   </div>
 </template>
