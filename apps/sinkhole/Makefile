@@ -2,7 +2,9 @@ SERVICE_NAME := sinkhole
 
 include ../../makefiles/common.mk
 
-IMAGE := ghcr.io/kayodevv/inetsim-sinkhole:v1.0.0
+include ../../makefiles/versions.mk
+
+IMAGE := $(SINKHOLE_IMAGE)
 
 .PHONY: help install build test lint format typecheck run deploy clean
 

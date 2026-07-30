@@ -1,16 +1,5 @@
-# Prod overlay — to be applied by cd-deploy.yml after image push.
-#
-# How to activate the deploy step in cd-deploy.yml:
-#   1. Store the kubeconfig in GitHub secret KUBECONFIG_B64 (base64 encoded).
-#   2. In the `deploy` job, uncomment the kubectl steps and point them at
-#      this overlay: `kubectl apply -k infrastructure/k8s-manifests/overlays/prod`
-#   3. Set image tags to the SHA pushed by build-and-push (see comments below).
-#
-# This overlay extends the same base as dev (sandbox namespace, NetworkPolicies,
-# KEDA ScaledObject). The only differences from dev are:
-#   - images pinned to the SHA built by CI (via `images:` below)
-#   - gVisor MANDATORY (same as dev, already in base manifests)
-#   - resource limits unchanged (tune per cluster capacity)
+# Differs from the dev overlay only by consumer-env-patch.yaml (in-cluster
+# Kafka/MinIO DNS). The consumer version is inherited from the base.
 
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
@@ -24,10 +13,3 @@ patches:
     target:
       kind: Deployment
       name: sandbox-consumer
-
-# Image tags are updated by `kustomize edit set image` in cd-deploy.yml
-# before `kubectl apply -k`. Placeholders below show the expected format.
-# Example (in the deploy job):
-#   kustomize edit set image \
-#     ghcr.io/kayodevv/charon-sandbox-consumer=ghcr.io/kayodevv/charon-sandbox-consumer:sha-${{ github.sha }}
-images: []

@@ -15,6 +15,7 @@ _global: &global
   - '.github/workflows/ci-build.yml'
   - '.github/workflows/ci-tests.yml'
   - '.github/workflows/cd-deploy.yml'
+  - '.github/workflows/cd-publish-images.yml'
   - '.github/filters.yml'
   - '.github/service-matrix.json'
   - '.github/actions/**'
@@ -55,6 +56,9 @@ sandbox-agent:
 sandbox-pdf-agent:
   - *global
   - 'apps/workers/sandbox_layer/**'
+sinkhole:
+  - *global
+  - 'apps/sinkhole/**'
 
 # ── Lint concerns (ci-lint job gates) ───────────────────────────────────────
 lint-yaml:

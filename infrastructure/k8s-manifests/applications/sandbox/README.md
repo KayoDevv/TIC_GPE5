@@ -49,6 +49,6 @@ kubectl apply -k infrastructure/k8s-manifests/applications/sandbox/
 | Bottleneck | Mitigation |
 |---|---|
 | MinIO bandwidth (concurrent PCAP/dump uploads) | Keep MinIO on the same rack as the analysis nodes |
-| Image pull storm on scale-up | Pre-pull `ubuntu-sandbox:v1` via a pause DaemonSet, or a registry mirror |
+| Image pull storm on scale-up | Non-issue for the agents: they are pre-loaded into containerd at their release tag (workflow "Import sandbox agent images"), never pulled |
 | Kafka lag > 5 min | Increase the number of `file.requested` partitions AND KEDA `maxReplicaCount` together (currently 3 = 3 partitions; beyond that = idle consumers) |
 | Node CPU exhaustion | `nodeSelector` + `charon.io/sandbox` taint on a dedicated pool |

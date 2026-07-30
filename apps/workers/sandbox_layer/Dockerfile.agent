@@ -1,19 +1,11 @@
 # ghcr-image: ubuntu-sandbox:v1.2.0
-# Hardened guest image for ELF sample execution — ubuntu-sandbox:v1
+# Hardened guest image for ELF sample execution.
 # Runs in a batch/v1 K8s Job with cap SYS_PTRACE.
 # Contains the analysis agent (run_analysis.py) + Python deps.
+# Build from the monorepo ROOT: make build-sandbox
 #
-# Build:
-#   docker build -t ghcr.io/kayodevv/ubuntu-sandbox:v1 \
-#                -f apps/workers/sandbox_layer/Dockerfile.agent .
-# (run from the GPE-ETNA monorepo root)
-#
-# Hardening Tranche B — V5 (audit 2026-04-30):
-#   - Non-root user `agent` (UID=10001) — sample runs as agent, not root
-#   - SYS_PTRACE granted via container capability (in pod spec); K8s
-#     propagates it to the ambient set when runAsUser != 0
-#   - /opt/agent owned by root, mode 0755 (read-only for agent), so the
-#     sample cannot rewrite the analysis code mid-run
+# SYS_PTRACE comes from the pod spec, not from here: K8s propagates it to the
+# ambient set only when runAsUser != 0.
 
 FROM ubuntu:22.04
 

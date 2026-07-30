@@ -1,30 +1,20 @@
 name: Deploy core pipeline (OpenVPN + SSH)
 
-# Rolls the pipeline (redis + backend/ml/verdict/llm) AND the sandbox-consumer
-# onto GPE-NYX AT A VERSION TAG, from a GitHub-hosted runner over OpenVPN + SSH
-# (same pattern as deploy-monitoring.yml).
+# The `ref` input selects the commit, not an image version: the kustomizations
+# and the Dockerfile headers in that commit decide what runs.
 #
-# Triggering (deploy is a versioned event, never a plain main push):
-#   * runs AFTER "CD - Build, Push & Deploy" succeeds for a v* tag (workflow_run),
-#     so the version-tagged images are already in GHCR before we pin them.
-#   * workflow_dispatch with a `version` input deploys/rolls back to any existing
-#     tag (e.g. v1.2.0) without rebuilding.
-# A cd-deploy run that wasn't a v* tag (e.g. a manual build) is skipped here —
-# dispatch this workflow with the version to roll it.
-#
-# Required secrets (already provisioned): VPN_OVPN, SSH_HOST, SSH_USER,
-# SSH_PRIVATE_KEY. VM prerequisites (one-time): `ghcr-pull` imagePullSecret +
-# `llm-secrets` in the pipeline namespace, and `make tf-apply` for the namespace
-# + kafka-allow NetworkPolicy. See applications/pipeline/README.md.
+# VM prerequisites (one-time): `ghcr-pull` imagePullSecret + `llm-secrets` in the
+# pipeline namespace, and `make tf-apply`. See applications/pipeline/README.md.
 
 on:
   workflow_dispatch:
     inputs:
-      version:
-        description: 'Image tag to deploy (e.g. v1.3.0)'
-        required: true
+      ref:
+        description: 'Branch, tag or SHA to deploy from'
+        required: false
+        default: main
   workflow_run:
-    workflows: ["CD - Build, Push & Deploy"]
+    workflows: ["CD - Release (promote to latest)"]
     types: [completed]
 
 permissions:
@@ -37,41 +27,35 @@ concurrency:
 env:
   SSH_OPTS: "-i ~/.ssh/id_deploy -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts"
   OWNER: kayodevv
-  # If the SSH user's default kubeconfig isn't the K3s one, set this to e.g.
-  # /home/tisser_f/.kube/config (as deploy-monitoring.yml does).
+  # Set when the SSH user's default kubeconfig isn't the K3s one.
   REMOTE_KUBECONFIG: ""
 
 jobs:
-  # Resolve the version to deploy: the dispatch input, or the tag that triggered
-  # cd-deploy (workflow_run.head_branch is the tag name for a tag push). Deploy
-  # only for a real v* version — a non-tag cd-deploy run is skipped.
+  # workflow_run.head_branch is the tag name when the trigger was a tag push.
   detect:
     runs-on: ubuntu-latest
     if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     outputs:
       deploy: ${{ steps.check.outputs.deploy }}
-      version: ${{ steps.check.outputs.version }}
+      ref: ${{ steps.check.outputs.ref }}
     steps:
       - id: check
         env:
-          DISPATCH_VERSION: ${{ github.event.inputs.version }}
+          DISPATCH_REF: ${{ github.event.inputs.ref }}
           RUN_TAG: ${{ github.event.workflow_run.head_branch }}
         run: |
           set -euo pipefail
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            version="$DISPATCH_VERSION"
+            ref="${DISPATCH_REF:-main}"
           else
-            version="$RUN_TAG"
+            ref="$RUN_TAG"
           fi
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          if printf '%s' "$version" | grep -qE '^v[0-9]'; then
-            echo "deploy -> version=$version"
-            echo "deploy=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "cd-deploy run was not a v* tag ('$version') -> skip"
-            echo "(dispatch this workflow with a version input to deploy manually)"
-            echo "deploy=false" >> "$GITHUB_OUTPUT"
+          if [ -z "$ref" ]; then
+            echo "::error::could not resolve a ref to deploy"; exit 1
           fi
+          echo "deploy from -> $ref"
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+          echo "deploy=true" >> "$GITHUB_OUTPUT"
 
   deploy:
     needs: detect
@@ -79,10 +63,9 @@ jobs:
     runs-on: ubuntu-latest
     environment: production
     steps:
-      # Deploy the manifests AT the released tag, so manifests and images match.
       - uses: actions/checkout@v7
         with:
-          ref: ${{ needs.detect.outputs.version }}
+          ref: ${{ needs.detect.outputs.ref }}
 
       - name: Install OpenVPN client
         run: sudo apt-get update && sudo apt-get install -y openvpn
@@ -116,20 +99,14 @@ jobs:
           | ssh $SSH_OPTS "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
             'rm -rf ~/charon-deploy/pipeline && mkdir -p ~/charon-deploy && tar xzf - -C ~/charon-deploy'
 
-      - name: Apply pipeline (pin every service to the release version)
+      - name: Apply pipeline (versions come from the kustomization)
         run: |
           ssh $SSH_OPTS "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
-            "OWNER=$OWNER VERSION='${{ needs.detect.outputs.version }}' KC=$REMOTE_KUBECONFIG bash -seuo pipefail" <<'REMOTE'
+            "KC=$REMOTE_KUBECONFIG bash -seuo pipefail" <<'REMOTE'
             k() { KUBECONFIG=${KC:-$HOME/.kube/config} kubectl "$@"; }
             cd ~/charon-deploy/pipeline
-            {
-              echo ""
-              echo "images:"
-              for s in core-backend ml-layer verdict-layer llm-layer; do
-                echo "  - name: ghcr.io/$OWNER/charon-$s"
-                echo "    newTag: $VERSION"
-              done
-            } >> kustomization.yaml
+            echo "--- versions from kustomization.yaml ---"
+            grep -A1 '^  - name:' kustomization.yaml
             k apply -k .
             for s in core-backend ml-layer verdict-layer llm-layer; do
               k -n pipeline rollout status "deploy/$s" --timeout=180s
@@ -140,41 +117,51 @@ jobs:
       - name: Ship sandbox manifests to VM
         run: |
           set -euo pipefail
-          # Ship overlays/prod AND the base it references (../../applications/sandbox),
-          # preserving the k8s-manifests layout so the relative path resolves.
+          # The base is shipped too, at its original depth, or the overlay's
+          # ../../applications/sandbox no longer resolves.
           tar czf - -C infrastructure/k8s-manifests overlays/prod applications/sandbox \
           | ssh $SSH_OPTS "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
             'rm -rf ~/charon-deploy/km && mkdir -p ~/charon-deploy/km && tar xzf - -C ~/charon-deploy/km'
 
+      - name: Resolve agent versions from their Dockerfile headers
+        id: agents
+        run: |
+          set -euo pipefail
+          hdr() {
+            local ref
+            ref=$(sed -n 's|^#[[:space:]]*ghcr-image:[[:space:]]*\([^[:space:]]*\).*|\1|p' "$1" | head -1)
+            [ -n "$ref" ] && [ "$ref" != "${ref##*:}" ] || return 1
+            printf '%s' "${ref##*:}"
+          }
+          A=$(hdr apps/workers/sandbox_layer/Dockerfile.agent) \
+            || { echo "::error::no 'ghcr-image' header on Dockerfile.agent"; exit 1; }
+          P=$(hdr apps/workers/sandbox_layer/Dockerfile.pdf-agent) \
+            || { echo "::error::no 'ghcr-image' header on Dockerfile.pdf-agent"; exit 1; }
+          echo "agent=$A" >> "$GITHUB_OUTPUT"
+          echo "pdf=$P"   >> "$GITHUB_OUTPUT"
+          echo "ELF agent -> $A   |   PDF agent -> $P"
+
       - name: Apply sandbox (overlays/prod — in-cluster DNS + gVisor)
         run: |
           ssh $SSH_OPTS "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
-            "OWNER=$OWNER VERSION='${{ needs.detect.outputs.version }}' KC=$REMOTE_KUBECONFIG bash -seuo pipefail" <<'REMOTE'
+            "OWNER=$OWNER AGENT_VERSION='${{ steps.agents.outputs.agent }}' PDF_VERSION='${{ steps.agents.outputs.pdf }}' KC=$REMOTE_KUBECONFIG bash -seuo pipefail" <<'REMOTE'
             k() { KUBECONFIG=${KC:-$HOME/.kube/config} kubectl "$@"; }
             cd ~/charon-deploy/km
-            # The consumer pulls from private GHCR but the sandbox ns may lack the
-            # pull secret — clone it once from the pipeline ns (same registry creds).
+            # Same registry creds as the pipeline ns; clone rather than duplicate.
             if ! k -n sandbox get secret ghcr-pull >/dev/null 2>&1; then
               k -n pipeline get secret ghcr-pull -o yaml \
                 | grep -vE '^\s*(namespace|resourceVersion|uid|creationTimestamp):' \
                 | k apply -n sandbox -f -
             fi
-            # Apply the prod OVERLAY (base = ns-scoped consumer/secret/KEDA; overlay
-            # wires in-cluster Kafka/MinIO DNS + gVisor). Pin the consumer to the
-            # release version in the overlay's images: (replace its `[]` placeholder).
-            grep -vE '^images:\s*\[\]\s*$' overlays/prod/kustomization.yaml > overlays/prod/kustomization.yaml.tmp
-            mv overlays/prod/kustomization.yaml.tmp overlays/prod/kustomization.yaml
-            {
-              echo ""
-              echo "images:"
-              echo "  - name: ghcr.io/$OWNER/charon-sandbox-consumer"
-              echo "    newTag: $VERSION"
-            } >> overlays/prod/kustomization.yaml
             k apply -k overlays/prod
+            # Env values are out of reach of kustomize `images:`. Both tags must
+            # already be in containerd: the Jobs run imagePullPolicy: Never.
+            k -n sandbox set env deploy/sandbox-consumer \
+              "SANDBOX_JOB_IMAGE=ghcr.io/$OWNER/ubuntu-sandbox:$AGENT_VERSION" \
+              "SANDBOX_PDF_JOB_IMAGE=ghcr.io/$OWNER/ubuntu-pdf-sandbox:$PDF_VERSION"
             k -n sandbox rollout status deploy/sandbox-consumer --timeout=180s
-            # The consumer has no readiness probe, so "rolled out" can mask a pod
-            # that Runs then crashes seconds later. Give it a moment and fail loud
-            # if it's restarting.
+            # No readiness probe, so "rolled out" can mask a pod that crashes
+            # seconds later.
             sleep 12
             rs=$(k -n sandbox get pods -l app=sandbox-consumer \
                    -o jsonpath='{range .items[*]}{.status.containerStatuses[0].restartCount}{"\n"}{end}' \

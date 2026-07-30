@@ -29,9 +29,12 @@ spec:
       #   dnsConfig + hostAliases           (sinkhole DNS + split-DNS)
       containers:
         - name: analysis
-          image: ghcr.io/kayodevv/ubuntu-sandbox:v1
-          imagePullPolicy: IfNotPresent
-          command: ["/opt/agent/run_analysis.sh"]
+          # Tag written out: the consumer applies this file, not kustomize.
+          # Never: the Job has no pull secret, so a pull can only 401.
+          image: ghcr.io/kayodevv/ubuntu-sandbox:v1.2.0
+          imagePullPolicy: Never
+          # PDF path uses run_pdf_analysis.py + the ubuntu-pdf-sandbox image.
+          command: ["python3", "/opt/agent/run_analysis.py"]
           args: ["--job-id", "REPLACED_BY_CONSUMER", "--s3-url", "REPLACED_BY_CONSUMER"]
           resources:
             requests: {cpu: "500m", memory: "512Mi", ephemeral-storage: "1Gi"}

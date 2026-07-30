@@ -1,25 +1,13 @@
-name: CD - Build, Push & Deploy
+name: CD - Release (promote to latest)
 
-# Build + Trivy-scan + push EVERY service image to GHCR on a VERSION TAG
-# (git tag v*), tagged with that version; deploy-pipeline.yml then rolls them
-# onto GPE-NYX. Plain main pushes build/deploy NOTHING — a release is a
-# deliberate, versioned event (and dependabot bumps, which never tag, no longer
-# trigger any build/deploy).
-#
-#   Release: git tag v1.3.0 && git push origin v1.3.0
-#   Manual:  workflow_dispatch with the `tag` input (e.g. v1.3.0-hotfix)
-#
-# Registry: ghcr.io via GITHUB_TOKEN. Image names come from service-matrix.json.
-# OWNER is lowercased (OCI refs must be lowercase; the repo owner has a capital).
+# Moves `latest` onto the version each Dockerfile header declares, by manifest
+# copy: `latest` is byte-identical to the version it points at. Images are built
+# by cd-publish-images.yml, never here.
 
 on:
   push:
     tags: ['v*']
   workflow_dispatch:
-    inputs:
-      tag:
-        description: 'Image tag to build (e.g. v1.3.0)'
-        required: true
 
 permissions:
   contents: read
@@ -33,43 +21,13 @@ env:
   OWNER: kayodevv     # forced lowercase — github.repository_owner = "KayoDevv"
 
 jobs:
-  # A version tag releases the whole matrix at that version — no change-scoping
-  # (diffing a tag against its parent isn't the "what shipped in this release").
-  load-matrix:
+  promote:
+    name: Promote header versions to latest
     runs-on: ubuntu-latest
-    outputs:
-      matrix: ${{ steps.read.outputs.matrix }}
     steps:
       - uses: actions/checkout@v7
-      - id: read
-        run: |
-          M=$(jq -c '{include: .include}' .github/service-matrix.json)
-          echo "matrix=$M" >> "$GITHUB_OUTPUT"
-          echo "Releasing: $(echo "$M" | jq -c '[.include[].name]')"
-
-  build-and-push:
-    name: Build & Push · ${{ matrix.name }}
-    needs: load-matrix
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix: ${{ fromJSON(needs.load-matrix.outputs.matrix) }}
-
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Check Dockerfile exists
-        id: check
-        run: |
-          if [ -f "${{ matrix.dockerfile }}" ]; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "No Dockerfile at ${{ matrix.dockerfile }} — skipping"
-            echo "exists=false" >> "$GITHUB_OUTPUT"
-          fi
 
       - name: Log in to GHCR
-        if: steps.check.outputs.exists == 'true'
         uses: docker/login-action@v4
         with:
           registry: ghcr.io
@@ -77,70 +35,62 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Docker Buildx
-        if: steps.check.outputs.exists == 'true'
         uses: docker/setup-buildx-action@v4
 
-      - name: Extract Docker metadata
-        if: steps.check.outputs.exists == 'true'
-        id: meta
-        uses: docker/metadata-action@v6
-        with:
-          images: ghcr.io/${{ env.OWNER }}/${{ matrix.image }}
-          # tag push -> the tag name (v1.3.0); manual dispatch -> the input tag.
-          tags: |
-            type=ref,event=tag
-            type=raw,value=${{ github.event.inputs.tag }},enable=${{ github.event_name == 'workflow_dispatch' }}
-            type=raw,value=latest
-
-      # Build locally first so Trivy can scan before anything is published.
-      - name: Build image (local, pre-scan)
-        if: steps.check.outputs.exists == 'true'
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          file: ${{ matrix.dockerfile }}
-          platforms: linux/amd64
-          push: false
-          load: true
-          tags: charon/${{ matrix.name }}:scan
-          cache-from: type=gha,scope=${{ matrix.name }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
-
-      # Block the push on any CRITICAL or HIGH CVE with a fix available.
-      - name: Scan image for CVEs (Trivy)
-        if: steps.check.outputs.exists == 'true'
-        uses: aquasecurity/trivy-action@v0.36.0
-        with:
-          image-ref: charon/${{ matrix.name }}:scan
-          format: table
-          exit-code: "1"
-          ignore-unfixed: true
-          severity: CRITICAL,HIGH
-          trivyignores: .trivyignore
-
-      # Push only after a clean scan. Layer cache makes this fast.
-      - name: Push image
-        if: steps.check.outputs.exists == 'true'
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          file: ${{ matrix.dockerfile }}
-          platforms: linux/amd64
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha,scope=${{ matrix.name }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
-
-  # deploy-pipeline.yml runs on this workflow's success (OpenVPN + SSH into
-  # GPE-NYX) and rolls the just-pushed version tag onto the cluster.
-  summary:
-    name: Summary
-    runs-on: ubuntu-latest
-    needs: build-and-push
-    if: ${{ always() && needs.build-and-push.result == 'success' }}
-    steps:
-      - name: Note released images
+      # Checked up front so `latest` is never half-promoted across services.
+      - name: Check every header version is on GHCR
         run: |
-          echo "Released ghcr.io/${{ env.OWNER }}/charon-* at ${{ github.ref_name }}"
-          echo "deploy-pipeline.yml will roll this version onto GPE-NYX."
+          set -euo pipefail
+          missing=0
+          while read -r image dockerfile; do
+            if [ ! -f "$dockerfile" ]; then
+              echo "  ~ $image: no Dockerfile — skipped"
+              continue
+            fi
+            ref=$(sed -n 's|^#[[:space:]]*ghcr-image:[[:space:]]*\([^[:space:]]*\).*|\1|p' "$dockerfile" | head -1)
+            version=${ref##*:}
+            if [ -z "$ref" ] || [ "$ref" = "$version" ]; then
+              echo "::error file=$dockerfile::no '# ghcr-image: <name>:<version>' header"
+              missing=$((missing+1)); continue
+            fi
+            if docker manifest inspect "ghcr.io/$OWNER/$image:$version" >/dev/null 2>&1; then
+              echo "  OK  $image:$version"
+            else
+              echo "::error::$image:$version is not on GHCR — run 'CD - Publish images' first"
+              missing=$((missing+1))
+            fi
+          done < <(jq -r '.include[] | "\(.image) \(.dockerfile)"' .github/service-matrix.json)
+
+          [ "$missing" = "0" ] || { echo "$missing image(s) missing — nothing promoted"; exit 1; }
+
+      - name: Move latest onto each header version
+        run: |
+          set -euo pipefail
+          while read -r image dockerfile; do
+            [ -f "$dockerfile" ] || continue
+            ref=$(sed -n 's|^#[[:space:]]*ghcr-image:[[:space:]]*\([^[:space:]]*\).*|\1|p' "$dockerfile" | head -1)
+            version=${ref##*:}
+            echo "  $image: latest -> $version"
+            docker buildx imagetools create -t "ghcr.io/$OWNER/$image:latest" "ghcr.io/$OWNER/$image:$version"
+          done < <(jq -r '.include[] | "\(.image) \(.dockerfile)"' .github/service-matrix.json)
+
+      - name: Verify latest matches the version it was promoted from
+        run: |
+          set -euo pipefail
+          while read -r image dockerfile; do
+            [ -f "$dockerfile" ] || continue
+            ref=$(sed -n 's|^#[[:space:]]*ghcr-image:[[:space:]]*\([^[:space:]]*\).*|\1|p' "$dockerfile" | head -1)
+            version=${ref##*:}
+            a=$(docker buildx imagetools inspect "ghcr.io/$OWNER/$image:$version" --format '{{.Manifest.Digest}}')
+            b=$(docker buildx imagetools inspect "ghcr.io/$OWNER/$image:latest"   --format '{{.Manifest.Digest}}')
+            if [ "$a" = "$b" ]; then
+              echo "  OK  $image:latest = $version  $a"
+            else
+              echo "::error::$image: latest ($b) differs from $version ($a)"; exit 1
+            fi
+          done < <(jq -r '.include[] | "\(.image) \(.dockerfile)"' .github/service-matrix.json)
+
+      - name: Summary
+        run: |
+          echo "Release ${{ github.ref_name }} — latest now points at each Dockerfile header version."
+          echo "deploy-pipeline.yml will roll this commit onto GPE-NYX."

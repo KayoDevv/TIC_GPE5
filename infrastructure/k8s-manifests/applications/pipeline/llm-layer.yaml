@@ -26,7 +26,7 @@ spec:
         - name: ghcr-pull        # ghcr charon packages are private; created once on the node
       containers:
         - name: llm-layer
-          image: ghcr.io/kayodevv/charon-llm-layer:latest  # bumped by CD to a sha- tag
+          image: ghcr.io/kayodevv/charon-llm-layer
           imagePullPolicy: IfNotPresent
           env:
             # DEV profile: VLLM_URL is intentionally unset -> HF router.

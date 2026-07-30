@@ -8,12 +8,13 @@ observe — those with active-content markers via pdfid (/JS, /OpenAction,
 /Launch, /EmbeddedFile, /AcroForm, /JBIG2Decode, /RichMedia, /XFA, /AA).
 This discards out-of-scope samples (Windows-only trojans, fully inert PDFs)
 that would never execute under our detonation and only muddy the metrics.
-Requires pdfid → run inside the agent image (which ships it):
+Requires pdfid → run inside the agent image (which ships it). PDF_VERSION comes
+from makefiles/versions.mk:
 
     docker run --rm --user "$(id -u):$(id -g)" \
       -v "$PWD/scripts:/scripts:ro" -v "$HOME/datasets:/datasets:ro" \
       -v "$PWD/scripts/validation/real_corpus:/corpus:ro" -v "/tmp/out:/out" \
-      ghcr.io/kayodevv/ubuntu-pdf-sandbox:v1 \
+      ghcr.io/kayodevv/ubuntu-pdf-sandbox:$PDF_VERSION \
       python3 -m scripts.validation.prepare_corpus --source /datasets \
         --in-scope --dedup-against /corpus --count 400 --output /out
 

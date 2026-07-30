@@ -1,10 +1,7 @@
-# ghcr-image: charon-core-backend:latest
+# ghcr-image: charon-core-backend:v1.0.0
 # Core Backend — FastAPI API gateway. Validates uploads, stores to S3/MinIO,
 # produces file.requested, consumes verdict.result, streams verdicts over WS.
-#
-# Build from the ROOT of the GPE-ETNA monorepo (COPY needs packages/ and apps/):
-#   docker build -t ghcr.io/kayodevv/charon-core-backend:latest \
-#                -f apps/core-backend/Dockerfile .
+# Build context = monorepo root: make build-<service>
 
 FROM python:3.12-slim
 

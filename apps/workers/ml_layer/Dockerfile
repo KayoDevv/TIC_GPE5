@@ -1,11 +1,8 @@
-# ghcr-image: charon-ml-layer:latest
+# ghcr-image: charon-ml-layer:v1.0.0
 # ML Layer — "The Static Analyst". Consumes file.requested, extracts 16 static
 # PDF features (pikepdf) and scores them with a LightGBM->ONNX model, producing
 # ml_layer.result. SLA < 500 ms.
-#
-# Build from the ROOT of the GPE-ETNA monorepo (COPY needs packages/ and apps/):
-#   docker build -t ghcr.io/kayodevv/charon-ml-layer:latest \
-#                -f apps/workers/ml_layer/Dockerfile .
+# Build context = monorepo root: make build-<service>
 
 FROM python:3.12-slim
 

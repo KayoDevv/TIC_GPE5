@@ -24,7 +24,7 @@ spec:
         - name: ghcr-pull        # ghcr charon packages are private; created once on the node
       containers:
         - name: ml-layer
-          image: ghcr.io/kayodevv/charon-ml-layer:latest  # bumped by CD to a sha- tag
+          image: ghcr.io/kayodevv/charon-ml-layer
           imagePullPolicy: IfNotPresent
           env:
             # Nested settings use the __ delimiter (KafkaSettings.bootstrap_servers).

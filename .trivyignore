@@ -1,6 +1,6 @@
 # CHARON — Trivy CVE Suppression
 # Each entry is a conscious, documented acceptance of risk.
-# Reviewed: 2026-06-14
+# Reviewed: 2026-07-22
 
 # ── pdfjs-dist ──────────────────────────────────────────────────────────────
 # CVE-2024-4367 — Arbitrary JavaScript execution in PDF.js (HIGH)
@@ -24,42 +24,6 @@ CVE-2024-4367
 # deny-all egress (charon.io/role=analysis), so no outbound TLS connections
 # can be established from inside the analysis pod. Attack surface = zero.
 CVE-2026-45447
-
-# ── npm internal dependencies ────────────────────────────────────────────────
-# These CVEs are in npm's OWN bundled node_modules
-# (/usr/lib/node_modules/npm/node_modules/). npm is installed as part of
-# Node.js 20 LTS (via nodesource) and is NEVER invoked at container runtime —
-# only `node pdf_runner.js` is executed. The vulnerable packages are not on
-# any import path reachable by the PDF runner or the Python agent.
-#
-# CVE-2024-21538 — cross-spawn ReDoS (HIGH)
-CVE-2024-21538
-# CVE-2025-64756 — glob command injection via malicious filenames (HIGH)
-CVE-2025-64756
-# CVE-2026-26996 — minimatch ReDoS (HIGH)
-CVE-2026-26996
-# CVE-2026-27903 — minimatch ReDoS (HIGH)
-CVE-2026-27903
-# CVE-2026-27904 — minimatch catastrophic backtracking (HIGH)
-CVE-2026-27904
-# CVE-2026-23745 — node-tar arbitrary file overwrite (HIGH)
-CVE-2026-23745
-# CVE-2026-23950 — node-tar arbitrary file overwrite via Unicode path collision (HIGH)
-CVE-2026-23950
-# CVE-2026-24842 — node-tar arbitrary file creation via path traversal in hardlink (HIGH)
-CVE-2026-24842
-# CVE-2026-26960 — node-tar arbitrary file read/write via malicious archive hardlink (HIGH)
-CVE-2026-26960
-# CVE-2026-29786 — node-tar hardlink path traversal via drive-relative linkpath (HIGH)
-CVE-2026-29786
-# CVE-2026-31802 — node-tar file overwrite via drive-relative symlink traversal (HIGH)
-CVE-2026-31802
-# CVE-2026-48815 — sigstore certificateOIDs verification constraints silently
-# dropped (HIGH). At usr/local/lib/node_modules/npm/node_modules/sigstore —
-# npm's own provenance-verification dependency, used only during npm
-# install/publish signature checks. npm is never invoked at container runtime
-# (only `node pdf_runner.js`), so this code path is unreachable in the pod.
-CVE-2026-48815
 
 # ── urllib3 (Python, sandbox agents) ────────────────────────────────────────
 # urllib3==2.2.1 is installed in ubuntu-sandbox and ubuntu-pdf-sandbox as a

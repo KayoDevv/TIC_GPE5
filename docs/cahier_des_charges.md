@@ -55,7 +55,7 @@
 
 ### Architecture (Event-Driven Microservices)
 - **Type :** Microservices orientés événements avec pattern Scatter-Gather.
-- **Orchestration :** Kubernetes **K3s** (mono-nœud, Debian natif), réseau **flannel** (routage) + **Calico** (enforcement des NetworkPolicies, namespace `calico-system`), autoscaling **KEDA** sur le lag Kafka.
+- **Orchestration :** Kubernetes **K3s** (mono-nœud, Debian natif) avec **Calico comme unique CNI** (namespace `calico-system`) — il assure à la fois le dataplane pod **et** l'enforcement des NetworkPolicies ; K3s est installé avec `--flannel-backend=none --disable-network-policy`, donc flannel est **désactivé**. Autoscaling **KEDA** sur le lag Kafka.
 - **Bus de messages :** Apache Kafka — chart **Bitnami** (mode KRaft, mono-broker, in-cluster), topics provisionnés par le chart.
 - **Frontend :** Vue 3 + WXT (TypeScript, Tailwind).
 - **Backend Gateway :** Python (FastAPI) — émet l'événement `file.requested` sur Kafka après upload MinIO.
@@ -83,8 +83,9 @@ Chaque Layer est un microservice Python indépendant consommant les événements
 ### Sandbox Layer : Dynamic Sandbox Service (L'Analyse Comportementale)
 - **Rôle :** Exécuter le fichier dans un environnement contrôlé pour capturer les actions malveillantes non-visibles statiquement (obfuscation, payloads téléchargés au runtime, JavaScript auto-exécuté).
 - **Orchestration :** K3s mono-nœud (Debian natif). Le consumer Kafka crée un Job `batch/v1` par sample, **routé par magic bytes** :
-    - `\x7fELF` → image `ubuntu-sandbox:v1` + `run_analysis.py`
-    - `%PDF` / inconnu/déguisé → image `ubuntu-pdf-sandbox:v1` (mupdf 1.24.10 + Node/PDF.js + pdfid + qpdf) + `run_pdf_analysis.py`
+    - `\x7fELF` → image `ubuntu-sandbox` + `run_analysis.py`
+    - `%PDF` / inconnu/déguisé → image `ubuntu-pdf-sandbox` (mupdf 1.24.10 + Node/PDF.js + pdfid + qpdf) + `run_pdf_analysis.py`
+    - Chaque image porte son propre **tag de release immuable** (`ubuntu-sandbox:v1.2.0`, `ubuntu-pdf-sandbox:v1.2.1`), déclaré dans l'en-tête `ghcr-image` de son Dockerfile et pré-chargé dans containerd : les Jobs sont sans credentials et ne peuvent pas puller.
 - **Isolation & durcissement :** runtime `runc` durci — seccomp, `cap-drop ALL` (sauf `SYS_PTRACE` pour strace), utilisateur non-root (UID 10001), NetworkPolicy deny-all (enforcement Calico), namespace dédié. **RuntimeClass gVisor (runsc) activable** via `SANDBOX_RUNTIME_CLASS=gvisor` (isolation kernel user-space, recommandée en prod ; non activée par défaut en dev par contrainte d'installation du runtime). Leurres anti-sandbox dans l'image (faux fichiers utilisateur, faux historique bash).
 - **Collecte comportementale :**
     - **State-diff :** snapshot avant/après (FS hashé SHA-256 sur `/etc /home /tmp /var /opt /root`, process, sockets, crontab, systemd, chemins de persistance), diff des changements significatifs, **baseline du harnais soustraite** (les fichiers système et l'outillage de l'agent ne comptent pas comme signal).

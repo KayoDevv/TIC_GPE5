@@ -1,10 +1,7 @@
 # ghcr-image: charon-sandbox-consumer:v1.1.0
 # K8s consumer image — Kafka dispatcher → batch/v1 Job
 # Receives file.requested messages and creates one Job per sample.
-#
-# Build: docker build -t ghcr.io/kayodevv/charon-sandbox-consumer:latest \
-#                     -f apps/workers/sandbox_layer/Dockerfile.consumer .
-# (run from the root of the GPE-ETNA monorepo)
+# Build context = monorepo root: make build-<service>
 
 FROM python:3.12-slim
 

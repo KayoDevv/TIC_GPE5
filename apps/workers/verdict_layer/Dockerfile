@@ -1,10 +1,7 @@
-# ghcr-image: charon-verdict-layer:latest
+# ghcr-image: charon-verdict-layer:v1.0.0
 # Verdict Layer — "The Judge". Aggregates ml_layer.result + sandbox_layer.result
 # + llm_layer.result (Redis-backed Saga) into a single verdict.result.
-#
-# Build from the ROOT of the GPE-ETNA monorepo (COPY needs packages/ and apps/):
-#   docker build -t ghcr.io/kayodevv/charon-verdict-layer:latest \
-#                -f apps/workers/verdict_layer/Dockerfile .
+# Build context = monorepo root: make build-<service>
 
 FROM python:3.12-slim
 

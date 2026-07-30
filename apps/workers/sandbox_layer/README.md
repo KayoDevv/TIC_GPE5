@@ -27,7 +27,7 @@ file.requested
 sandbox-consumer (Deployment, 1-3 replicas via KEDA)
       │  creates 1 batch/v1 Job per sample (routes by magic bytes)
       ▼
-ubuntu-sandbox:v1 (ELF)  /  ubuntu-pdf-sandbox:v1 (PDF)  pod (K8s Job)
+ubuntu-sandbox (ELF)  /  ubuntu-pdf-sandbox (PDF)  pod (K8s Job, release-tagged)
       │  run_analysis.py  /  run_pdf_analysis.py
       ├── download sample (MinIO presigned URL)
       ├── snapshot BEFORE  (FS SHA-256, processes, sockets, crontab)
@@ -63,9 +63,9 @@ ubuntu-sandbox:v1 (ELF)  /  ubuntu-pdf-sandbox:v1 (PDF)  pod (K8s Job)
 ```
 sandbox_layer/
 ├── consumer.py              # Kafka dispatcher → batch/v1 Job (routes ELF/PDF by magic bytes)
-├── Dockerfile.consumer      # Image ghcr.io/kayodevv/charon-sandbox-consumer:latest
-├── Dockerfile.agent         # Image ghcr.io/kayodevv/ubuntu-sandbox:v1 (ELF)
-├── Dockerfile.pdf-agent     # Image ghcr.io/kayodevv/ubuntu-pdf-sandbox:v1 (PDF)
+├── Dockerfile.consumer      # Image ghcr.io/kayodevv/charon-sandbox-consumer
+├── Dockerfile.agent         # Image ghcr.io/kayodevv/ubuntu-sandbox (ELF)
+├── Dockerfile.pdf-agent     # Image ghcr.io/kayodevv/ubuntu-pdf-sandbox (PDF)
 ├── ARCHITECTURE.md          # The maintainer's map (how it's built)
 ├── contract/
 │   ├── CONTRACT_VERSION

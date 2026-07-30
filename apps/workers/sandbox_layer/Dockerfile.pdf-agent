@@ -1,11 +1,9 @@
 # ghcr-image: ubuntu-pdf-sandbox:v1.2.1
-# PDF sandbox image — ubuntu-pdf-sandbox:v1
+# PDF sandbox image.
 # Runs in a batch/v1 K8s Job with cap SYS_PTRACE.
 # Tools: mupdf 1.24.10 (built from source) + pdfid + strace + Python agent
 #
-# Build:
-#   docker build -t ghcr.io/kayodevv/ubuntu-pdf-sandbox:v1 \
-#                -f apps/workers/sandbox_layer/Dockerfile.pdf-agent .
+# Build from the monorepo ROOT: make build-pdf-sandbox
 #
 # Hardened build (recommended for prod / audit):
 #   # 1. Get current ubuntu:22.04 digest
@@ -17,12 +15,10 @@
 #   PDFID_COMMIT=<commit-sha-from-github>
 #   PDFID_SHA=$(curl -fsSL https://raw.githubusercontent.com/DidierStevens/DidierStevensSuite/${PDFID_COMMIT}/pdfid.py | sha256sum | cut -d' ' -f1)
 #   # 4. Build with all SHAs pinned
-#   docker build \
+#   make build-pdf-sandbox DOCKER_BUILD_ARGS="\
 #     --build-arg MUPDF_SHA256=$MUPDF_SHA \
 #     --build-arg PDFID_COMMIT=$PDFID_COMMIT \
-#     --build-arg PDFID_SHA256=$PDFID_SHA \
-#     -t ghcr.io/kayodevv/ubuntu-pdf-sandbox:v1 \
-#     -f apps/workers/sandbox_layer/Dockerfile.pdf-agent .
+#     --build-arg PDFID_SHA256=$PDFID_SHA"
 
 # ============================================================================
 # Stage 1 — Build mupdf 1.24.10 from source
@@ -127,11 +123,15 @@ RUN curl -fsSLO --proto '=https' --tlsv1.2 \
     rm "node-v${NODE_VERSION}-linux-x64.tar.gz" SHASUMS256.txt && \
     node --version && npm --version
 
-# pdfjs-dist (Mozilla PDF.js) — pin v3.x for the legacy CommonJS build without DOM polyfill
+# pdfjs-dist (Mozilla PDF.js) — pin v3.x for the legacy CommonJS build without DOM polyfill.
+# --omit=optional drops `canvas` (rendering only) and its node-pre-gyp/tar chain.
+# npm/corepack are removed: only `node pdf_runner.js` runs in the pod.
 WORKDIR /opt/pdfjs
 RUN npm init -y --silent && \
-    npm install --omit=dev --no-audit --no-fund pdfjs-dist@3.11.174 && \
-    node -e "require('pdfjs-dist/legacy/build/pdf.js'); console.log('pdfjs-dist OK')"
+    npm install --omit=dev --omit=optional --no-audit --no-fund pdfjs-dist@3.11.174 && \
+    node -e "require('pdfjs-dist/legacy/build/pdf.js'); console.log('pdfjs-dist OK')" && \
+    rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack \
+           /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack
 
 # Copy mupdf 1.24.10 binaries from builder stage
 COPY --from=mupdf-builder /usr/local/bin/mutool /usr/local/bin/mutool

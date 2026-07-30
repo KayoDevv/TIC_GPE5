@@ -1,21 +1,12 @@
-name: Import sandbox agent images (build -> ctr import)
+name: Import sandbox agent images (GHCR -> ctr import)
 
-# Rebuilds the detonation agent images (ubuntu-sandbox:v1 + ubuntu-pdf-sandbox:v1)
-# on the runner and imports them into GPE-NYX's k3s containerd over OpenVPN + SSH.
-#
-# Why not the normal GHCR pull path: detonation Jobs run CREDENTIAL-LESS
-# (automount_service_account_token=false, no imagePullSecrets) so a live sample
-# can't reach GHCR. The agent images are therefore import-model (IfNotPresent,
-# :v1), loaded straight into containerd — this is the automation of
-# `make import-images`, minus the on-node hand-build.
-#
-# The `:v1` tag is updated in place; the NEXT detonation Job (new pod) picks up
-# the refreshed image automatically — no rollout needed.
-#
-# Manual only. Required secrets: VPN_OVPN, SSH_HOST, SSH_USER, SSH_PRIVATE_KEY.
+# Detonation Jobs are credential-less, and since KEP-2535 the kubelet forces a
+# re-auth pull for any image previously pulled with creds, so `ctr import` is the
+# only way they can use a private image. Run before deploying manifests that
+# reference these tags, or the Jobs go ErrImageNeverPull.
 
 on:
-  workflow_dispatch: {}
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -27,14 +18,32 @@ concurrency:
 
 env:
   SSH_OPTS: "-i ~/.ssh/id_deploy -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts"
-  AGENT_IMAGE: "ghcr.io/kayodevv/ubuntu-sandbox:v1"
-  PDF_IMAGE: "ghcr.io/kayodevv/ubuntu-pdf-sandbox:v1"
 
 jobs:
   import:
     runs-on: ubuntu-latest
     environment: production
     steps:
+      - uses: actions/checkout@v7
+
+      # Run this workflow from the ref whose versions you want imported.
+      - name: Resolve agent versions from their Dockerfile headers
+        run: |
+          set -euo pipefail
+          hdr() {
+            local ref
+            ref=$(sed -n 's|^#[[:space:]]*ghcr-image:[[:space:]]*\([^[:space:]]*\).*|\1|p' "$1" | head -1)
+            [ -n "$ref" ] && [ "$ref" != "${ref##*:}" ] || return 1
+            printf '%s' "${ref##*:}"
+          }
+          A=$(hdr apps/workers/sandbox_layer/Dockerfile.agent) \
+            || { echo "::error::no 'ghcr-image' header on Dockerfile.agent"; exit 1; }
+          P=$(hdr apps/workers/sandbox_layer/Dockerfile.pdf-agent) \
+            || { echo "::error::no 'ghcr-image' header on Dockerfile.pdf-agent"; exit 1; }
+          echo "AGENT_IMAGE=ghcr.io/kayodevv/ubuntu-sandbox:$A" >> "$GITHUB_ENV"
+          echo "PDF_IMAGE=ghcr.io/kayodevv/ubuntu-pdf-sandbox:$P" >> "$GITHUB_ENV"
+          echo "ELF agent -> $A   |   PDF agent -> $P"
+
       - name: Log in to GHCR
         uses: docker/login-action@v4
         with:
@@ -42,17 +51,11 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Pull the already-built current images from GHCR and retag to :v1 (the tag
-      # the credential-less detonation Jobs reference). Avoids rebuilding — the
-      # pdf-agent Dockerfile downloads mupdf from mupdf.com at build time, which
-      # is slow/flaky on a cold runner.
-      - name: Pull current agent images + retag :v1
+      - name: Pull agent images at their header versions
         run: |
           set -euo pipefail
-          docker pull ghcr.io/kayodevv/ubuntu-sandbox:latest
-          docker pull ghcr.io/kayodevv/ubuntu-pdf-sandbox:latest
-          docker tag ghcr.io/kayodevv/ubuntu-sandbox:latest "$AGENT_IMAGE"
-          docker tag ghcr.io/kayodevv/ubuntu-pdf-sandbox:latest "$PDF_IMAGE"
+          docker pull "$AGENT_IMAGE"
+          docker pull "$PDF_IMAGE"
           docker image ls | grep ubuntu-
 
       - name: Install OpenVPN client
@@ -87,14 +90,21 @@ jobs:
         run: |
           set -euo pipefail
           for img in "$AGENT_IMAGE" "$PDF_IMAGE"; do
+            # Drop the CRI record first, or KEP-2535 forces a re-auth pull.
+            ssh $SSH_OPTS "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
+              "sudo -n k3s crictl rmi '$img' >/dev/null 2>&1 || true"
             echo "==> importing $img"
             docker save "$img" \
             | ssh $SSH_OPTS "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
                 'sudo -n k3s ctr images import -'
           done
           echo "--- agent images now in k3s ---"
-          ssh $SSH_OPTS "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
-            'sudo -n k3s ctr images ls | grep -E "ubuntu-(sandbox|pdf-sandbox):v1" || true'
+          # A silent miss surfaces later as ErrImageNeverPull on the next Job.
+          for img in "$AGENT_IMAGE" "$PDF_IMAGE"; do
+            ssh $SSH_OPTS "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
+              "sudo -n k3s ctr images ls -q | grep -Fx '$img'" \
+              || { echo "::error::$img absent from containerd after import"; exit 1; }
+          done
 
       - name: Disconnect VPN
         if: always()

@@ -95,7 +95,7 @@ def _load_cache(cache_path: str) -> dict[str, dict[str, float]]:
     p = Path(cache_path)
     if not p.exists():
         return {}
-    cached = pd.read_csv(p, dtype={"sha256": str})
+    cached = pd.read_csv(p, dtype={"sha256": str}, float_precision="round_trip")
     if any(col not in cached.columns for col in FEATURE_ORDER):
         logger.info("Feature cache schema is stale (feature set changed) — rebuilding it")
         return {}
@@ -109,7 +109,7 @@ def _save_cache(cache_path: str, cache: dict[str, dict[str, float]]) -> None:
     records = [{"sha256": sha, **feats} for sha, feats in cache.items()]
     df = pd.DataFrame(records, columns=["sha256", *FEATURE_ORDER])
     Path(cache_path).parent.mkdir(parents=True, exist_ok=True)
-    df.to_csv(cache_path, index=False)
+    df.to_csv(cache_path, index=False, float_format="%.17g")
 
 
 def _log_progress(done: int, total: int, skipped: int) -> None:

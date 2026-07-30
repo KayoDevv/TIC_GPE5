@@ -11,11 +11,24 @@ PR opened → main
     ├── sandbox-llm-contract.yml  Sandbox → LLM contract: golden fixtures + LLM validator + CONTRACT_VERSION alignment
     └── schema-compatibility.yml  Kafka JSON schema BACKWARD_TRANSITIVE check (only when packages/kafka-schemas/** changes)
 
-PR merged → main  (triggered by push to main)
-    └── cd-deploy.yml
-            ├── build-and-push  Build + push all 9 images to container registry
-            └── deploy          Apply K8s manifests (stub — see Future Steps below)
+Push to update-image or main
+    └── cd-publish-images.yml   Build + Trivy-scan + push every image whose
+                                `# ghcr-image:` header version is absent from GHCR
+
+git tag v*
+    └── cd-deploy.yml           Promote those header versions to `latest`
+                                (manifest copy, no rebuild)
+            └── deploy-pipeline.yml   Roll the tagged commit onto GPE-NYX
 ```
+
+### Where a version comes from
+
+Each Dockerfile declares its own version in a `# ghcr-image: <name>:<version>`
+header. That header is the single source of truth: `makefiles/versions.mk`, the
+kustomization `newTag:` values and the consumer env values are derived from it
+by `make sync-versions`, and `sanity-checks.yml` fails the build when they
+drift. Bumping a header releases that one image; a git tag releases the
+repository, not the images.
 
 All checks must pass before a PR can be merged. See **GitHub Setup** below to enforce this.
 
@@ -55,12 +68,27 @@ All checks must pass before a PR can be merged. See **GitHub Setup** below to en
 | Trigger | PR → `main` touching `packages/kafka-schemas/**` or `scripts/ci/check_schema_compat.py` |
 | Jobs | Matrix (one job per schema file). Fetches the old version from `origin/main`, runs `scripts/ci/check_schema_compat.py` — no new required fields, no type changes, no removals under `additionalProperties: false`. Pure Python, no Kafka cluster required. |
 
-### `cd-deploy.yml` — Build, Push & Deploy
+### `cd-publish-images.yml` — Publish images
 | | |
 |---|---|
-| Trigger | Push to `main` (i.e. after PR merge) · manual via `workflow_dispatch` |
-| Jobs | `build-and-push` (matrix, all 9 images) → `deploy` (K8s, stub) |
-| Registry | Defaults to `ghcr.io` with `GITHUB_TOKEN` — see **Registry** section below |
+| Trigger | Push to `update-image` or `main` · manual via `workflow_dispatch` |
+| Jobs | `plan` (compare each `# ghcr-image:` header against GHCR) → `publish` (matrix over the missing ones only) |
+| Gate | Trivy CRITICAL/HIGH with a fix available blocks the push |
+| Note | Tags are immutable — an already-published version is skipped, republishing means bumping the header |
+
+### `cd-deploy.yml` — Release (promote to latest)
+| | |
+|---|---|
+| Trigger | `git tag v*` · manual via `workflow_dispatch` |
+| Jobs | Verify every header version is on GHCR → `docker buildx imagetools create` onto `latest` → verify digests match |
+| Note | No rebuild. Fails before moving anything if any version is missing, so `latest` is never half-promoted |
+
+### `deploy-pipeline.yml` — Deploy onto GPE-NYX
+| | |
+|---|---|
+| Trigger | After `cd-deploy.yml` succeeds · manual via `workflow_dispatch` with a `ref` (branch/tag/SHA, default `main`) |
+| Jobs | OpenVPN + SSH → `kubectl apply -k` the pipeline and the sandbox prod overlay |
+| Versions | Taken from the kustomizations (Deployments) and from the Dockerfile headers (agent env values) — the input selects the commit, never the tag |
 
 ---
 
@@ -129,7 +157,8 @@ Image names match the existing K8s manifests exactly:
 | LLM layer | `ghcr.io/kayodevv/charon-llm-layer` |
 | Verdict layer | `ghcr.io/kayodevv/charon-verdict-layer` |
 
-Tags: `sha-<SHA>` (immutable, used by K8s prod overlay) + `latest` (floating).
+Tags: the Dockerfile's `# ghcr-image:` version (immutable, what the manifests
+reference) + `latest` (floating, moved by `cd-deploy.yml` on a git tag).
 
 ---
 
@@ -146,8 +175,10 @@ In `ci-tests.yml`, copy the `test-core-backend` job block and adjust:
 
 ### Add a Dockerfile for a service
 
-`ci-build.yml` and `cd-deploy.yml` already include all 6 services in their matrix.
-Just add the `Dockerfile` to the service directory — both workflows will pick it up automatically on the next PR.
+Add the service to `.github/service-matrix.json` and a filter to `.github/filters.yml`
+(a matrix entry with no filter is never selected), then give the Dockerfile a
+`# ghcr-image: <name>:<version>` header. `ci-build.yml`, `cd-publish-images.yml`
+and the version check pick it up from there.
 
 ### Add frontend tests (Vue 3 / WXT)
 
@@ -155,22 +186,11 @@ In `ci-tests.yml`, uncomment the `test-frontend` job block. Adjust the test comm
 
 E2E tests (Playwright) will need a separate job with a running browser — add it when the extension is ready for integration testing.
 
-### Wire up the real deployment
+### Detonation agents
 
-In `cd-deploy.yml`, inside the `deploy` job, replace the stub step with actual kubectl steps.
-Three commented-out options are provided:
-
-- **Generic kubeconfig** — store the base64-encoded kubeconfig as `secrets.KUBECONFIG_B64`
-- **AWS EKS** — use `aws-actions/configure-aws-credentials` + `aws eks update-kubeconfig`
-- **GKE** — use `google-github-actions/get-gke-credentials`
-
-Then uncomment the `kustomize edit set image` + `kubectl apply -k` lines and point them at the right overlay (`infrastructure/k8s-manifests/overlays/prod`).
-
-Secrets to add when the cluster is ready:
-
-| Secret | Description |
-|---|---|
-| `KUBECONFIG_B64` | Base64-encoded kubeconfig (generic option) |
-| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | AWS credentials (EKS option) |
-| `GCP_SA_KEY` | GCP service account JSON (GKE option) |
+`ubuntu-sandbox` and `ubuntu-pdf-sandbox` are never pulled by the cluster: the
+analysis Jobs run without credentials, and since KEP-2535 the kubelet forces a
+re-auth pull for any image previously pulled with credentials. Run
+**Import sandbox agent images** (`import-sandbox-agents.yml`) after publishing a
+new agent version and before deploying — a missing tag means `ErrImageNeverPull`.
 

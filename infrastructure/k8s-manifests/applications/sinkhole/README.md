@@ -34,8 +34,7 @@ ever reaches the real internet. Every later phase re-checks this.
 
 ```bash
 # 1. Build + import the image into containerd (GHCR is archive only).
-make build-sinkhole
-docker save ghcr.io/kayodevv/inetsim-sinkhole:v1.0.0 | sudo k3s ctr images import -
+make import-images
 
 # 2. Apply the manifests.
 kubectl apply -k infrastructure/k8s-manifests/applications/sinkhole

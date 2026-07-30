@@ -9,3 +9,8 @@ resources:
   - keda-scaledobject.yaml
   # analysis-job-template.yaml is applied dynamically by the consumer,
   # not via kustomize. Kept in the repo as the source of truth.
+
+# Derived from the Dockerfile header by `make sync-versions`.
+images:
+  - name: ghcr.io/kayodevv/charon-sandbox-consumer
+    newTag: v1.1.0

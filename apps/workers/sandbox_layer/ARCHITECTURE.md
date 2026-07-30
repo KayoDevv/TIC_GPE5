@@ -148,7 +148,7 @@ add your format-specific static probes.
 
 ## Stack & constraints (do not break)
 
-- K3s (flannel networking + Calico NetworkPolicy enforcement, `calico-system`), Bitnami Kafka (KRaft), MinIO StatefulSet, KEDA (scales on lag, max = number of `file.requested` partitions).
+- K3s with **Calico as the sole CNI** (`calico-system`) — it provides both the pod dataplane and NetworkPolicy enforcement. K3s is installed with `--flannel-backend=none --disable-network-policy` (see `make install-k3s`), so flannel is **disabled**: without Calico the nodes are NotReady and, worse, NetworkPolicies are silently unenforced. Plus Bitnami Kafka (KRaft), MinIO StatefulSet, KEDA (scales on lag, max = number of `file.requested` partitions).
 - Hardened `runc` container runtime (cap-drop ALL + `SYS_PTRACE` for strace, non-root UID 10001, seccomp, readOnlyRootFs); **gVisor enableable** via `SANDBOX_RUNTIME_CLASS=gvisor`.
 - **Behavioural detection only** — no YARA/signatures/reputation. This is an architectural choice, not a gap.
 - The ELF/Linux agent is the current scope; the Windows path (KVM) is planned but outside this code.

@@ -2,9 +2,7 @@ SERVICE_NAME := sandbox-layer
 
 include ../../../makefiles/common.mk
 
-CONSUMER_IMAGE := ghcr.io/kayodevv/charon-sandbox-consumer:latest
-AGENT_IMAGE    := ghcr.io/kayodevv/ubuntu-sandbox:v1
-PDF_IMAGE      := ghcr.io/kayodevv/ubuntu-pdf-sandbox:v1
+include ../../../makefiles/versions.mk
 ROOT           := $(shell d="$(CURDIR)"; while [ "$$d" != "/" ]; do [ -f "$$d/docker-compose.yml" ] && echo "$$d" && break; d=$$(dirname "$$d"); done)
 
 .PHONY: help install build test lint format typecheck run deploy clean

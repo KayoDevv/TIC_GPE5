@@ -25,7 +25,7 @@ spec:
         - name: ghcr-pull        # ghcr charon packages are private; created once on the node
       containers:
         - name: core-backend
-          image: ghcr.io/kayodevv/charon-core-backend:latest  # bumped by CD to a sha- tag
+          image: ghcr.io/kayodevv/charon-core-backend
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8000

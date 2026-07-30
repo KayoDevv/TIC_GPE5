@@ -23,7 +23,7 @@ spec:
         - name: ghcr-pull        # ghcr charon packages are private; created once on the node
       containers:
         - name: verdict-layer
-          image: ghcr.io/kayodevv/charon-verdict-layer:latest  # bumped by CD to a sha- tag
+          image: ghcr.io/kayodevv/charon-verdict-layer
           imagePullPolicy: IfNotPresent
           env:
             - name: KAFKA_BOOTSTRAP_SERVERS

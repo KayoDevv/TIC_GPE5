@@ -175,7 +175,7 @@ scripts/
 │  ┌──────────────────────────────────────────────────────────────────────┐  │
 │  │  1. Build locally (load: true, no push)                              │  │
 │  │  2. Trivy CVE scan → fails on CRITICAL or HIGH                       │  │
-│  │  3. Push to ghcr.io/kayodevv/<image>:sha-<SHA> + :latest             │  │
+│  │  3. Push to ghcr.io/kayodevv/<image>:<git tag> + :latest            │  │
 │  │  Images: charon-sandbox-consumer · ubuntu-sandbox · ubuntu-pdf-sandbox │  │
 │  │     charon-core-backend* · charon-frontend*   │  │
 │  │     charon-ml-layer* · charon-llm-layer* · charon-verdict-layer*    │  │
@@ -336,7 +336,7 @@ Trivy CVE scan
         │
         ▼ (only if clean)
 Push to ghcr.io/kayodevv/<image>  (see image table above)
-  tags: sha-<SHA>  (immutable, used by K8s)
+  tags: <git tag>  (immutable, used by K8s — e.g. v1.3.0)
         :latest     (floating, for quick pulls)
 ```
 
@@ -565,7 +565,7 @@ The sandbox test job installs `pydantic`, `aiokafka`, `pytest`, and `ruff` manua
 
 ### 8.4 No image tag pinning in prod overlay
 
-The `kustomization.yaml` in the prod overlay has `images: []`. When activating the deploy step, this list must be populated by `kustomize edit set image` with the exact `sha-<SHA>` tags built by `cd-deploy.yml`. This is already documented in the commented-out deploy step.
+The `kustomization.yaml` in the prod overlay has `images: []`. When activating the deploy step, this list must be populated with the exact version tags built by `cd-deploy.yml`. This is already documented in the commented-out deploy step.
 
 ---
 

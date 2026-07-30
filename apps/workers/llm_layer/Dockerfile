@@ -1,10 +1,7 @@
 # ghcr-image: charon-llm-layer:v1.0.0
 # LLM Layer image — "The Semantic Analyst".
 # Consumes sandbox_layer.result, produces llm_layer.result (binary verdict + text).
-#
-# Build from the ROOT of the GPE-ETNA monorepo (COPY needs packages/ and apps/):
-#   docker build -t ghcr.io/kayodevv/charon-llm-layer:latest \
-#                -f apps/workers/llm_layer/Dockerfile .
+# Build context = monorepo root: make build-<service>
 
 FROM python:3.14-slim
 

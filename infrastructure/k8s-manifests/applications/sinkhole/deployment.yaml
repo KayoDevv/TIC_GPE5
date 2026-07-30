@@ -26,7 +26,7 @@ spec:
       containers:
         - name: inetsim
           # Built locally + imported into containerd (never pulled); GHCR is archive only.
-          image: ghcr.io/kayodevv/inetsim-sinkhole:v1.0.0
+          image: ghcr.io/kayodevv/inetsim-sinkhole
           imagePullPolicy: IfNotPresent
           ports:
             - {name: dns-udp, containerPort: 5353, protocol: UDP}

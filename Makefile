@@ -37,6 +37,11 @@ $(SERVICE_NAMES):
 NODE_IP := $(shell hostname -I 2>/dev/null | awk '{print $$1}')
 HOST_USER := $(shell echo $${USER:-$$(whoami)})
 DEV_OVERLAY := infrastructure/k8s-manifests/overlays/dev
+PROD_OVERLAY := infrastructure/k8s-manifests/overlays/prod
+SINKHOLE_MANIFESTS := infrastructure/k8s-manifests/applications/sinkhole
+
+# Local iteration: make import-images AGENT_VERSION=dev-<sha>
+include makefiles/versions.mk
 
 KAFKA_CHART_VERSION   := 31.0.0
 CALICO_VERSION        := v3.27.3
@@ -468,16 +473,24 @@ launch: import-images deploy-dev
 	@echo "Images imported into containerd, workers deployed (dev overlay)."
 	@echo "Monitor: k9s   or   kubectl get pods -A"
 
+# Propagates the Dockerfile ghcr-image headers into versions.mk, the
+# kustomizations and the consumer env. CI fails when they drift.
+.PHONY: sync-versions
+sync-versions:
+	python3 scripts/ci/check_image_versions.py --write
+
 build-consumer:
-	docker build -t ghcr.io/kayodevv/charon-sandbox-consumer:latest \
+	docker build -t $(CONSUMER_IMAGE) \
 	             -f apps/workers/sandbox_layer/Dockerfile.consumer .
 
 build-sandbox:
-	docker build -t ghcr.io/kayodevv/ubuntu-sandbox:v1 \
+	docker build -t $(AGENT_IMAGE) \
 	             -f apps/workers/sandbox_layer/Dockerfile.agent .
 
+# DOCKER_BUILD_ARGS carries the SHA pinning of the hardened build (see the
+# Dockerfile header).
 build-pdf-sandbox:
-	docker build -t ghcr.io/kayodevv/ubuntu-pdf-sandbox:v1 \
+	docker build -t $(PDF_IMAGE) $(DOCKER_BUILD_ARGS) \
 	             -f apps/workers/sandbox_layer/Dockerfile.pdf-agent .
 
 # Sinkhole image build is owned by its child Makefile (apps/sinkhole), per the
@@ -486,11 +499,41 @@ build-sinkhole:
 	$(MAKE) -C $(SINKHOLE_DIR) build
 
 import-images: build-consumer build-sandbox build-pdf-sandbox build-sinkhole
-	docker save ghcr.io/kayodevv/charon-sandbox-consumer:latest | sudo k3s ctr images import -
-	docker save ghcr.io/kayodevv/ubuntu-sandbox:v1              | sudo k3s ctr images import -
-	docker save ghcr.io/kayodevv/ubuntu-pdf-sandbox:v1          | sudo k3s ctr images import -
-	docker save ghcr.io/kayodevv/inetsim-sinkhole:v1.0.0        | sudo k3s ctr images import -
+	-sudo k3s crictl rmi $(AGENT_IMAGE) 2>/dev/null || true
+	-sudo k3s crictl rmi $(PDF_IMAGE) 2>/dev/null || true
+	docker save $(CONSUMER_IMAGE) | sudo k3s ctr images import -
+	docker save $(AGENT_IMAGE)    | sudo k3s ctr images import -
+	docker save $(PDF_IMAGE)      | sudo k3s ctr images import -
+	docker save $(SINKHOLE_IMAGE) | sudo k3s ctr images import -
 	@echo "Images imported into K3s."
+
+# Imports the RELEASED agents; import-images builds them locally instead.
+.PHONY: import-agents-ghcr
+import-agents-ghcr:
+	@set -e; \
+	cfg=$$(mktemp -d); trap 'rm -rf "$$cfg"' EXIT; \
+	if kubectl -n pipeline get secret ghcr-pull \
+	     -o jsonpath='{.data.\.dockerconfigjson}' 2>/dev/null \
+	     | base64 -d > "$$cfg/config.json" 2>/dev/null && [ -s "$$cfg/config.json" ]; then \
+	  pull="docker --config $$cfg pull"; \
+	  echo "auth: ghcr-pull secret from the pipeline namespace"; \
+	elif docker system info 2>/dev/null | grep -q .; then \
+	  pull="docker pull"; \
+	  echo "auth: no ghcr-pull secret, using the local docker login"; \
+	else \
+	  echo "ERROR: docker is unavailable"; exit 1; \
+	fi; \
+	for img in $(AGENT_IMAGE) $(PDF_IMAGE); do \
+	  $$pull "$$img" || { \
+	    echo "ERROR: cannot pull $$img."; \
+	    echo "       Check the ghcr-pull secret, or run 'docker login ghcr.io'."; \
+	    exit 1; }; \
+	  sudo k3s crictl rmi "$$img" >/dev/null 2>&1 || true; \
+	  docker save "$$img" | sudo k3s ctr images import -; \
+	  sudo k3s ctr images ls -q | grep -Fx "$$img" >/dev/null \
+	    || { echo "ERROR: $$img absent from containerd after import"; exit 1; }; \
+	  echo "imported $$img"; \
+	done
 
 deploy-dev: setup-kubeconfig
 	@# KEDA is Terraform-owned (helm.tf, make tf-apply) — no longer installed here.
@@ -528,23 +571,23 @@ PIPELINE_DIR := infrastructure/k8s-manifests/applications/pipeline
         import-pipeline-images deploy-pipeline launch-pipeline undeploy-pipeline
 
 build-core-backend:
-	docker build -t ghcr.io/kayodevv/charon-core-backend:latest \
+	docker build -t $(BACKEND_IMAGE) \
 	             -f apps/core-backend/Dockerfile .
 build-ml-layer:
-	docker build -t ghcr.io/kayodevv/charon-ml-layer:latest \
+	docker build -t $(ML_IMAGE) \
 	             -f apps/workers/ml_layer/Dockerfile .
 build-verdict-layer:
-	docker build -t ghcr.io/kayodevv/charon-verdict-layer:latest \
+	docker build -t $(VERDICT_IMAGE) \
 	             -f apps/workers/verdict_layer/Dockerfile .
 build-llm-layer:
-	docker build -t ghcr.io/kayodevv/charon-llm-layer:latest \
+	docker build -t $(LLM_IMAGE) \
 	             -f apps/workers/llm_layer/Dockerfile .
 
 import-pipeline-images: build-core-backend build-ml-layer build-verdict-layer build-llm-layer
-	docker save ghcr.io/kayodevv/charon-core-backend:latest  | sudo k3s ctr images import -
-	docker save ghcr.io/kayodevv/charon-ml-layer:latest      | sudo k3s ctr images import -
-	docker save ghcr.io/kayodevv/charon-verdict-layer:latest | sudo k3s ctr images import -
-	docker save ghcr.io/kayodevv/charon-llm-layer:latest     | sudo k3s ctr images import -
+	docker save $(BACKEND_IMAGE) | sudo k3s ctr images import -
+	docker save $(ML_IMAGE)      | sudo k3s ctr images import -
+	docker save $(VERDICT_IMAGE) | sudo k3s ctr images import -
+	docker save $(LLM_IMAGE)     | sudo k3s ctr images import -
 	@echo "Pipeline images imported into K3s."
 
 # Deploys redis + the 4 workers. HF_TOKEN (llm dev profile) must be provided the
@@ -566,6 +609,17 @@ launch-pipeline: import-pipeline-images deploy-pipeline
 
 undeploy-pipeline:
 	kubectl delete -k $(PIPELINE_DIR)/ --ignore-not-found
+
+.PHONY: deploy-sandbox deploy-sinkhole
+deploy-sandbox: setup-kubeconfig
+	kubectl apply -k $(PROD_OVERLAY)/
+	kubectl -n sandbox rollout status deploy/sandbox-consumer --timeout=180s
+	@echo "Sandbox deployed (prod overlay)."
+
+deploy-sinkhole: setup-kubeconfig
+	kubectl apply -k $(SINKHOLE_MANIFESTS)/
+	kubectl -n sinkhole rollout status deploy/inetsim --timeout=180s
+	@echo "Sinkhole deployed."
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  K3s — gVisor + NetworkPolicy + Validation
@@ -635,7 +689,8 @@ run-consumer:
 	AGENT_KAFKA_BOOTSTRAP_SERVERS=kafka-kafka-bootstrap.kafka.svc.cluster.local:9092 \
 	AGENT_MINIO_ENDPOINT=minio.minio.svc.cluster.local:9000 \
 	K8S_NAMESPACE=sandbox \
-	SANDBOX_JOB_IMAGE=ghcr.io/kayodevv/ubuntu-sandbox:v1 \
+	SANDBOX_JOB_IMAGE=$(AGENT_IMAGE) \
+	SANDBOX_PDF_JOB_IMAGE=$(PDF_IMAGE) \
 	SANDBOX_TIMEOUT_S=180 \
 	python3 apps/workers/sandbox_layer/consumer.py
 
@@ -734,9 +789,9 @@ clean-all:
 	fi
 	-docker compose down 2>/dev/null || true
 	-docker rm -f redis 2>/dev/null || true
-	-docker rmi ghcr.io/kayodevv/charon-sandbox-consumer:latest \
-		ghcr.io/kayodevv/ubuntu-sandbox:v1 \
-		ghcr.io/kayodevv/ubuntu-pdf-sandbox:v1 2>/dev/null || true
+	-docker rmi $(CONSUMER_IMAGE) \
+		$(AGENT_IMAGE) \
+		$(PDF_IMAGE) 2>/dev/null || true
 	@if [ -x /usr/local/bin/k3s-uninstall.sh ]; then \
 		echo "Uninstalling k3s (cluster + data)..."; \
 		sudo /usr/local/bin/k3s-uninstall.sh; \

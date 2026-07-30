@@ -1,21 +1,17 @@
 # ghcr-image: inetsim-sinkhole:v1.0.0
-# D2 sinkhole — INetSim responder for malware detonation.
+# INetSim responder for malware detonation.
 #
 # Replaces the NXDOMAIN dead-end: resolves EVERY DNS query to the sinkhole's own
-# IP and answers HTTP/HTTPS with fake content, so a C2-keyed sample keeps running
+# IP and answers HTTP with fake content, so a C2-keyed sample keeps running
 # and reveals its behaviour (captured into RuntimeSignals.network).
 #
-# Runs NON-ROOT on HIGH ports (5353/8080/8443); the K8s Service maps the well-known
-# 53/80/443 onto them, so no privileged-port capability is needed. The live config
+# Runs NON-ROOT on HIGH ports (5353/8080); the K8s Service maps the well-known
+# 53/80 onto them, so no privileged-port capability is needed. The live config
 # is mounted from a ConfigMap at /etc/inetsim/inetsim.conf (single source of truth).
+# Enabling https/smtps/pop3s/ftps there also requires generating certs into
+# data/certs — the ones shipped upstream are deleted below.
 #
-# Build:
-#   docker build -t ghcr.io/kayodevv/inetsim-sinkhole:v1.0.0 \
-#                -f apps/sinkhole/Dockerfile.inetsim apps/sinkhole
-#
-# NB (validate on the VM): INetSim is not in Debian main — it ships via the
-# inetsim.org apt repo. Exact Perl dependency package names may need adjusting
-# at first build; this list covers INetSim 1.3.2's documented requirements.
+# Build: make build-sinkhole
 
 FROM debian:13-slim
 
@@ -46,7 +42,8 @@ RUN curl -fsSL --proto '=https' --tlsv1.2 \
     -o /tmp/inetsim.tar.gz && \
     mkdir -p /opt && tar -xzf /tmp/inetsim.tar.gz -C /opt && \
     mv "/opt/inetsim-${INETSIM_VERSION}" /opt/inetsim && \
-    rm /tmp/inetsim.tar.gz
+    rm /tmp/inetsim.tar.gz && \
+    rm -f /opt/inetsim/data/certs/*.pem
 
 # Non-root user. data-dir is the shipped /opt/inetsim/data (read-only at runtime
 # is fine — it holds service templates). log-dir/report-dir/pidfile go to

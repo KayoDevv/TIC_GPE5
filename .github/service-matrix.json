@@ -39,6 +39,11 @@
       "name": "verdict-layer",
       "image": "charon-verdict-layer",
       "dockerfile": "apps/workers/verdict_layer/Dockerfile"
+    },
+    {
+      "name": "sinkhole",
+      "image": "inetsim-sinkhole",
+      "dockerfile": "apps/sinkhole/Dockerfile.inetsim"
     }
   ]
 }

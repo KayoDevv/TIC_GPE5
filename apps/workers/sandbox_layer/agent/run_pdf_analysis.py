@@ -1,4 +1,4 @@
-"""PDF analysis agent — runs inside the ubuntu-pdf-sandbox:v1 K8s pod.
+"""PDF analysis agent — runs inside the ubuntu-pdf-sandbox K8s Job pod.
 
 Args: --job-id, --s3-url. Env: KAFKA_BOOTSTRAP_SERVERS, KAFKA_TOPIC_OUT,
 MINIO_ENDPOINT, EMAIL_CONTEXT_JSON.

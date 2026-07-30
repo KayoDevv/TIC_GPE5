@@ -48,8 +48,8 @@ TOPIC_IN        = os.getenv("KAFKA_TOPIC_IN", "file.requested")
 TOPIC_OUT       = os.getenv("KAFKA_TOPIC_OUT", "sandbox_layer.result")
 GROUP_ID        = os.getenv("KAFKA_GROUP_ID", "charon-sandbox-v1")
 K8S_NAMESPACE   = os.getenv("K8S_NAMESPACE", "sandbox")
-JOB_IMAGE       = os.getenv("SANDBOX_JOB_IMAGE", "ghcr.io/kayodevv/ubuntu-sandbox:v1")
-PDF_JOB_IMAGE   = os.getenv("SANDBOX_PDF_JOB_IMAGE", "ghcr.io/kayodevv/ubuntu-pdf-sandbox:v1")
+JOB_IMAGE       = os.environ["SANDBOX_JOB_IMAGE"]
+PDF_JOB_IMAGE   = os.environ["SANDBOX_PDF_JOB_IMAGE"]
 TIMEOUT_S       = int(os.getenv("SANDBOX_TIMEOUT_S", "180"))
 PUBLISH_MARGIN_S = 60  # extra wall-clock after analysis for the Job to publish its result
 MINIO_ENDPOINT  = os.getenv("MINIO_ENDPOINT", "minio.minio.svc.cluster.local:9000")
@@ -221,7 +221,7 @@ def _egress_gate_init(job_image: str) -> list | None:
     return [k8s_client.V1Container(
         name="egress-gate",
         image=job_image,
-        image_pull_policy="IfNotPresent",
+        image_pull_policy="Never",
         command=["python3", "-c", _EGRESS_GATE_SCRIPT],
         env=[k8s_client.V1EnvVar(name="GATE_TARGET", value=EGRESS_GATE)],
         resources=k8s_client.V1ResourceRequirements(
@@ -247,7 +247,7 @@ def _analysis_container(
     return k8s_client.V1Container(
         name="analysis",
         image=job_image,
-        image_pull_policy="IfNotPresent",
+        image_pull_policy="Never",
         command=agent_cmd,
         args=["--job-id", job_id, "--s3-url", s3_url],
         env=[

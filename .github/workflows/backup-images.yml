@@ -1,0 +1,94 @@
+name: Backup images (retag, no rebuild)
+
+# Manifest copy, not a rebuild: the snapshot is identical to the running image.
+# An existing target tag is never overwritten.
+
+on:
+  workflow_dispatch:
+    inputs:
+      source:
+        description: 'Existing tag to snapshot (e.g. latest)'
+        required: true
+        default: 'latest'
+      target:
+        description: 'Immutable tag to create (e.g. v1)'
+        required: true
+        default: 'v1'
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: backup-images
+  cancel-in-progress: false
+
+env:
+  OWNER: kayodevv
+
+jobs:
+  backup:
+    name: Snapshot ${{ github.event.inputs.source }} -> ${{ github.event.inputs.target }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Copy each manifest to the immutable tag
+        env:
+          SRC: ${{ github.event.inputs.source }}
+          DST: ${{ github.event.inputs.target }}
+        run: |
+          set -euo pipefail
+          if [ "$SRC" = "$DST" ]; then
+            echo "::error::source and target are both '$SRC'"; exit 1
+          fi
+
+          copied=0; skipped=0
+          for image in $(jq -r '.include[].image' .github/service-matrix.json); do
+            src="ghcr.io/$OWNER/$image:$SRC"
+            dst="ghcr.io/$OWNER/$image:$DST"
+
+            if ! docker manifest inspect "$src" >/dev/null 2>&1; then
+              echo "  ~ $image: no '$SRC' tag on GHCR — skipped"
+              skipped=$((skipped+1)); continue
+            fi
+            if docker manifest inspect "$dst" >/dev/null 2>&1; then
+              echo "  = $image:$DST already exists — left untouched"
+              skipped=$((skipped+1)); continue
+            fi
+
+            echo "  + $image: $SRC -> $DST"
+            docker buildx imagetools create -t "$dst" "$src"
+            copied=$((copied+1))
+          done
+
+          echo "--- $copied copied, $skipped skipped ---"
+          if [ "$copied" = "0" ]; then
+            echo "::warning::nothing was copied — check the source tag exists"
+          fi
+
+      - name: Verify the snapshots are identical to their source
+        env:
+          SRC: ${{ github.event.inputs.source }}
+          DST: ${{ github.event.inputs.target }}
+        run: |
+          set -euo pipefail
+          for image in $(jq -r '.include[].image' .github/service-matrix.json); do
+            a=$(docker buildx imagetools inspect "ghcr.io/$OWNER/$image:$SRC" --format '{{.Manifest.Digest}}' 2>/dev/null) || continue
+            b=$(docker buildx imagetools inspect "ghcr.io/$OWNER/$image:$DST" --format '{{.Manifest.Digest}}' 2>/dev/null) || continue
+            if [ "$a" = "$b" ]; then
+              echo "  OK  $image  $a"
+            else
+              echo "::error::$image: $DST ($b) differs from $SRC ($a)"; exit 1
+            fi
+          done

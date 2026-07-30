@@ -27,15 +27,15 @@ spec:
         app: sandbox-consumer
     spec:
       serviceAccountName: sandbox-consumer
-      # The consumer image is pulled from private GHCR (CD sha-pins it), so it
-      # needs the pull secret — unlike the agent images (:v1), which stay on the
-      # import model since detonation Jobs run with no pull secret. The deploy
-      # clones ghcr-pull from the pipeline ns if it's missing here.
+      # The consumer image is pulled from private GHCR, so it needs the pull
+      # secret — unlike the agent images, which stay on the import model since
+      # detonation Jobs run with no pull secret. The deploy clones ghcr-pull
+      # from the pipeline ns if it's missing here.
       imagePullSecrets:
         - name: ghcr-pull
       containers:
         - name: consumer
-          image: ghcr.io/kayodevv/charon-sandbox-consumer:latest  # bumped by CI
+          image: ghcr.io/kayodevv/charon-sandbox-consumer
           imagePullPolicy: IfNotPresent
           env:
             # IP of the node where this pod runs — injected dynamically by K8s.
@@ -81,10 +81,12 @@ spec:
               value: "charon-sandbox-v1"
             - name: K8S_NAMESPACE
               value: "sandbox"
+            # Out of reach of kustomize `images:`. Both tags must already be in
+            # containerd: the Jobs run imagePullPolicy: Never.
             - name: SANDBOX_JOB_IMAGE
-              value: "ghcr.io/kayodevv/ubuntu-sandbox:v1"
+              value: "ghcr.io/kayodevv/ubuntu-sandbox:v1.2.0"
             - name: SANDBOX_PDF_JOB_IMAGE
-              value: "ghcr.io/kayodevv/ubuntu-pdf-sandbox:v1"
+              value: "ghcr.io/kayodevv/ubuntu-pdf-sandbox:v1.2.1"
             - name: SANDBOX_TIMEOUT_S
               value: "300"
             # Hijack the sample's DNS to the sinkhole (split-DNS via hostAliases).

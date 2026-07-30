@@ -1,0 +1,156 @@
+name: CD - Publish images (update-image)
+
+# Each Dockerfile declares its version in a `# ghcr-image: <name>:<version>`
+# header. Every version absent from GHCR is built, scanned and pushed at that
+# tag. `latest` is left to cd-deploy.
+
+on:
+  push:
+    branches: [update-image, main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: publish-update-image
+  cancel-in-progress: false
+
+env:
+  OWNER: kayodevv     # forced lowercase — github.repository_owner = "KayoDevv"
+
+jobs:
+  plan:
+    name: Plan (headers vs GHCR)
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      count: ${{ steps.plan.outputs.count }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve each image version from its Dockerfile header
+        id: plan
+        run: |
+          set -euo pipefail
+          todo='[]'
+          while read -r name image dockerfile; do
+            if [ ! -f "$dockerfile" ]; then
+              echo "  ~ $image: no Dockerfile at $dockerfile — skipped"
+              continue
+            fi
+
+            ref=$(sed -n 's|^#[[:space:]]*ghcr-image:[[:space:]]*\([^[:space:]]*\).*|\1|p' "$dockerfile" | head -1)
+            if [ -z "$ref" ]; then
+              echo "::warning::$dockerfile has no '# ghcr-image: <name>:<version>' header — skipped"
+              continue
+            fi
+
+            hdr_name=${ref%:*}
+            version=${ref##*:}
+            if [ "$ref" = "$version" ] || [ -z "$version" ]; then
+              echo "::error::$dockerfile header '$ref' carries no :version"
+              exit 1
+            fi
+            if [ "$hdr_name" != "$image" ]; then
+              echo "::error::$dockerfile header names '$hdr_name' but service-matrix.json says '$image'"
+              exit 1
+            fi
+            if [ "$version" = "latest" ]; then
+              echo "::warning::$image still pins ':latest' in its header — not versioned, skipped"
+              continue
+            fi
+
+            # Tags are immutable: republishing means bumping the header.
+            if docker manifest inspect "ghcr.io/$OWNER/$image:$version" >/dev/null 2>&1; then
+              echo "  = $image:$version already published"
+            else
+              echo "  + $image:$version MISSING -> will publish"
+              todo=$(jq -c --arg n "$name" --arg i "$image" --arg d "$dockerfile" --arg v "$version" \
+                     '. + [{name:$n, image:$i, dockerfile:$d, version:$v}]' <<<"$todo")
+            fi
+          done < <(jq -r '.include[] | "\(.name) \(.image) \(.dockerfile)"' .github/service-matrix.json)
+
+          count=$(jq 'length' <<<"$todo")
+          echo "matrix={\"include\":$todo}" >> "$GITHUB_OUTPUT"
+          echo "count=$count" >> "$GITHUB_OUTPUT"
+          echo "--- $count image(s) to publish ---"
+          jq -r '.[] | "  \(.image):\(.version)"' <<<"$todo"
+
+  publish:
+    name: Publish · ${{ matrix.image }}:${{ matrix.version }}
+    needs: plan
+    if: ${{ needs.plan.outputs.count != '0' }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build image (local, pre-scan)
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: charon/${{ matrix.name }}:scan
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+
+      - name: Scan image for CVEs (Trivy)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: charon/${{ matrix.name }}:scan
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          severity: CRITICAL,HIGH
+          trivyignores: .trivyignore
+
+      - name: Push image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64
+          push: true
+          tags: ghcr.io/${{ env.OWNER }}/${{ matrix.image }}:${{ matrix.version }}
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+
+  summary:
+    name: Summary
+    needs: [plan, publish]
+    if: ${{ always() && needs.plan.result == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Report
+        run: |
+          if [ "${{ needs.plan.outputs.count }}" = "0" ]; then
+            echo "Nothing to publish — every ghcr-image header already exists on GHCR."
+            echo "Bump a '# ghcr-image:' version in a Dockerfile to release that image."
+          else
+            echo "Published ${{ needs.plan.outputs.count }} image(s). Detonation agents still"
+            echo "need 'Import sandbox agent images' to land them in containerd."
+          fi
