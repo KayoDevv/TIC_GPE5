@@ -34,6 +34,17 @@
   --arch-pulse-bright-mid: #c7a66e;
   --arch-chip: #1c1b16;
   --icon-base: #8a8170;
+  --demo-frame: #ece7da;
+  --demo-chrome: #f4f1e8;
+  --demo-page: #fbf9f3;
+  --demo-card: #ffffff;
+  --demo-inset: rgba(0, 0, 0, 0.05);
+  --demo-dot: #1c1b16;
+  --demo-tab-bg: rgba(251, 249, 243, 0.96);
+  --demo-tab-border: #c9c0a9;
+  --demo-popover-bg: rgba(251, 249, 243, 0.98);
+  --demo-accent: #936f3c;
+  --demo-chip-text: #ffffff;
 }
 
 .theme-dark {
@@ -66,4 +77,15 @@
   --arch-pulse-bright-mid: #c7a66e;
   --arch-chip: #191813;
   --icon-base: #aba28c;
+  --demo-frame: #191813;
+  --demo-chrome: #211f19;
+  --demo-page: #1c1b16;
+  --demo-card: rgba(244, 241, 232, 0.04);
+  --demo-inset: rgba(255, 255, 255, 0.06);
+  --demo-dot: #f4f1e8;
+  --demo-tab-bg: rgba(28, 27, 22, 0.95);
+  --demo-tab-border: rgba(199, 166, 110, 0.4);
+  --demo-popover-bg: rgba(38, 37, 30, 0.97);
+  --demo-accent: #c7a66e;
+  --demo-chip-text: #0a0a0b;
 }
