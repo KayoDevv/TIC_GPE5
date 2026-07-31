@@ -33,6 +33,7 @@
   --arch-pulse-bright-core: #936f3c;
   --arch-pulse-bright-mid: #c7a66e;
   --arch-chip: #1c1b16;
+  --icon-base: #8a8170;
 }
 
 .theme-dark {
@@ -64,4 +65,5 @@
   --arch-pulse-bright-core: #f4f1e8;
   --arch-pulse-bright-mid: #c7a66e;
   --arch-chip: #191813;
+  --icon-base: #aba28c;
 }

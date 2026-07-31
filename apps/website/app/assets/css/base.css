@@ -70,6 +70,11 @@ body {
   transform: translateY(0);
 }
 
+.tb-center {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .btn-lift,
   .btn-lift:hover {
