@@ -4,5 +4,6 @@
     <SectionsDemoSection />
     <SectionsStatsStrip />
     <SectionsFeaturesBento />
+    <SectionsStatesScroll />
   </main>
 </template>
