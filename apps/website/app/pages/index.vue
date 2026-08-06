@@ -5,5 +5,7 @@
     <SectionsStatsStrip />
     <SectionsFeaturesBento />
     <SectionsStatesScroll />
+    <SectionsInstallSteps />
+    <SectionsArchitectureSection />
   </main>
 </template>
