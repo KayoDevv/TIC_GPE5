@@ -7,5 +7,7 @@
     <SectionsStatesScroll />
     <SectionsInstallSteps />
     <SectionsArchitectureSection />
+    <SectionsBrandMoment />
+    <SectionsCtaSection />
   </main>
 </template>

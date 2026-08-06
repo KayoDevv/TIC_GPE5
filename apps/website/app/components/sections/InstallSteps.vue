@@ -25,7 +25,7 @@ const STEPS = [
 
 <template>
   <section
-    class="relative overflow-x-clip border-t border-[var(--border)]"
+    class="relative overflow-x-clip border-t border-(--border)"
     style="background: var(--bg)"
   >
     <div class="mx-auto max-w-6xl px-6 py-24">
@@ -33,7 +33,7 @@ const STEPS = [
         <p class="font-mono2 text-xs uppercase tracking-[0.25em]" style="color: var(--gold)">
           <MotionDecryptText text="Installation" start-on-view :duration="900" />
         </p>
-        <h2 class="font-display mt-3 text-3xl text-[var(--text)] sm:text-4xl">
+        <h2 class="font-display mt-3 text-3xl text-(--text) sm:text-4xl">
           <MotionSplitText text="Opérationnel en 10 secondes." />
         </h2>
       </MotionScrollReveal>
@@ -44,8 +44,8 @@ const STEPS = [
           :key="step.number"
           :delay="index * 0.08"
         >
-          <div class="relative rounded-2xl border border-[var(--border)] bg-[var(--card)] p-6 shadow-sm">
-            <span class="font-mono2 text-[11px] text-[var(--faint)]">{{ step.number }}</span>
+          <div class="relative rounded-2xl border border-(--border) bg-(--card) p-6 shadow-sm">
+            <span class="font-mono2 text-[11px] text-(--faint)">{{ step.number }}</span>
             <div
               class="mt-4 mb-3 grid h-10 w-10 place-items-center rounded-lg border"
               style="
@@ -55,8 +55,8 @@ const STEPS = [
             >
               <component :is="step.icon" :size="18" style="color: var(--gold)" />
             </div>
-            <h3 class="font-semibold text-[var(--text)]">{{ step.title }}</h3>
-            <p class="mt-1.5 text-sm leading-relaxed text-[var(--muted)]">{{ step.desc }}</p>
+            <h3 class="font-semibold text-(--text)">{{ step.title }}</h3>
+            <p class="mt-1.5 text-sm leading-relaxed text-(--muted)">{{ step.desc }}</p>
           </div>
         </MotionScrollReveal>
       </div>
