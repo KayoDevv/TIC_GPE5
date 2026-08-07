@@ -109,8 +109,24 @@ than being inlined in the template.
 
 ---
 
+## Testing
+
+```bash
+npm test             # run once
+npm run test:watch   # watch mode
+```
+
+Vitest covers the pure utilities and the composables — the parts where a
+regression would be silent. Components are deliberately left out: they are
+mostly markup and CSS, and asserting on rendered HTML in a headless DOM would
+prove little about how the design actually behaves.
+
+Nuxt auto-imports do not exist outside the Nuxt runtime, so composable tests
+stub the handful they rely on.
+
+---
+
 ## Known gaps
 
 - The extension archive linked by the download buttons
   (`/charon-extension-v2.0.0.zip`) is not committed yet — those links 404.
-- No test suite. Vitest would fit the composables and the pure helpers.
