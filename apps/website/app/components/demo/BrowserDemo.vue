@@ -145,7 +145,12 @@ onUnmounted(() => {
           @select="shape = s"
         >
           <span class="flex items-center gap-1.5">
-            <IconsAnimatedIcon :shape="s" :state="shape === s ? state : 'rest'" :size="16" />
+            <IconsAnimatedIcon
+              :shape="s"
+              :state="shape === s ? state : 'rest'"
+              :size="16"
+              :color="shape === s ? 'var(--demo-chip-text)' : undefined"
+            />
             {{ SHAPE_LABELS[s] }}
           </span>
         </DemoChip>
@@ -160,12 +165,12 @@ onUnmounted(() => {
         <span
           v-for="dot in CHROME_DOTS"
           :key="dot"
-          class="h-3 w-3 rounded-full border border-[var(--border)]"
+          class="h-3 w-3 rounded-full border border-(--border)"
           :style="{ background: `color-mix(in srgb, var(--demo-dot) ${dot}, transparent)` }"
         />
         <div class="ml-3 flex-1">
           <div
-            class="flex items-center gap-2 rounded-md px-3 py-1.5 text-xs text-[var(--text-2)]"
+            class="flex items-center gap-2 rounded-md px-3 py-1.5 text-xs text-(--text-2)"
             style="background: var(--demo-inset)"
           >
             <svg width="11" height="11" viewBox="0 0 12 12" fill="none" class="opacity-60" aria-hidden="true">
@@ -176,7 +181,7 @@ onUnmounted(() => {
           </div>
         </div>
         <div
-          class="grid h-7 w-7 place-items-center rounded-md border border-[var(--border)]"
+          class="grid h-7 w-7 place-items-center rounded-md border border-(--border)"
           style="background: var(--demo-tab-bg)"
           title="Charon"
         >
@@ -185,13 +190,13 @@ onUnmounted(() => {
       </div>
 
       <div
-        class="relative min-h-[360px] p-6 text-[var(--text)] sm:p-8"
+        class="relative min-h-90 p-6 text-(--text) sm:p-8"
         :class="PAGE_LANE[edge]"
         style="background: var(--demo-page)"
       >
         <div class="mb-6">
           <h4 class="text-xl font-semibold">Centre de téléchargement</h4>
-          <p class="text-sm text-[var(--faint)]">
+          <p class="text-sm text-(--faint)">
             Cliquez sur « Télécharger » — Charon inspecte chaque fichier avant qu'il n'accoste.
           </p>
         </div>
@@ -200,18 +205,18 @@ onUnmounted(() => {
           <div
             v-for="file in FILES"
             :key="file.name"
-            class="flex items-center gap-4 rounded-xl border border-[var(--border)] p-3 sm:p-4"
+            class="flex items-center gap-4 rounded-xl border border-(--border) p-3 sm:p-4"
             style="background: var(--demo-card)"
           >
             <span
-              class="hidden h-11 w-11 shrink-0 place-items-center rounded-lg text-[10px] font-bold tracking-wider text-[var(--faint)] sm:grid"
+              class="hidden h-11 w-11 shrink-0 place-items-center rounded-lg text-[10px] font-bold tracking-wider text-(--faint) sm:grid"
               style="background: var(--demo-inset)"
             >
               {{ file.tag }}
             </span>
             <div class="min-w-0 flex-1">
               <div class="truncate text-sm font-medium">{{ file.name }}</div>
-              <div class="hidden truncate text-xs text-[var(--faint)] sm:block">
+              <div class="hidden truncate text-xs text-(--faint) sm:block">
                 {{ file.meta }}
               </div>
             </div>
@@ -243,7 +248,7 @@ onUnmounted(() => {
               <Transition name="popover">
                 <div
                   v-if="popover"
-                  class="absolute w-44 rounded-md border border-[var(--border)] p-3.5 text-left shadow-xl sm:w-56"
+                  class="absolute w-44 rounded-md border border-(--border) p-3.5 text-left shadow-xl sm:w-56"
                   :class="POPOVER_PLACEMENT[edge]"
                   style="background: var(--demo-popover-bg); color: var(--text)"
                 >
@@ -256,9 +261,9 @@ onUnmounted(() => {
                       Charon
                     </span>
                   </div>
-                  <div class="relative my-2 h-px bg-[var(--border)]">
+                  <div class="relative my-2 h-px bg-(--border)">
                     <span
-                      class="absolute left-1/2 top-[-2px] h-[5px] w-[5px] -translate-x-1/2 rounded-full"
+                      class="absolute left-1/2 -top-0.5 h-1.25 w-1.25 -translate-x-1/2 rounded-full"
                       style="background: var(--demo-accent)"
                     />
                   </div>
@@ -268,7 +273,7 @@ onUnmounted(() => {
                   >
                     {{ VERDICT_COPY[popover].label }}
                   </div>
-                  <p class="text-xs leading-relaxed text-[var(--faint)]">
+                  <p class="text-xs leading-relaxed text-(--faint)">
                     {{ VERDICT_COPY[popover].sub }}
                   </p>
                 </div>

@@ -8,7 +8,12 @@ import IconRing from "./shapes/IconRing.vue";
 import IconLantern from "./shapes/IconLantern.vue";
 
 const props = withDefaults(
-  defineProps<{ shape: IconShape; state: IconState; size?: number }>(),
+  defineProps<{
+    shape: IconShape;
+    state: IconState;
+    size?: number;
+    color?: string;
+  }>(),
   { size: 48 },
 );
 
@@ -20,7 +25,7 @@ const shapeComponents: Partial<Record<IconShape, Component>> = {
   lantern: IconLantern,
 };
 
-const color = computed(() => stateColor(props.state));
+const resolvedColor = computed(() => props.color ?? stateColor(props.state));
 </script>
 
 <template>
@@ -29,7 +34,7 @@ const color = computed(() => stateColor(props.state));
       :is="shapeComponents[shape]"
       v-if="shapeComponents[shape]"
       :state="state"
-      :color="color"
+      :color="resolvedColor"
     />
   </svg>
 </template>
