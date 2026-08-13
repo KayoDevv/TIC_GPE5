@@ -126,7 +126,10 @@ stub the handful they rely on.
 
 ---
 
-## Known gaps
+## Configuration
 
-- The extension archive linked by the download buttons
-  (`/charon-extension-v2.0.0.zip`) is not committed yet — those links 404.
+| Variable | Purpose |
+| --- | --- |
+| `NUXT_PUBLIC_EXTENSION_DOWNLOAD_URL` | Where the packaged extension is served from. Left empty, the download buttons render disabled. |
+
+Copy `.env.example` to `.env` to set it locally.

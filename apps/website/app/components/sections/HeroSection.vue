@@ -9,13 +9,14 @@ const BROWSER_FACTS = [
   "0 télémétrie",
   "<3MB",
 ];
+const { url: downloadUrl, available: downloadAvailable } = useExtensionDownload();
 </script>
 
 <template>
   <section class="relative overflow-hidden pt-32 pb-10">
     <div class="pointer-events-none absolute inset-0">
       <div
-        class="absolute left-1/2 top-[-180px] h-[420px] w-[720px] -translate-x-1/2 rounded-full opacity-[0.09] blur-[140px]"
+        class="absolute left-1/2 -top-45 h-105 w-180 -translate-x-1/2 rounded-full opacity-[0.09] blur-[140px]"
         style="background: var(--gold)"
       />
       <div class="hero-grid absolute inset-0 opacity-[0.5]" />
@@ -25,7 +26,7 @@ const BROWSER_FACTS = [
 
     <div class="relative mx-auto max-w-6xl px-6 text-center">
       <h1
-        class="hero-rise font-display mx-auto max-w-3xl pt-6 text-4xl leading-[1.12] text-[var(--text)] sm:text-6xl"
+        class="hero-rise font-display mx-auto max-w-3xl pt-6 text-4xl leading-[1.12] text-(--text) sm:text-6xl"
         style="--rise-delay: 0.08s"
       >
         La sécurité mail,
@@ -36,7 +37,7 @@ const BROWSER_FACTS = [
       </h1>
 
       <p
-        class="hero-rise mx-auto mt-6 max-w-xl text-base leading-relaxed text-[var(--muted)] sm:text-lg"
+        class="hero-rise mx-auto mt-6 max-w-xl text-base leading-relaxed text-(--muted) sm:text-lg"
         style="--rise-delay: 0.16s"
       >
         Charon est une extension navigateur qui inspecte chaque pièce jointe et
@@ -49,23 +50,33 @@ const BROWSER_FACTS = [
         style="--rise-delay: 0.24s"
       >
         <a
-          href="/charon-extension-v2.0.0.zip"
+          v-if="downloadAvailable"
+          :href="downloadUrl"
           download
           class="btn-lift flex items-center gap-2 rounded-lg px-6 py-3 text-sm font-semibold"
           style="background: var(--btn-bg); color: var(--btn-text)"
         >
           + Télécharger l'extension — gratuit
         </a>
+        <button
+          v-else
+          disabled
+          title="Bientôt disponible"
+          class="flex cursor-not-allowed items-center gap-2 rounded-lg px-6 py-3 text-sm font-semibold opacity-50"
+          style="background: var(--btn-bg); color: var(--btn-text)"
+        >
+          + Télécharger l'extension — gratuit
+        </button>
         <a
           href="#product"
-          class="flex items-center gap-2 rounded-lg border border-[var(--border-strong)] bg-[var(--card)]/60 px-6 py-3 text-sm font-medium text-[var(--text)] transition-colors hover:border-[var(--text)]"
+          class="flex items-center gap-2 rounded-lg border border-(--border-strong) bg-(--card)/60 px-6 py-3 text-sm font-medium text-(--text) transition-colors hover:border-(--text)"
         >
           <MousePointerClick :size="16" /> Voir la démo
         </a>
       </div>
 
       <div
-        class="hero-fade mt-8 flex flex-wrap items-center justify-center gap-x-6 gap-y-2 font-mono2 text-[11px] text-[var(--faint)]"
+        class="hero-fade mt-8 flex flex-wrap items-center justify-center gap-x-6 gap-y-2 font-mono2 text-[11px] text-(--faint)"
         style="--fade-delay: 0.4s"
       >
         <template v-for="(fact, index) in BROWSER_FACTS" :key="fact">
@@ -74,7 +85,7 @@ const BROWSER_FACTS = [
         </template>
       </div>
       <p
-        class="hero-fade mt-3 font-mono2 text-[10px] text-[var(--faint)]"
+        class="hero-fade mt-3 font-mono2 text-[10px] text-(--faint)"
         style="--fade-delay: 0.5s"
       >
         v2.0.0 · zip — décompressez puis chrome://extensions → mode développeur →
