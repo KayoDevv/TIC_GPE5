@@ -1,0 +1,68 @@
+:root {
+  color-scheme: dark;
+
+  --font-sans: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, 'JetBrains Mono', Menlo, monospace;
+
+  --shell-width: 380px;
+
+  --surface-shell: linear-gradient(
+    145deg,
+    rgba(255, 255, 255, 0.14) 0%,
+    rgba(255, 255, 255, 0.07) 40%,
+    rgba(255, 255, 255, 0.05) 100%
+  );
+  --surface-raised: rgba(255, 255, 255, 0.06);
+  --surface-hover: rgba(255, 255, 255, 0.11);
+  --surface-subtle: rgba(255, 255, 255, 0.03);
+  --surface-sunken: rgba(0, 0, 0, 0.15);
+
+  --border-soft: rgba(255, 255, 255, 0.07);
+  --border-regular: rgba(255, 255, 255, 0.12);
+  --border-strong: rgba(255, 255, 255, 0.18);
+  --border-specular: rgba(255, 255, 255, 0.32);
+
+  --text-primary: rgba(255, 255, 255, 0.92);
+  --text-secondary: rgba(255, 255, 255, 0.6);
+  --text-muted: rgba(255, 255, 255, 0.38);
+  --text-faint: rgba(255, 255, 255, 0.25);
+
+  --tone-allowed: #4ade80;
+  --tone-allowed-glow: rgba(74, 222, 128, 0.3);
+  --tone-warning: #fb923c;
+  --tone-warning-glow: rgba(251, 146, 60, 0.3);
+  --tone-blocked: #f43f5e;
+  --tone-blocked-glow: rgba(244, 63, 94, 0.3);
+
+  --radius-shell: 22px;
+  --radius-panel: 16px;
+  --radius-control: 14px;
+  --radius-inset: 10px;
+  --radius-pill: 20px;
+
+  --space-xs: 4px;
+  --space-sm: 6px;
+  --space-md: 10px;
+  --space-lg: 14px;
+  --space-xl: 18px;
+  --space-2xl: 22px;
+
+  --text-size-title: 15px;
+  --text-size-body: 13px;
+  --text-size-small: 12px;
+  --text-size-label: 10px;
+  --text-size-micro: 9px;
+  --tracking-label: 0.08em;
+
+  --blur-glass: blur(48px) saturate(180%) brightness(1.05);
+
+  --shadow-shell:
+    0 1px 0 rgba(255, 255, 255, 0.2) inset, 0 -1px 0 rgba(0, 0, 0, 0.25) inset,
+    0 48px 96px rgba(0, 0, 0, 0.55), 0 12px 32px rgba(0, 0, 0, 0.35);
+  --shadow-raised: 0 1px 0 rgba(255, 255, 255, 0.12) inset, 0 8px 24px rgba(0, 0, 0, 0.3);
+  --shadow-inset-highlight: 0 1px 0 rgba(255, 255, 255, 0.07) inset;
+
+  --motion-fast: 0.15s;
+  --motion-base: 0.22s;
+  --motion-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+}

@@ -17,6 +17,8 @@
   "devDependencies": {
     "@types/chrome": "^0.1.8",
     "@types/node": "^22.15.29",
+    "@vitejs/plugin-vue": "^6.0.8",
+    "@vue/test-utils": "^2.4.11",
     "@wxt-dev/module-vue": "^1.0.2",
     "jsdom": "^26.1.0",
     "typescript": "^5.8.3",

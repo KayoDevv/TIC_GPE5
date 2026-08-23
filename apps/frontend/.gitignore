@@ -3,4 +3,5 @@ node_modules/
 .wxt/
 test-results/
 playwright-report/
+coverage/
 .env
