@@ -55,6 +55,9 @@ def read_headers() -> dict[str, str]:
                          f"does not name '{image}:<version>'")
             headers[image] = version
             break
+        if image not in headers:
+            sys.exit(f"::error file={dockerfile}::no 'ghcr-image: {image}:<version>' "
+                     f"header: nothing would publish this image")
     return headers
 
 

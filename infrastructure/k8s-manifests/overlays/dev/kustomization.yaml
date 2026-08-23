@@ -1,17 +1,15 @@
 # Dev overlay — native K3s (GPE-NYX) with Bitnami Kafka + MinIO StatefulSet
 # in-cluster. NetworkPolicies enforced via Calico (calico-system).
 #
-# Deployment: make deploy-dev (which chains import-images + apply -k).
+# Same base and endpoints as prod, plus the host-side MinIO NodePort the
+# validator/feeder needs. Deployment: make deploy-dev (chains import-images).
 
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-namespace: sandbox
 
 resources:
   - ../../applications/sandbox
 
-patches:
-  - path: consumer-env-patch.yaml
-    target:
-      kind: Deployment
-      name: sandbox-consumer
+components:
+  - ../../components/in-cluster-endpoints
+  - ../../components/dev-nodeports

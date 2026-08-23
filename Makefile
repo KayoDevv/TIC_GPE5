@@ -547,16 +547,17 @@ deploy-dev: setup-kubeconfig
 # Kafka (32092) + MinIO (32090). NOT for prod (prod = ClusterIP only).
 .PHONY: dev-expose dev-teardown
 # Kafka is Terraform-owned (helm.tf): flip the dev externalAccess via a TF
-# variable, NOT a parallel `helm upgrade` (single owner). MinIO stays Make-owned,
-# so its dev NodePort remains a direct kubectl apply.
+# variable, NOT a parallel `helm upgrade` (single owner). The MinIO NodePort now
+# ships in the dev overlay too (components/dev-nodeports); applying that single
+# file here keeps expose/teardown a toggle that leaves the consumer untouched.
 dev-expose:
 	cd $(TERRAFORM_DIR) && terraform apply -auto-approve -var kafka_dev_external_access=true
-	kubectl apply -f infrastructure/k8s-manifests/applications/minio/dev/minio-nodeport.yaml
+	kubectl apply -f infrastructure/k8s-manifests/components/dev-nodeports/minio-nodeport.yaml
 	@echo "DEV exposed — Kafka $(NODE_IP):$(KAFKA_NODEPORT) + MinIO $(NODE_IP):32090 (host validator/feeder)."
 
 dev-teardown:
 	cd $(TERRAFORM_DIR) && terraform apply -auto-approve -var kafka_dev_external_access=false
-	kubectl delete -f infrastructure/k8s-manifests/applications/minio/dev/minio-nodeport.yaml --ignore-not-found
+	kubectl delete -f infrastructure/k8s-manifests/components/dev-nodeports/minio-nodeport.yaml --ignore-not-found
 	@echo "DEV NodePorts removed (prod-safe ClusterIP only)."
 
 # ══════════════════════════════════════════════════════════════════════════════

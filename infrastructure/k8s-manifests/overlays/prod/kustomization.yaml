@@ -1,15 +1,14 @@
-# Differs from the dev overlay only by consumer-env-patch.yaml (in-cluster
-# Kafka/MinIO DNS). The consumer version is inherited from the base.
+# Prod overlay — in-cluster Kafka/MinIO DNS, no host exposure (ClusterIP only).
+# Differs from dev by the dev-nodeports component, which prod does not pull in.
+#
+# The namespace comes from the sandbox base; setting it here too would rewrite
+# the namespace of any component resource that lives elsewhere.
 
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-namespace: sandbox
 
 resources:
   - ../../applications/sandbox
 
-patches:
-  - path: consumer-env-patch.yaml
-    target:
-      kind: Deployment
-      name: sandbox-consumer
+components:
+  - ../../components/in-cluster-endpoints

@@ -419,7 +419,7 @@ The script applies all three rules **recursively**: it walks nested `object` pro
 | `scripts/ci/__init__.py` | Python module marker |
 | `scripts/ci/check_schema_compat.py` | BACKWARD_TRANSITIVE schema checker script |
 | `infrastructure/k8s-manifests/overlays/prod/kustomization.yaml` | Production Kustomize overlay |
-| `infrastructure/k8s-manifests/overlays/prod/consumer-env-patch.yaml` | Consumer env for prod |
+| `infrastructure/k8s-manifests/components/in-cluster-endpoints/consumer-env-patch.yaml` | Consumer in-cluster endpoints (dev + prod) |
 | `.github/service-matrix.json` | Shared 9-service matrix — single source of truth for `ci-build.yml` and `cd-deploy.yml` |
 | `docs/ci-cd.md` | This document |
 

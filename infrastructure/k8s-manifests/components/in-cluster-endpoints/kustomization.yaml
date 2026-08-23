@@ -1,0 +1,11 @@
+# Wires the consumer to Kafka + MinIO in-cluster via K8s DNS. Shared by the dev
+# and prod overlays, which used to carry a byte-identical copy each.
+
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+patches:
+  - path: consumer-env-patch.yaml
+    target:
+      kind: Deployment
+      name: sandbox-consumer

@@ -2,8 +2,8 @@
 # Does NOT analyze locally: it consumes file.requested and creates 1 Job
 # per sample. Lightweight: 100m CPU, 128Mi RAM. Scaled by KEDA on Kafka lag.
 #
-# Endpoints: the base env vars define the fallbacks. The dev overlay
-# (overlays/dev/consumer-env-patch.yaml) injects the in-cluster DNS:
+# Endpoints: the base env vars define the fallbacks. The dev and prod overlays
+# (components/in-cluster-endpoints) inject the in-cluster DNS:
 #   - kafka.kafka.svc.cluster.local:9092
 #   - minio.minio.svc.cluster.local:9000
 #   - kubernetes.default.svc:443 (K8s API for Job creation)
@@ -47,7 +47,7 @@ spec:
             - name: K8S_API_SERVER
               value: "https://$(NODE_IP):6443"
             # Endpoints of the services running on the host (docker-compose dev).
-            # Overridden in prod via overlays/prod/consumer-prod-env-patch.yaml.
+            # Overridden by the in-cluster-endpoints component (dev + prod overlays).
             - name: KAFKA_BOOTSTRAP_SERVERS
               value: "$(NODE_IP):9093"
             - name: AGENT_KAFKA_BOOTSTRAP_SERVERS
@@ -81,7 +81,8 @@ spec:
               value: "charon-sandbox-v1"
             - name: K8S_NAMESPACE
               value: "sandbox"
-            # Out of reach of kustomize `images:`. Both tags must already be in
+            # Out of reach of kustomize `images:` — kept in sync with the Dockerfile
+            # headers by make sync-versions. Both tags must already be in
             # containerd: the Jobs run imagePullPolicy: Never.
             - name: SANDBOX_JOB_IMAGE
               value: "ghcr.io/kayodevv/ubuntu-sandbox:v1.2.0"

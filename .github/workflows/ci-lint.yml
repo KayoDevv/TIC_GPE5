@@ -68,13 +68,14 @@ jobs:
       - name: Validate K8s manifests
         run: |
           # Direct validation of the standalone manifests (base/applications).
-          # overlays/ contain kustomize strategic merge patches that are not
+          # overlays/ and *-patch.yaml are kustomize strategic merge patches, not
           # valid manifests on their own — we exclude them here and validate
           # them via kustomize build in the next step.
           FILES=$(find infrastructure \( -name '*.yaml' -o -name '*.yml' \) \
             | grep -v 'terraform/' \
             | grep -v 'scripts/' \
             | grep -v 'overlays/' \
+            | grep -v -- '-patch.yaml' \
             | grep -v 'kustomization.yaml' \
             | grep -vE 'values(-[a-z]+)?\.yaml' \
             || true)

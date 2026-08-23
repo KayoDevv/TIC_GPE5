@@ -1,0 +1,11 @@
+# Host-side NodePort exposure so the validator/feeder running on the node can
+# reach MinIO. Dev only — prod stays ClusterIP (TASKS.md P0b).
+#
+# Kafka's dev NodePort is NOT here: Kafka is Terraform-owned (helm.tf layers
+# kafka/values-dev.yaml when var.kafka_dev_external_access is true).
+
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+resources:
+  - minio-nodeport.yaml

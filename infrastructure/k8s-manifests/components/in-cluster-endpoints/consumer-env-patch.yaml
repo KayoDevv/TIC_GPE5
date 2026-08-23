@@ -1,4 +1,4 @@
-# Prod patch — wires the consumer to Kafka (Bitnami) + MinIO (StatefulSet)
+# Wires the consumer to Kafka (Bitnami) + MinIO (StatefulSet)
 # in-cluster via K8s DNS. Overrides K8S_API_SERVER so it points to the
 # `kubernetes` service instead of NODE_IP:6443 (the pod cannot reach the
 # host's port 6443 with the Calico NetworkPolicy enforced).
