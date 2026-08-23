@@ -12,7 +12,7 @@ from zt_shared.kafka.consumer import KafkaSubscriber
 from zt_shared.kafka.producer import KafkaPublisher
 from zt_shared.models.events import FileRequestedEvent, MlLayerResultEvent
 
-from ml_layer.analyzer import StaticAnalyzer
+from ml_layer.analyzer import StaticAnalysis, StaticAnalyzer, abstention
 from ml_layer.config import get_config
 
 logging.basicConfig(
@@ -84,7 +84,7 @@ class MlWorker:
         await self.publisher.stop()
 
     async def _publish_result(
-        self, job_id: Any, risk_score: int, tags: list[str], start_time: float
+        self, job_id: Any, analysis: StaticAnalysis, start_time: float
     ) -> None:
         processing_time_ms = int((time.perf_counter() - start_time) * 1000)
         if processing_time_ms > ML_SLA_MS:
@@ -97,36 +97,40 @@ class MlWorker:
 
         result_event = MlLayerResultEvent(
             job_id=job_id,
-            risk_score=risk_score,
-            static_tags=tags,
+            risk_score=analysis.risk_score,
+            static_tags=analysis.tags,
+            analysis_status=analysis.status,
             processing_time_ms=processing_time_ms,
             timestamp=datetime.now(timezone.utc),
         )
         await self.publisher.publish(self.config.kafka.topic_out, result_event)
         logger.info(
-            "Published results for job_id: %s (Score: %d, Time: %dms)",
+            "Published results for job_id: %s (Status: %s, Score: %d, Time: %dms)",
             job_id,
-            risk_score,
+            analysis.status,
+            analysis.risk_score,
             processing_time_ms,
         )
+
+    async def _analyze_event(self, event: FileRequestedEvent) -> StaticAnalysis:
+        try:
+            data = await self._download_file(event.s3_url)
+            logger.info(f"Downloaded {len(data)} bytes for job_id: {event.job_id}")
+            return await self.analyzer.analyze(data)
+        except Exception as e:
+            logger.exception(f"Error processing job_id {event.job_id}: {e}")
+            return abstention("analysis_failed")
 
     async def handle_event(self, event: FileRequestedEvent) -> None:
         start_time = time.perf_counter()
         job_id = event.job_id
         logger.info(f"Received analysis request for job_id: {job_id}")
 
+        analysis = await self._analyze_event(event)
         try:
-            data = await self._download_file(event.s3_url)
-            logger.info(f"Downloaded {len(data)} bytes for job_id: {job_id}")
-
-            risk_score, static_tags = await self.analyzer.analyze(data)
-            await self._publish_result(job_id, risk_score, static_tags, start_time)
-        except Exception as e:
-            logger.exception(f"Error processing job_id {job_id}: {e}")
-            try:
-                await self._publish_result(job_id, 0, ["analysis_error"], start_time)
-            except Exception:
-                logger.exception(f"Failed to publish error result for job_id {job_id}")
+            await self._publish_result(job_id, analysis, start_time)
+        except Exception:
+            logger.exception(f"Failed to publish result for job_id {job_id}")
 
 
 async def main() -> None:

@@ -10,7 +10,12 @@ from uuid import uuid4
 import pytest
 from zt_shared.models.events import EmailContext, FileRequestedEvent
 
+from ml_layer.analyzer import ModelOutputError, StaticAnalysis
 from ml_layer.worker import ML_SLA_MS, MlWorker, main
+
+
+def _completed_analysis() -> StaticAnalysis:
+    return StaticAnalysis(risk_score=10, tags=["high_risk"], status="completed")
 
 
 def _make_event(s3_url: str = "s3://bucket/key") -> FileRequestedEvent:
@@ -40,7 +45,9 @@ def worker() -> MlWorker:
     w.publisher = AsyncMock()
     w.subscriber = AsyncMock()
     w.analyzer = MagicMock()
-    w.analyzer.analyze = AsyncMock(return_value=(50, ["high_risk"]))
+    w.analyzer.analyze = AsyncMock(
+        return_value=StaticAnalysis(risk_score=50, tags=["high_risk"], status="completed")
+    )
     return w
 
 
@@ -114,9 +121,10 @@ async def test_handle_event_success(worker: MlWorker) -> None:
     assert result.job_id == event.job_id
     assert result.risk_score == 50
     assert result.static_tags == ["high_risk"]
+    assert result.analysis_status == "completed"
 
 
-async def test_handle_event_publishes_error_result_on_failure(worker: MlWorker) -> None:
+async def test_handle_event_abstains_when_download_fails(worker: MlWorker) -> None:
     worker._download_file = AsyncMock(side_effect=RuntimeError("boom"))  # type: ignore[method-assign]
     event = _make_event()
 
@@ -125,7 +133,21 @@ async def test_handle_event_publishes_error_result_on_failure(worker: MlWorker) 
     worker.publisher.publish.assert_awaited_once()
     _, result = worker.publisher.publish.await_args.args
     assert result.risk_score == 0
-    assert result.static_tags == ["analysis_error"]
+    assert result.static_tags == ["analysis_failed"]
+    assert result.analysis_status == "analysis_failed"
+
+
+async def test_handle_event_abstains_when_the_model_output_is_unusable(
+    worker: MlWorker,
+) -> None:
+    worker._download_file = AsyncMock(return_value=b"%PDF-1.7")  # type: ignore[method-assign]
+    worker.analyzer.analyze = AsyncMock(side_effect=ModelOutputError("unusable"))
+    event = _make_event()
+
+    await worker.handle_event(event)
+
+    _, result = worker.publisher.publish.await_args.args
+    assert result.analysis_status == "analysis_failed"
 
 
 async def test_handle_event_swallows_error_publish_failure(worker: MlWorker) -> None:
@@ -142,7 +164,7 @@ async def test_publish_result_warns_on_sla_breach(
 ) -> None:
     breached_start = time.perf_counter() - (ML_SLA_MS + 500) / 1000
     with caplog.at_level("WARNING"):
-        await worker._publish_result(uuid4(), 10, ["t"], breached_start)
+        await worker._publish_result(uuid4(), _completed_analysis(), breached_start)
     assert any("SLA breach" in r.message for r in caplog.records)
 
 
@@ -150,7 +172,7 @@ async def test_publish_result_no_warn_within_sla(
     worker: MlWorker, caplog: pytest.LogCaptureFixture
 ) -> None:
     with caplog.at_level("WARNING"):
-        await worker._publish_result(uuid4(), 10, ["t"], time.perf_counter())
+        await worker._publish_result(uuid4(), _completed_analysis(), time.perf_counter())
     assert not any("SLA breach" in r.message for r in caplog.records)
 
 

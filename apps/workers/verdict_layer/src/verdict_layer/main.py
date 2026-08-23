@@ -21,7 +21,9 @@ logger = logging.getLogger(__name__)
 
 
 async def handle_ml_event(saga: VerdictSaga, event: MlLayerResultEvent) -> None:
-    await saga.on_ml_result(str(event.job_id), score=event.risk_score)
+    await saga.on_ml_result(
+        str(event.job_id), score=event.risk_score, status=event.analysis_status
+    )
 
 
 def _sandbox_timed_out(event: SandboxLayerResultEvent) -> bool:
@@ -118,6 +120,7 @@ async def run() -> None:
         ml_block_threshold=settings.ml_block_threshold,
         timeout_default=settings.default_timeout_verdict,
         sandbox_timeout_seconds=settings.sandbox_timeout_seconds,
+        ml_abstain_verdict=settings.ml_abstain_verdict,
     )
 
     subscribers = _build_subscribers(settings, saga)

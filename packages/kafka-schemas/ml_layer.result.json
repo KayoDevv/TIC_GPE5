@@ -20,6 +20,16 @@
             },
             "description": "Tags such as 'packer_detected', 'high_entropy', 'known_malware'"
         },
+        "analysis_status": {
+            "type": "string",
+            "enum": [
+                "completed",
+                "unsupported_file_type",
+                "analysis_failed"
+            ],
+            "default": "completed",
+            "description": "Whether the static model actually scored the file"
+        },
         "processing_time_ms": {
             "type": "integer",
             "description": "Processing time in ms (SLA < 500ms)"

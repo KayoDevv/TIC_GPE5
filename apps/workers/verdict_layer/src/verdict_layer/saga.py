@@ -4,6 +4,8 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable
 
+from zt_shared.models.events import MlAnalysisStatus
+
 from verdict_layer.decision_matrix import VerdictDecision, decide
 from verdict_layer.state_store import StateStore
 
@@ -20,15 +22,17 @@ class VerdictSaga:
         ml_block_threshold: int,
         timeout_default: str,
         sandbox_timeout_seconds: int,
+        ml_abstain_verdict: str,
     ) -> None:
         self._store = store
         self._emit = emit_verdict
         self._ml_threshold = ml_block_threshold
         self._timeout_default = timeout_default
         self._timeout_seconds = sandbox_timeout_seconds
+        self._ml_abstain_verdict = ml_abstain_verdict
 
-    async def on_ml_result(self, job_id: str, score: int) -> None:
-        await self._store.update_ml(job_id, score=score)
+    async def on_ml_result(self, job_id: str, score: int, status: MlAnalysisStatus) -> None:
+        await self._store.update_ml(job_id, score=score, status=status)
         await self._resolve_if_complete(job_id)
 
     async def on_sandbox_result(
@@ -73,6 +77,7 @@ class VerdictSaga:
             state,
             ml_block_threshold=self._ml_threshold,
             timeout_default=self._timeout_default,
+            ml_abstain_verdict=self._ml_abstain_verdict,
         )
         verdict = self._build_verdict(job_id, decision)
 

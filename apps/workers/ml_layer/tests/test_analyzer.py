@@ -8,7 +8,15 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from ml_layer.analyzer import StaticAnalyzer, calibrate_score
+from ml_layer.analyzer import (
+    FeatureOrderMismatch,
+    ModelOutputError,
+    StaticAnalyzer,
+    _malicious_probability,
+    abstention,
+    calibrate_score,
+    validate_feature_order,
+)
 from ml_layer.features.pdf import FEATURE_ORDER
 
 
@@ -57,10 +65,11 @@ async def test_analyze_malicious_all_tags(analyzer: StaticAnalyzer) -> None:
         },
     )
 
-    score, tags = await analyzer.analyze(b"%PDF-1.7")
+    analysis = await analyzer.analyze(b"%PDF-1.7")
 
-    assert score == 95
-    assert tags == [
+    assert analysis.status == "completed"
+    assert analysis.risk_score == 95
+    assert analysis.tags == [
         "high_entropy",
         "has_javascript",
         "suspicious_js",
@@ -73,24 +82,79 @@ async def test_analyze_high_risk_band(analyzer: StaticAnalyzer) -> None:
     _set_session(analyzer, ["label", [[0.2, 0.8]]])
     _set_features(analyzer, {"entropy": 3.0})
 
-    score, tags = await analyzer.analyze(b"%PDF-1.7")
+    analysis = await analyzer.analyze(b"%PDF-1.7")
 
-    assert score == 80
-    assert tags == ["high_risk"]
+    assert analysis.risk_score == 80
+    assert analysis.tags == ["high_risk"]
 
 
-async def test_analyze_malformed_output_falls_back_to_zero(analyzer: StaticAnalyzer) -> None:
+async def test_analyze_low_score_carries_no_risk_band_tag(analyzer: StaticAnalyzer) -> None:
+    _set_session(analyzer, ["label", [[0.98, 0.02]]])
+    _set_features(analyzer, {"entropy": 1.0})
+
+    analysis = await analyzer.analyze(b"%PDF-1.7")
+
+    assert analysis.risk_score == 2
+    assert analysis.tags == []
+
+
+async def test_analyze_raises_on_malformed_model_output(analyzer: StaticAnalyzer) -> None:
     _set_session(analyzer, [123])
     _set_features(analyzer, {"entropy": 1.0})
 
-    score, tags = await analyzer.analyze(b"%PDF-1.7")
-
-    assert score == 0
-    assert tags == []
+    with pytest.raises(ModelOutputError):
+        await analyzer.analyze(b"%PDF-1.7")
 
 
-def test_score_value_error_falls_back_to_zero(analyzer: StaticAnalyzer) -> None:
-    assert analyzer._score(["label", [["not-a-number", "nope"]]]) == 0
+def test_malicious_probability_raises_on_non_numeric_output() -> None:
+    with pytest.raises(ModelOutputError):
+        _malicious_probability(["label", [["not-a-number", "nope"]]])
+
+
+async def test_analyze_abstains_on_non_pdf_bytes(analyzer: StaticAnalyzer) -> None:
+    _set_session(analyzer, ["label", [[0.05, 0.95]]])
+    _set_features(analyzer, {})
+
+    analysis = await analyzer.analyze(b"MZ\x90\x00 not a pdf")
+
+    assert analysis.status == "unsupported_file_type"
+    assert analysis.risk_score == 0
+    assert analysis.tags == ["unsupported_file_type"]
+
+
+def test_abstention_carries_status_as_its_only_tag() -> None:
+    analysis = abstention("analysis_failed")
+
+    assert analysis.status == "analysis_failed"
+    assert analysis.risk_score == 0
+    assert analysis.tags == ["analysis_failed"]
+
+
+class TestFeatureOrderValidation:
+    def _write_metadata(self, tmp_path: Path, feature_order: list[str]) -> str:
+        model_path = tmp_path / "model.onnx"
+        (tmp_path / "model.metadata.json").write_text(json.dumps({"feature_order": feature_order}))
+        return str(model_path)
+
+    def test_matching_prefix_is_accepted(self, tmp_path: Path) -> None:
+        model_path = self._write_metadata(tmp_path, FEATURE_ORDER[:12])
+        validate_feature_order(model_path, 12)
+
+    def test_reordered_features_are_rejected(self, tmp_path: Path) -> None:
+        reordered = [FEATURE_ORDER[1], FEATURE_ORDER[0], *FEATURE_ORDER[2:12]]
+        model_path = self._write_metadata(tmp_path, reordered)
+
+        with pytest.raises(FeatureOrderMismatch):
+            validate_feature_order(model_path, 12)
+
+    def test_absent_sidecar_is_accepted(self, tmp_path: Path) -> None:
+        validate_feature_order(str(tmp_path / "model.onnx"), len(FEATURE_ORDER))
+
+    def test_analyzer_refuses_to_start_on_mismatch(self, tmp_path: Path) -> None:
+        model_path = self._write_metadata(tmp_path, list(reversed(FEATURE_ORDER)))
+
+        with pytest.raises(FeatureOrderMismatch):
+            _build_analyzer(model_path, [None, len(FEATURE_ORDER)])
 
 
 class TestResolveNFeatures:

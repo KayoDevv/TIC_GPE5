@@ -43,6 +43,35 @@ def test_ml_layer_event_valid():
     )
     assert event.risk_score == 95
 
+def test_ml_layer_event_defaults_to_completed_analysis():
+    event = MlLayerResultEvent(
+        job_id=uuid4(),
+        risk_score=10,
+        static_tags=[],
+        timestamp=datetime.now()
+    )
+    assert event.analysis_status == "completed"
+
+def test_ml_layer_event_accepts_an_abstention_status():
+    event = MlLayerResultEvent(
+        job_id=uuid4(),
+        risk_score=0,
+        static_tags=["unsupported_file_type"],
+        analysis_status="unsupported_file_type",
+        timestamp=datetime.now()
+    )
+    assert event.analysis_status == "unsupported_file_type"
+
+def test_ml_layer_event_rejects_unknown_analysis_status():
+    with pytest.raises(ValidationError):
+        MlLayerResultEvent(
+            job_id=uuid4(),
+            risk_score=0,
+            static_tags=[],
+            analysis_status="not-a-status",
+            timestamp=datetime.now()
+        )
+
 def test_ml_layer_event_invalid_score():
     with pytest.raises(ValidationError):
         MlLayerResultEvent(

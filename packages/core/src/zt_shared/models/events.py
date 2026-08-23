@@ -28,6 +28,14 @@ class FileRequestedEvent(BaseModel):
     timestamp: datetime
 
 
+# "completed" is the only status under which risk_score carries an opinion. The
+# other values are abstentions: the static layer could not examine the file, and
+# a consumer must not read the accompanying zero score as "benign".
+MlAnalysisStatus = Literal["completed", "unsupported_file_type", "analysis_failed"]
+
+ML_ANALYSIS_COMPLETED: MlAnalysisStatus = "completed"
+
+
 class MlLayerResultEvent(BaseModel):
     job_id: UUID
     risk_score: int = Field(
@@ -35,6 +43,10 @@ class MlLayerResultEvent(BaseModel):
     )
     static_tags: List[str] = Field(
         description="Tags such as 'packer_detected', 'high_entropy', 'known_malware'"
+    )
+    analysis_status: MlAnalysisStatus = Field(
+        default=ML_ANALYSIS_COMPLETED,
+        description="Whether the static model actually scored the file",
     )
     processing_time_ms: Optional[int] = Field(
         default=None, description="Processing time in ms (SLA < 500ms)"

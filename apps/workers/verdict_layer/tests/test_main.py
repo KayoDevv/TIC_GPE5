@@ -29,7 +29,7 @@ def _now() -> datetime:
 class TestHandleMlEvent:
     """Tests for the ML event adapter."""
 
-    async def test_calls_saga_with_score(self) -> None:
+    async def test_calls_saga_with_score_and_status(self) -> None:
         saga = AsyncMock()
         job_id = uuid4()
         event = MlLayerResultEvent(
@@ -41,7 +41,26 @@ class TestHandleMlEvent:
 
         await handle_ml_event(saga, event)
 
-        saga.on_ml_result.assert_awaited_once_with(str(job_id), score=42)
+        saga.on_ml_result.assert_awaited_once_with(
+            str(job_id), score=42, status="completed"
+        )
+
+    async def test_forwards_an_abstention_status(self) -> None:
+        saga = AsyncMock()
+        job_id = uuid4()
+        event = MlLayerResultEvent(
+            job_id=job_id,
+            risk_score=0,
+            static_tags=["analysis_failed"],
+            analysis_status="analysis_failed",
+            timestamp=_now(),
+        )
+
+        await handle_ml_event(saga, event)
+
+        saga.on_ml_result.assert_awaited_once_with(
+            str(job_id), score=0, status="analysis_failed"
+        )
 
 
 class TestHandleSandboxEvent:

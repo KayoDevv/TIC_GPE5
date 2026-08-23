@@ -5,6 +5,7 @@ import time
 from typing import Any, Awaitable, cast
 
 from redis.asyncio import Redis
+from zt_shared.models.events import MlAnalysisStatus
 
 from verdict_layer.decision_matrix import JobState
 
@@ -15,6 +16,14 @@ LOCK_KEY_PREFIX = "verdict:lock:"
 # Sandbox bands the LLM Layer does NOT resolve (it only handles needs_more_context
 # and unknown/None). For these, no llm_layer.result will ever arrive.
 _TERMINAL_SANDBOX_VERDICTS = frozenset({"benign", "malicious", "error"})
+
+_ML_ANALYSIS_STATUSES = frozenset({"completed", "unsupported_file_type", "analysis_failed"})
+
+
+def _parse_ml_status(raw_status: str | None) -> MlAnalysisStatus | None:
+    if raw_status not in _ML_ANALYSIS_STATUSES:
+        return None
+    return cast(MlAnalysisStatus, raw_status)
 
 
 class StateStore:
@@ -41,9 +50,15 @@ class StateStore:
     async def _refresh_ttl(self, job_id: str) -> None:
         await self._redis.expire(self._key(job_id), self._ttl)
 
-    async def update_ml(self, job_id: str, score: int) -> None:
+    async def update_ml(self, job_id: str, score: int, status: MlAnalysisStatus) -> None:
         await self._record_first_arrival(job_id)
-        await cast(Awaitable[Any], self._redis.hset(self._key(job_id), "ml_score", str(score)))
+        await cast(
+            Awaitable[Any],
+            self._redis.hset(
+                self._key(job_id),
+                mapping={"ml_score": str(score), "ml_status": status},
+            ),
+        )
         await self._refresh_ttl(job_id)
 
     async def update_sandbox(
@@ -94,6 +109,7 @@ class StateStore:
             return JobState()
         return JobState(
             ml_score=int(raw["ml_score"]) if "ml_score" in raw else None,
+            ml_status=_parse_ml_status(raw.get("ml_status")),
             sandbox_received=raw.get("sandbox_received") == "1",
             sandbox_timeout=raw.get("sandbox_timeout") == "1",
             sandbox_iocs=json.loads(raw["sandbox_iocs"]) if "sandbox_iocs" in raw else [],

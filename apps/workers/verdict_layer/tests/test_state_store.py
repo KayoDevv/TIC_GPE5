@@ -23,9 +23,21 @@ def store(redis_client):
 
 class TestUpdateAndGet:
     async def test_update_ml_then_get(self, store) -> None:
-        await store.update_ml("job-1", score=42)
+        await store.update_ml("job-1", score=42, status="completed")
         state = await store.get_state("job-1")
         assert state.ml_score == 42
+        assert state.ml_status == "completed"
+
+    async def test_update_ml_persists_an_abstention_status(self, store) -> None:
+        await store.update_ml("job-abstain", score=0, status="unsupported_file_type")
+        state = await store.get_state("job-abstain")
+        assert state.ml_status == "unsupported_file_type"
+
+    async def test_unknown_stored_status_is_read_as_absent(self, store, redis_client) -> None:
+        await store.update_ml("job-odd", score=5, status="completed")
+        await redis_client.hset("verdict:state:job-odd", "ml_status", "not-a-status")
+        state = await store.get_state("job-odd")
+        assert state.ml_status is None
 
     async def test_update_sandbox_then_get(self, store) -> None:
         iocs = [{"type": "domain", "value": "evil.com"}]
@@ -52,7 +64,7 @@ class TestUpdateAndGet:
         assert state.llm_explanation == "bad stuff"
 
     async def test_partial_merge(self, store) -> None:
-        await store.update_ml("job-4", score=10)
+        await store.update_ml("job-4", score=10, status="completed")
         await store.update_sandbox("job-4", iocs=[], timeout=False)
         await store.update_llm("job-4", is_malicious=False, explanation="clean")
         state = await store.get_state("job-4")
@@ -70,7 +82,7 @@ class TestUpdateAndGet:
 
 class TestTimeout:
     async def test_mark_sandbox_timeout(self, store) -> None:
-        await store.update_ml("job-timeout", score=20)
+        await store.update_ml("job-timeout", score=20, status="completed")
         await store.mark_sandbox_timeout("job-timeout")
         state = await store.get_state("job-timeout")
         assert state.sandbox_timeout is True
@@ -78,35 +90,35 @@ class TestTimeout:
 
 class TestCompletion:
     async def test_is_complete_false_when_partial(self, store) -> None:
-        await store.update_ml("job-partial", score=10)
+        await store.update_ml("job-partial", score=10, status="completed")
         assert await store.is_complete("job-partial") is False
 
     async def test_is_complete_true_when_all_received(self, store) -> None:
-        await store.update_ml("job-full", score=10)
+        await store.update_ml("job-full", score=10, status="completed")
         await store.update_sandbox("job-full", iocs=[], timeout=False)
         await store.update_llm("job-full", is_malicious=False, explanation="clean")
         assert await store.is_complete("job-full") is True
 
     async def test_is_complete_true_when_sandbox_timed_out(self, store) -> None:
-        await store.update_ml("job-timeout-complete", score=10)
+        await store.update_ml("job-timeout-complete", score=10, status="completed")
         await store.mark_sandbox_timeout("job-timeout-complete")
         await store.update_llm("job-timeout-complete", is_malicious=False, explanation="clean")
         assert await store.is_complete("job-timeout-complete") is True
 
     async def test_is_complete_true_on_terminal_verdict_without_llm(self, store) -> None:
         # F-A: a terminal sandbox verdict means no LLM result is coming.
-        await store.update_ml("job-term", score=10)
+        await store.update_ml("job-term", score=10, status="completed")
         await store.update_sandbox("job-term", iocs=[], timeout=False, verdict="benign")
         assert await store.is_complete("job-term") is True
 
     async def test_is_complete_true_on_sandbox_timeout_without_llm(self, store) -> None:
-        await store.update_ml("job-to", score=10)
+        await store.update_ml("job-to", score=10, status="completed")
         await store.update_sandbox("job-to", iocs=[], timeout=True, verdict=None)
         assert await store.is_complete("job-to") is True
 
     async def test_is_complete_false_on_grey_verdict_without_llm(self, store) -> None:
         # needs_more_context still escalates to the LLM -> not complete yet.
-        await store.update_ml("job-grey", score=10)
+        await store.update_ml("job-grey", score=10, status="completed")
         await store.update_sandbox(
             "job-grey", iocs=[], timeout=False, verdict="needs_more_context"
         )
@@ -114,19 +126,19 @@ class TestCompletion:
 
     async def test_is_complete_false_on_unknown_verdict_without_llm(self, store) -> None:
         # None verdict is unknown -> the LLM runs (silence is not benign).
-        await store.update_ml("job-unk", score=10)
+        await store.update_ml("job-unk", score=10, status="completed")
         await store.update_sandbox("job-unk", iocs=[], timeout=False, verdict=None)
         assert await store.is_complete("job-unk") is False
 
 
 class TestArrivalTimestamp:
     async def test_first_update_sets_arrival(self, store, redis_client) -> None:
-        await store.update_ml("job-arr", score=10)
+        await store.update_ml("job-arr", score=10, status="completed")
         arrival = await redis_client.get("verdict:arrival:job-arr")
         assert arrival is not None
 
     async def test_arrival_not_overwritten(self, store, redis_client) -> None:
-        await store.update_ml("job-arr2", score=10)
+        await store.update_ml("job-arr2", score=10, status="completed")
         first = await redis_client.get("verdict:arrival:job-arr2")
         await store.update_llm("job-arr2", is_malicious=False, explanation="x")
         second = await redis_client.get("verdict:arrival:job-arr2")
@@ -135,18 +147,18 @@ class TestArrivalTimestamp:
 
 class TestScanExpired:
     async def test_scan_returns_old_job_without_sandbox(self, store) -> None:
-        await store.update_ml("job-old", score=10)
+        await store.update_ml("job-old", score=10, status="completed")
         await store._redis.set("verdict:arrival:job-old", str(time.time() - 200))
         expired = await store.scan_expired(timeout_seconds=125)
         assert "job-old" in expired
 
     async def test_scan_ignores_recent_job(self, store) -> None:
-        await store.update_ml("job-recent", score=10)
+        await store.update_ml("job-recent", score=10, status="completed")
         expired = await store.scan_expired(timeout_seconds=125)
         assert "job-recent" not in expired
 
     async def test_scan_ignores_job_with_sandbox(self, store) -> None:
-        await store.update_ml("job-has-sandbox", score=10)
+        await store.update_ml("job-has-sandbox", score=10, status="completed")
         await store.update_sandbox("job-has-sandbox", iocs=[], timeout=False)
         await store._redis.set("verdict:arrival:job-has-sandbox", str(time.time() - 200))
         expired = await store.scan_expired(timeout_seconds=125)
@@ -180,7 +192,7 @@ class TestVerdictLock:
 
 class TestCleanup:
     async def test_clear_removes_state_and_arrival(self, store, redis_client) -> None:
-        await store.update_ml("job-clear", score=10)
+        await store.update_ml("job-clear", score=10, status="completed")
         await store.clear("job-clear")
         state = await store.get_state("job-clear")
         assert state.ml_score is None

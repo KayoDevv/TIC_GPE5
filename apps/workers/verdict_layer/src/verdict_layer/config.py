@@ -22,4 +22,6 @@ class Settings(BaseSettings):
 
     default_timeout_verdict: str = "warning"
 
+    ml_abstain_verdict: str = "warning"
+
     model_config = {"env_prefix": "", "env_file": ".env", "extra": "ignore"}

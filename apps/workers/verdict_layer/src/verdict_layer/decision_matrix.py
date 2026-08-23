@@ -3,7 +3,11 @@
 from dataclasses import dataclass, field
 from typing import Any, Literal, Optional
 
+from zt_shared.models.events import ML_ANALYSIS_COMPLETED, MlAnalysisStatus
+
 Decision = Literal["allowed", "blocked", "warning"]
+
+ALLOWED_ON_ML_ABSTENTION = "allowed"
 
 ML_BLOCKED_EXPLANATION = "Blocked: static analysis assigned a critical risk score."
 ML_DISPUTED_EXPLANATION = (
@@ -14,11 +18,18 @@ LLM_BLOCKED_EXPLANATION = "Blocked: semantic analysis identified malicious inten
 SANDBOX_TIMEOUT_EXPLANATION = "Partial analysis: the behavioral sandbox did not respond in time."
 SANDBOX_MALICIOUS_EXPLANATION = "Blocked: behavioral analysis confirmed malicious activity."
 SANDBOX_ERROR_EXPLANATION = "Partial analysis: the behavioral sandbox could not analyze this file."
+ML_ABSTAINED_EXPLANATION = (
+    "Partial analysis: static analysis could not examine this file, so only "
+    "behavioral analysis was applied."
+)
 
 
 @dataclass
 class JobState:
     ml_score: Optional[int] = None
+    # None means no ml_layer.result has arrived yet; any status other than
+    # "completed" is an abstention and its ml_score carries no opinion.
+    ml_status: Optional[MlAnalysisStatus] = None
     sandbox_received: bool = False
     sandbox_timeout: bool = False
     sandbox_iocs: list[dict[str, Any]] = field(default_factory=list)
@@ -37,15 +48,26 @@ class VerdictDecision:
 
 def _build_summary(state: JobState) -> dict[str, Any]:
     return {
-        "ml_layer_score": state.ml_score,
+        "ml_layer_score": None if _ml_abstained(state) else state.ml_score,
+        "ml_layer_status": state.ml_status,
         "sandbox_layer_iocs": state.sandbox_iocs or None,
         "sandbox_layer_timeout": state.sandbox_timeout,
         "llm_layer_malicious": state.llm_is_malicious,
     }
 
 
+def _ml_abstained(state: JobState) -> bool:
+    return state.ml_status is not None and state.ml_status != ML_ANALYSIS_COMPLETED
+
+
 def _is_ml_critical(state: JobState, ml_block_threshold: int) -> bool:
+    if _ml_abstained(state):
+        return False
     return state.ml_score is not None and state.ml_score > ml_block_threshold
+
+
+def _needs_abstention_warning(state: JobState, ml_abstain_verdict: str) -> bool:
+    return _ml_abstained(state) and ml_abstain_verdict != ALLOWED_ON_ML_ABSTENTION
 
 
 def _behavioral_decision(
@@ -76,6 +98,7 @@ def decide(
     state: JobState,
     ml_block_threshold: int,
     timeout_default: str,
+    ml_abstain_verdict: str,
 ) -> VerdictDecision:
     summary = _build_summary(state)
     behavioral = _behavioral_decision(state, timeout_default, summary)
@@ -87,5 +110,12 @@ def decide(
         if behavioral.final_decision == "allowed":
             return VerdictDecision("warning", ML_DISPUTED_EXPLANATION, summary)
         return VerdictDecision("blocked", ML_BLOCKED_EXPLANATION, summary)
+
+    # An "allowed" that rests on the behavioral layers alone is one layer short
+    # of the designed defence, so it is reported as partial rather than clean.
+    if behavioral.final_decision == "allowed" and _needs_abstention_warning(
+        state, ml_abstain_verdict
+    ):
+        return VerdictDecision("warning", ML_ABSTAINED_EXPLANATION, summary)
 
     return behavioral
