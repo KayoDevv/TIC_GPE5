@@ -11,7 +11,6 @@ from __future__ import annotations
 import csv
 import hashlib
 import logging
-import signal
 import warnings
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
@@ -19,7 +18,8 @@ from typing import Optional
 
 import pandas as pd
 
-from ml_layer.features.pdf import FEATURE_ORDER, PDFFeatureExtractor
+from ml_layer.features.extraction import extract_within_timeout
+from ml_layer.features.pdf import FEATURE_ORDER
 
 logger = logging.getLogger(__name__)
 
@@ -31,29 +31,20 @@ _PROGRESS_EVERY = 500
 _HASH_CHUNK_BYTES = 1 << 16
 
 
-def _timeout_handler(signum: int, frame: object) -> None:  # noqa: ARG001
-    raise TimeoutError("PDF feature extraction timed out")
-
-
 def _extract_one(path: str, label: int) -> Optional[dict[str, float | int | str]]:
     logging.getLogger("pikepdf._core").setLevel(logging.CRITICAL)
 
-    signal.signal(signal.SIGALRM, _timeout_handler)
-    signal.alarm(_FILE_TIMEOUT_S)
     try:
-        try:
-            data = Path(path).read_bytes()
-        except OSError as exc:
-            warnings.warn(f"Cannot read {path}: {exc}", stacklevel=2)
-            return None
+        data = Path(path).read_bytes()
+    except OSError as exc:
+        warnings.warn(f"Cannot read {path}: {exc}", stacklevel=2)
+        return None
 
-        features = PDFFeatureExtractor().extract(data)
-        row: dict[str, float | int | str] = {k: features.get(k, 0.0) for k in FEATURE_ORDER}
-        row["label"] = label
-        row["sha256"] = hashlib.sha256(data).hexdigest()
-        return row
-    finally:
-        signal.alarm(0)
+    features = extract_within_timeout(data, _FILE_TIMEOUT_S)
+    row: dict[str, float | int | str] = {k: features.get(k, 0.0) for k in FEATURE_ORDER}
+    row["label"] = label
+    row["sha256"] = hashlib.sha256(data).hexdigest()
+    return row
 
 
 def _collect_paths_from_dir(dataset_dir: Path) -> list[tuple[str, int]]:

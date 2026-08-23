@@ -24,6 +24,11 @@ class Settings(BaseSettings):
 
     model_path: str = "models/ml_model_pdf.onnx"
 
+    # Extraction runs on attacker-controlled input, well inside the 500 ms SLA.
+    extraction_timeout_s: int = 2
+    extraction_result_margin_s: int = 1
+    extraction_workers: int = 2
+
 
 @cache
 def get_config() -> Settings:

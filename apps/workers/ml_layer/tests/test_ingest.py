@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import csv
 import io
-import signal
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -17,7 +16,6 @@ from training.ingest import (
     _collect_paths_from_csv,
     _collect_paths_from_dir,
     _extract_one,
-    _timeout_handler,
     load_dataset,
 )
 
@@ -58,13 +56,6 @@ def dataset_csv(tmp_path: Path) -> Path:
         writer.writerow({"path": str(mal_file), "label": 1})
         writer.writerow({"path": str(ben_file), "label": 0})
     return csv_file
-
-
-class TestTimeoutHandler:
-    def test_raises_timeout_error(self) -> None:
-        """_timeout_handler must raise TimeoutError when called as a signal handler."""
-        with pytest.raises(TimeoutError):
-            _timeout_handler(signal.SIGALRM, None)
 
 
 class TestExtractOne:

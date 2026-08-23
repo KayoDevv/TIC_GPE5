@@ -2,6 +2,7 @@ import asyncio
 import logging
 import os
 import time
+from concurrent.futures import ProcessPoolExecutor
 from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import urlparse
@@ -13,6 +14,7 @@ from zt_shared.kafka.producer import KafkaPublisher
 from zt_shared.models.events import FileRequestedEvent, MlLayerResultEvent
 
 from ml_layer.analyzer import StaticAnalysis, StaticAnalyzer, abstention
+from ml_layer.bounded_extractor import BoundedFeatureExtractor
 from ml_layer.config import get_config
 
 logging.basicConfig(
@@ -42,7 +44,15 @@ class MlWorker:
                 f"Model file not found at {self.config.model_path}. Aborting worker..."
             )
 
-        self.analyzer = StaticAnalyzer(self.config.model_path)
+        self._extraction_pool = ProcessPoolExecutor(max_workers=self.config.extraction_workers)
+        self.analyzer = StaticAnalyzer(
+            self.config.model_path,
+            BoundedFeatureExtractor(
+                executor=self._extraction_pool,
+                timeout_s=self.config.extraction_timeout_s,
+                result_margin_s=self.config.extraction_result_margin_s,
+            ),
+        )
         self._s3_client: Any = None
 
     def _get_s3_client(self) -> Any:
@@ -82,6 +92,7 @@ class MlWorker:
     async def stop(self) -> None:
         await self.subscriber.stop()
         await self.publisher.stop()
+        self._extraction_pool.shutdown(wait=False, cancel_futures=True)
 
     async def _publish_result(
         self, job_id: Any, analysis: StaticAnalysis, start_time: float

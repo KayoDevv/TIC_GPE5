@@ -19,7 +19,8 @@ import numpy as np
 import onnxruntime as ort
 from zt_shared.models.events import ML_ANALYSIS_COMPLETED, MlAnalysisStatus
 
-from ml_layer.features.pdf import FEATURE_ORDER, PDFFeatureExtractor
+from ml_layer.bounded_extractor import BoundedFeatureExtractor
+from ml_layer.features.pdf import FEATURE_ORDER
 
 _SCORE_SCALE = 100
 _MAX_BENIGN_SCORE = 90.0
@@ -119,12 +120,12 @@ def _build_tags(features: dict[str, float], risk_score: int) -> list[str]:
 
 
 class StaticAnalyzer:
-    def __init__(self, model_path: str) -> None:
+    def __init__(self, model_path: str, extractor: BoundedFeatureExtractor) -> None:
         self.session = ort.InferenceSession(model_path)
         self.input_name = self.session.get_inputs()[0].name
         self.n_features = self._resolve_n_features()
         self.threshold = load_threshold(model_path)
-        self.extractor = PDFFeatureExtractor()
+        self.extractor = extractor
         validate_feature_order(model_path, self.n_features)
 
     def _resolve_n_features(self) -> int:
@@ -142,7 +143,7 @@ class StaticAnalyzer:
         if not data.startswith(_PDF_MAGIC):
             return abstention("unsupported_file_type")
 
-        features = await asyncio.to_thread(self.extractor.extract, data)
+        features = await self.extractor.extract(data)
         risk_score = await self._infer(features)
         return StaticAnalysis(
             risk_score=risk_score,

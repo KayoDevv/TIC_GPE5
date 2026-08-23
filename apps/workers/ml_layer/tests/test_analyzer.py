@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -27,7 +27,7 @@ def _build_analyzer(model_path: str, shape: object) -> StaticAnalyzer:
         input_meta.name = "input"
         input_meta.shape = shape
         session.get_inputs.return_value = [input_meta]
-        return StaticAnalyzer(model_path)
+        return StaticAnalyzer(model_path, MagicMock())
 
 
 @pytest.fixture()
@@ -37,7 +37,7 @@ def analyzer() -> StaticAnalyzer:
         input_meta = MagicMock()
         input_meta.name = "input"
         session.get_inputs.return_value = [input_meta]
-        instance = StaticAnalyzer("dummy.onnx")
+        instance = StaticAnalyzer("dummy.onnx", MagicMock())
     return instance
 
 
@@ -50,7 +50,7 @@ def _set_features(analyzer: StaticAnalyzer, overrides: dict[str, float]) -> None
     features = {k: 0.0 for k in FEATURE_ORDER}
     features.update(overrides)
     analyzer.extractor = MagicMock()
-    analyzer.extractor.extract.return_value = features
+    analyzer.extractor.extract = AsyncMock(return_value=features)
 
 
 async def test_analyze_malicious_all_tags(analyzer: StaticAnalyzer) -> None:

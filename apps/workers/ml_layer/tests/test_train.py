@@ -144,7 +144,7 @@ class TestExportToOnnx:
             assert metadata["threshold"] == threshold
             assert metadata["feature_order"] == FEATURE_ORDER
 
-            analyzer = StaticAnalyzer(output_path)
+            analyzer = StaticAnalyzer(output_path, MagicMock())
             assert analyzer.threshold == threshold
             assert analyzer.n_features == len(FEATURE_ORDER)
 
