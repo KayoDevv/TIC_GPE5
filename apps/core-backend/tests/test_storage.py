@@ -1,10 +1,12 @@
+from urllib.parse import urlparse
+
 import boto3
 import pytest
 from botocore.exceptions import ClientError
 from moto import mock_aws
 
 from backend.config import Settings
-from backend.services.storage import create_s3_client, upload_file
+from backend.services.storage import create_s3_client, safe_object_name, upload_file
 
 SETTINGS = Settings(
     s3_endpoint_url="https://s3.amazonaws.com",
@@ -86,3 +88,52 @@ class TestCreateS3Client:
         with mock_aws():
             client = create_s3_client(SETTINGS)
             assert client is not None
+
+
+class TestSafeObjectName:
+    """Filename sanitisation applied before the S3 key is built."""
+
+    @pytest.mark.parametrize(
+        "filename,expected",
+        [
+            ("facture.pdf", "facture.pdf"),
+            ("a?x=1.pdf", "a_x_1.pdf"),
+            ("a#frag.pdf", "a_frag.pdf"),
+            ("dir/../evil.pdf", "evil.pdf"),
+            (r"..\windows\evil.pdf", "evil.pdf"),
+            ("", "file"),
+            ("...", "file"),
+        ],
+    )
+    def test_unsafe_characters_are_replaced(self, filename, expected) -> None:
+        """Only [A-Za-z0-9._-] survives, and path components are dropped."""
+        assert safe_object_name(filename) == expected
+
+    def test_long_name_is_truncated(self) -> None:
+        """An oversized name cannot inflate the S3 key without bound."""
+        assert len(safe_object_name("a" * 500)) == 128
+
+
+class TestKeyRoundTrip:
+    """The key a consumer re-parses must address the object actually uploaded."""
+
+    @pytest.mark.parametrize(
+        "filename",
+        ["facture.pdf", "a?x=1.pdf", "a#frag.pdf", "dir/../evil.pdf", "rapport final.pdf"],
+    )
+    async def test_presigned_key_matches_uploaded_object(self, s3_client, filename) -> None:
+        """Consumers derive the key with urlparse().path — it must resolve to the object."""
+        job_id = "11111111-2222-3333-4444-555555555555"
+
+        url = await upload_file(
+            s3_client=s3_client,
+            bucket=SETTINGS.s3_bucket_name,
+            job_id=job_id,
+            filename=filename,
+            data=b"payload",
+        )
+
+        key = urlparse(url).path.lstrip("/")
+        stored = s3_client.get_object(Bucket=SETTINGS.s3_bucket_name, Key=key)
+
+        assert stored["Body"].read() == b"payload"

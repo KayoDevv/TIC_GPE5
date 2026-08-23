@@ -2,7 +2,7 @@ import logging
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, Form, Request, UploadFile
+from fastapi import APIRouter, Depends, Form, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse
 from zt_shared.models.events import EmailContext, FileRequestedEvent
 
@@ -17,6 +17,13 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+# The email context is attacker-controlled and unbounded upstream. body_text is
+# handed to the detonation Job as the EMAIL_CONTEXT_JSON env var, and etcd
+# rejects an oversized Job object, so the pipeline stalls before it starts.
+MAX_SENDER_LENGTH = 320  # RFC 5321 maximum address length
+MAX_SUBJECT_LENGTH = 998  # RFC 5322 maximum line length
+MAX_BODY_TEXT_LENGTH = 65536
+
 
 async def validate_form_fields(
     sender: str | None = Form(default=None),
@@ -26,15 +33,26 @@ async def validate_form_fields(
     """
     Dependency that validates required form fields.
     Returns a dict with sender, subject, body_text.
-    Raises JSONResponse 400 if required fields are missing.
+    Raises 400 if a required field is missing or a field exceeds its bound.
     """
     if not sender or not subject:
-        from fastapi import HTTPException
-
         raise HTTPException(
             status_code=400,
             detail={"error": "MISSING_FIELDS", "message": "Required form fields (sender, subject) are missing."},  # noqa: E501
         )
+    if (
+        len(sender) > MAX_SENDER_LENGTH
+        or len(subject) > MAX_SUBJECT_LENGTH
+        or len(body_text) > MAX_BODY_TEXT_LENGTH
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "FIELD_TOO_LONG",
+                "message": "One of sender, subject or body_text exceeds its maximum length.",
+            },
+        )
+
     return {"sender": sender, "subject": subject, "body_text": body_text}
 
 
@@ -49,8 +67,6 @@ async def validate_file(
     file_bytes = await file.read()
 
     if len(file_bytes) > settings.max_file_size_bytes:
-        from fastapi import HTTPException
-
         raise HTTPException(
             status_code=400,
             detail={

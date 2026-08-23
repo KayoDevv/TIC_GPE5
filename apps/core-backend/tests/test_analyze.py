@@ -6,6 +6,7 @@ from httpx import ASGITransport, AsyncClient
 from backend.auth import JWTPayload
 from backend.dependencies import get_current_user
 from backend.main import create_app
+from backend.routes.analyze import MAX_BODY_TEXT_LENGTH, MAX_SUBJECT_LENGTH
 
 # --- Helpers ---
 
@@ -98,6 +99,38 @@ class TestAnalyzeRoute:
 
         assert response.status_code == 400
         assert response.json()["detail"]["error"] == "MISSING_FIELDS"
+
+    async def test_oversized_body_text_returns_400(self) -> None:
+        """An unbounded body_text would inflate the detonation Job past the etcd limit."""
+        app, _ = _create_test_app()
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                "/api/v1/analyze",
+                data={**VALID_FORM_DATA, "body_text": "A" * (MAX_BODY_TEXT_LENGTH + 1)},
+                files=[SMALL_FILE],
+                headers={"Authorization": "Bearer fake-token"},
+            )
+
+        assert response.status_code == 400
+        assert response.json()["detail"]["error"] == "FIELD_TOO_LONG"
+
+    async def test_oversized_subject_returns_400(self) -> None:
+        """Every field of the email context is bounded, not just the body."""
+        app, _ = _create_test_app()
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                "/api/v1/analyze",
+                data={**VALID_FORM_DATA, "subject": "S" * (MAX_SUBJECT_LENGTH + 1)},
+                files=[SMALL_FILE],
+                headers={"Authorization": "Bearer fake-token"},
+            )
+
+        assert response.status_code == 400
+        assert response.json()["detail"]["error"] == "FIELD_TOO_LONG"
 
     async def test_missing_auth_returns_401(self) -> None:
         """A request without Authorization header must return 401."""

@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import re
 from functools import partial
 from typing import Any
 
@@ -8,6 +9,11 @@ import boto3
 from backend.config import Settings
 
 logger = logging.getLogger(__name__)
+
+# The object name lands in an s3:// URL that consumers re-parse with urlparse,
+# so a '?' or '#' in it would silently truncate the key on their side.
+UNSAFE_OBJECT_NAME_CHARS = re.compile(r"[^A-Za-z0-9._-]")
+MAX_OBJECT_NAME_LENGTH = 128
 
 
 def create_s3_client(settings: Settings) -> Any:
@@ -23,6 +29,13 @@ def create_s3_client(settings: Settings) -> Any:
         aws_secret_access_key=settings.s3_secret_key,
         region_name=settings.s3_region,
     )
+
+
+def safe_object_name(filename: str) -> str:
+    """Reduce an attacker-controlled filename to a URL-safe S3 object name."""
+    name = filename.replace("\\", "/").rsplit("/", 1)[-1]
+    name = UNSAFE_OBJECT_NAME_CHARS.sub("_", name).lstrip(".")
+    return name[:MAX_OBJECT_NAME_LENGTH] or "file"
 
 
 async def upload_file(
@@ -41,7 +54,7 @@ async def upload_file(
     Returns:
         The S3 URL of the uploaded object: s3://{bucket}/{job_id}/{filename}
     """
-    key = f"{job_id}/{filename}"
+    key = f"{job_id}/{safe_object_name(filename)}"
     loop = asyncio.get_running_loop()
 
     await loop.run_in_executor(
