@@ -40,5 +40,7 @@ class Settings(BaseSettings):
 
     # --- WebSocket ---
     ws_verdict_timeout_seconds: int = 130
+    # How long a submitted job stays claimable by its tenant on the WebSocket.
+    job_owner_ttl_seconds: int = 900
 
     model_config = {"env_prefix": "", "env_file": ".env", "extra": "ignore"}

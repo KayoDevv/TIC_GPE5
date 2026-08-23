@@ -7,6 +7,7 @@ from backend.auth import JWTPayload
 from backend.dependencies import get_current_user
 from backend.main import create_app
 from backend.routes.analyze import MAX_BODY_TEXT_LENGTH, MAX_SUBJECT_LENGTH
+from backend.services.job_owner import JobOwnerRegistry
 
 # --- Helpers ---
 
@@ -34,6 +35,7 @@ def _create_test_app(authenticated: bool = True):
 
     app.state.publisher = mock_publisher
     app.state.s3_client = MagicMock()
+    app.state.job_owners = JobOwnerRegistry(900)
 
     if authenticated:
         app.dependency_overrides[get_current_user] = lambda: MOCK_USER

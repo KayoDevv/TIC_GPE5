@@ -8,8 +8,14 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from jose import jwt
 from starlette.websockets import WebSocketDisconnect
 
+from backend.auth import JWTPayload
 from backend.main import create_app
+from backend.services.job_owner import JobOwnerRegistry
 from backend.services.verdict_consumer import VerdictDispatcher
+
+TENANT_ID = "tenant-abc"
+OWNER = JWTPayload(sub="user-123", tenant_id=TENANT_ID)
+OTHER_TENANT = JWTPayload(sub="mallory", tenant_id="tenant-evil")
 
 # --- Helpers : RSA key pair for JWT signing ---
 
@@ -55,6 +61,7 @@ def _create_test_app() -> object:
     app.state.publisher = AsyncMock()
     app.state.s3_client = MagicMock()
     app.state.verdict_dispatcher = VerdictDispatcher()
+    app.state.job_owners = JobOwnerRegistry(900)
     return app
 
 
@@ -96,7 +103,8 @@ class TestWebSocketRoute:
             patch("backend.routes.ws.get_settings") as mock_settings,
             patch.object(dispatcher, "register", _register_capturing_loop),
         ):
-            mock_auth.return_value = True
+            mock_auth.return_value = OWNER
+            app.state.job_owners.register(job_id, TENANT_ID)
             # Cap the verdict wait so any future delivery regression fails in
             # seconds, not the full 130s production timeout.
             mock_settings.return_value = MagicMock(ws_verdict_timeout_seconds=8)
@@ -157,7 +165,7 @@ class TestWebSocketRoute:
         app = _create_test_app()
 
         with patch("backend.routes.ws.authenticate_websocket", new_callable=AsyncMock) as mock_auth:
-            mock_auth.return_value = True
+            mock_auth.return_value = OWNER
 
             from starlette.testclient import TestClient
 
@@ -165,4 +173,37 @@ class TestWebSocketRoute:
 
             with pytest.raises(WebSocketDisconnect):
                 with client.websocket_connect(f"/api/v1/ws/not-a-uuid?token={_build_token()}"):
+                    pass
+
+    async def test_foreign_tenant_cannot_subscribe(self) -> None:
+        """A job claimed by one tenant must not stream to another (CWE-639)."""
+        app = _create_test_app()
+        job_id = "550e8400-e29b-41d4-a716-446655440000"
+        app.state.job_owners.register(job_id, TENANT_ID)
+
+        with patch("backend.routes.ws.authenticate_websocket", new_callable=AsyncMock) as mock_auth:
+            mock_auth.return_value = OTHER_TENANT
+
+            from starlette.testclient import TestClient
+
+            client = TestClient(app)
+
+            with pytest.raises(WebSocketDisconnect):
+                with client.websocket_connect(f"/api/v1/ws/{job_id}?token={_build_token()}"):
+                    pass
+
+    async def test_unclaimed_job_is_refused(self) -> None:
+        """A well-formed job_id nobody submitted must not open a channel."""
+        app = _create_test_app()
+        job_id = "550e8400-e29b-41d4-a716-446655440000"
+
+        with patch("backend.routes.ws.authenticate_websocket", new_callable=AsyncMock) as mock_auth:
+            mock_auth.return_value = OWNER
+
+            from starlette.testclient import TestClient
+
+            client = TestClient(app)
+
+            with pytest.raises(WebSocketDisconnect):
+                with client.websocket_connect(f"/api/v1/ws/{job_id}?token={_build_token()}"):
                     pass

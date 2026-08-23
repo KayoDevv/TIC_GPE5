@@ -6,7 +6,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from backend.auth import verify_jwt
+from backend.auth import JWTPayload, verify_jwt
 from backend.dependencies import get_settings
 
 logger = logging.getLogger(__name__)
@@ -14,27 +14,26 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-async def authenticate_websocket(websocket: WebSocket) -> bool:
+async def authenticate_websocket(websocket: WebSocket) -> JWTPayload | None:
     """
     WebSocket authentication guard.
     Validates the JWT passed as ?token= query parameter.
 
-    Returns True if authentication succeeds.
-    Closes the connection with code 4001 and returns False otherwise.
+    Returns the validated payload, whose tenant_id gates access to the job.
+    Closes the connection with code 4001 and returns None otherwise.
     """
     settings = get_settings()
     token = websocket.query_params.get("token")
 
     if not token:
         await websocket.close(code=4001, reason="Missing token")
-        return False
+        return None
 
     try:
-        await verify_jwt(token, settings)
-        return True
+        return await verify_jwt(token, settings)
     except ValueError:
         await websocket.close(code=4001, reason="Invalid token")
-        return False
+        return None
 
 
 def validate_job_id(job_id: str) -> bool:
@@ -57,12 +56,14 @@ async def ws_verdict(websocket: WebSocket, job_id: str) -> None:
 
     1. Authenticate via guard
     2. Validate job_id via guard
-    3. Register a callback in the VerdictDispatcher
-    4. Wait for verdict or timeout (130s)
-    5. Send verdict and close connection
+    3. Check the caller's tenant owns the job
+    4. Register a callback in the VerdictDispatcher
+    5. Wait for verdict or timeout (130s)
+    6. Send verdict and close connection
     """
     # --- 1. Auth guard ---
-    if not await authenticate_websocket(websocket):
+    identity = await authenticate_websocket(websocket)
+    if identity is None:
         return
 
     # --- 2. Job ID guard ---
@@ -70,7 +71,14 @@ async def ws_verdict(websocket: WebSocket, job_id: str) -> None:
         await websocket.close(code=4003, reason="Invalid job_id format")
         return
 
-    # --- 3. Accept connection and register callback ---
+    # --- 3. Ownership guard ---
+    # Unknown and foreign jobs get the same answer: distinguishing them would
+    # turn this endpoint into an oracle for which job_ids exist.
+    if websocket.app.state.job_owners.owner(job_id) != identity.tenant_id:
+        await websocket.close(code=4003, reason="Unknown job_id")
+        return
+
+    # --- 4. Accept connection and register callback ---
     settings = get_settings()
     await websocket.accept()
 
@@ -86,13 +94,13 @@ async def ws_verdict(websocket: WebSocket, job_id: str) -> None:
     dispatcher.register(job_id, on_verdict)
 
     try:
-        # --- 4. Wait for verdict or timeout ---
+        # --- 5. Wait for verdict or timeout ---
         await asyncio.wait_for(
             verdict_event.wait(),
             timeout=settings.ws_verdict_timeout_seconds,
         )
 
-        # --- 5. Send verdict and close ---
+        # --- 6. Send verdict and close ---
         await websocket.send_text(json.dumps(verdict_data))
         await websocket.close(code=1000)
 

@@ -11,6 +11,7 @@ from backend.dependencies import get_s3_client, get_settings
 from backend.routes.analyze import router as analyze_router
 from backend.routes.health import router as health_router
 from backend.routes.ws import router as ws_router
+from backend.services.job_owner import JobOwnerRegistry
 from backend.services.storage import create_s3_client
 from backend.services.verdict_consumer import VerdictDispatcher, build_verdict_handler
 
@@ -40,6 +41,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     s3_client = create_s3_client(settings)
 
     dispatcher = VerdictDispatcher()
+    job_owners = JobOwnerRegistry(settings.job_owner_ttl_seconds)
     verdict_subscriber = KafkaSubscriber(
         bootstrap_servers=settings.kafka_bootstrap_servers,
         group_id=settings.kafka_consumer_group_id,
@@ -53,6 +55,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.publisher = publisher
     app.state.s3_client = s3_client
     app.state.verdict_dispatcher = dispatcher
+    app.state.job_owners = job_owners
     app.state.verdict_subscriber = verdict_subscriber
 
     logger.info("Core Backend started.")

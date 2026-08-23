@@ -110,6 +110,9 @@ async def analyze(
     job_id = uuid4()
     filename = file.filename or "unknown"
 
+    # Claims the job for this tenant; the verdict WebSocket checks it before streaming.
+    request.app.state.job_owners.register(str(job_id), current_user.tenant_id)
+
     # --- 1. Upload to S3 ---
     try:
         s3_url = await upload_file(
