@@ -10,4 +10,4 @@ resources:
 
 images:
   - name: ghcr.io/kayodevv/inetsim-sinkhole
-    newTag: v1.0.0
+    newTag: v1.0.1

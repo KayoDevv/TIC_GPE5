@@ -91,6 +91,8 @@ jobs:
           done < <(jq -r '.include[] | "\(.image) \(.dockerfile)"' .github/service-matrix.json)
 
       - name: Summary
+        env:
+          REF_NAME: ${{ github.ref_name }}
         run: |
-          echo "Release ${{ github.ref_name }} — latest now points at each Dockerfile header version."
+          echo "Release $REF_NAME — latest now points at each Dockerfile header version."
           echo "deploy-pipeline.yml will roll this commit onto GPE-NYX."

@@ -267,6 +267,8 @@ def fetch_run_results(
     cr = connect_readonly(results_path)
 
     # Load into memory then join (the two DBs live in separate files)
+    # Only a static literal is concatenated; run_id is a bound parameter.
+    # nosemgrep: python.sqlalchemy.security.sqlalchemy-execute-raw-query.sqlalchemy-execute-raw-query
     sent_rows = cf.execute(
         "SELECT job_id, run_id, sha256, repetition_idx FROM sent_jobs"
         + (" WHERE run_id=?" if run_id else ""),

@@ -70,6 +70,8 @@ jobs:
         run: |
           if [ -f "${{ matrix.dockerfile }}" ]; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
+            ref=$(sed -n 's|^#[[:space:]]*ghcr-image:[[:space:]]*\([^[:space:]]*\).*|\1|p' "${{ matrix.dockerfile }}" | head -1)
+            echo "version=${ref##*:}" >> "$GITHUB_OUTPUT"
           else
             echo "Dockerfile not found at ${{ matrix.dockerfile }} — skipping"
             echo "exists=false" >> "$GITHUB_OUTPUT"
@@ -90,6 +92,7 @@ jobs:
           push: false
           load: true
           tags: charon/${{ matrix.name }}:pr-${{ github.event.pull_request.number }}
+          build-args: IMAGE_VERSION=${{ steps.check.outputs.version }}
           cache-from: type=gha,scope=${{ matrix.name }}
           cache-to: type=gha,mode=max,scope=${{ matrix.name }}
 

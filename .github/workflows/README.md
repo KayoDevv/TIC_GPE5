@@ -6,6 +6,7 @@
 PR opened → main
     ├── sanity-checks.yml       Secrets scan (Gitleaks), forbidden files, conflict markers, Python syntax
     ├── ci-lint.yml             YAML, Kubernetes manifests, Dockerfiles, docker-compose, Terraform
+    ├── ci-sast.yml             Semgrep SAST over the Python and TypeScript sources
     ├── ci-tests.yml            Ruff + mypy + pytest (100 % coverage) for each Python package
     ├── ci-build.yml            Docker image build verification — no push (all 9 images)
     ├── sandbox-llm-contract.yml  Sandbox → LLM contract: golden fixtures + LLM validator + CONTRACT_VERSION alignment
@@ -47,6 +48,18 @@ All checks must pass before a PR can be merged. See **GitHub Setup** below to en
 |---|---|
 | Trigger | Push to `main` or `feat/**` · PR → `main` |
 | Jobs | yamllint · kubeconform (K8s manifests) · hadolint (Dockerfiles) · docker compose config · terraform fmt + validate |
+
+### `ci-sast.yml` — SAST
+| | |
+|---|---|
+| Trigger | PR → `main`, when the `sast` filter matches (any `.py`/`.ts`/`.tsx`/`.js`/`.jsx` or the SAST plumbing) |
+| Jobs | Semgrep (`p/default`, `p/python`, `p/typescript`) over the whole tree. One scan to JSON, then `scripts/ci/semgrep_report.py` prints every severity and fails on `ERROR` only. The report is uploaded as the `semgrep-report` artifact (7 days). |
+| Gate | `ERROR` findings block the merge; `WARNING`/`INFO` are printed without blocking |
+| Note | The semgrep version is pinned — an unpinned engine changes its rules between runs, so the same commit could pass today and fail tomorrow |
+
+Complements the two scanners already in place rather than duplicating them:
+Gitleaks reads the git history, Trivy reads the built image filesystem, Semgrep
+reads the source code itself — the only layer that was uncovered.
 
 ### `ci-tests.yml` — Tests
 | | |
@@ -127,6 +140,7 @@ Build · frontend
 Build · ml-layer
 Build · llm-layer
 Build · verdict-layer
+SAST result
 ```
 
 > `schema-compatibility` and `sandbox-llm-contract` only run when their respective paths change. Do **not** add them as required checks — GitHub marks skipped jobs as passing, so they gate correctly without blocking unrelated PRs.

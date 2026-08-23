@@ -1,4 +1,4 @@
-# ghcr-image: inetsim-sinkhole:v1.0.0
+# ghcr-image: inetsim-sinkhole:v1.0.1
 # INetSim responder for malware detonation.
 #
 # Replaces the NXDOMAIN dead-end: resolves EVERY DNS query to the sinkhole's own
@@ -15,6 +15,9 @@
 
 FROM debian:13-slim
 
+# A version bump busts this layer so apt runs against a fresh index.
+ARG IMAGE_VERSION=dev
+
 ENV DEBIAN_FRONTEND=noninteractive
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
@@ -24,7 +27,9 @@ ARG INETSIM_UID=10003
 # hard requirement; IO::Socket::SSL enables https; IPC::Shareable / Digest::SHA
 # are used by the service workers).
 # hadolint ignore=DL3008
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN echo "base packages for ${IMAGE_VERSION}" \
+    && apt-get update && apt-get upgrade -y \
+    && apt-get install -y --no-install-recommends \
     perl \
     libnet-server-perl \
     libipc-shareable-perl \

@@ -1,9 +1,12 @@
-# ghcr-image: charon-sandbox-consumer:v1.1.0
+# ghcr-image: charon-sandbox-consumer:v1.1.1
 # K8s consumer image — Kafka dispatcher → batch/v1 Job
 # Receives file.requested messages and creates one Job per sample.
 # Build context = monorepo root: make build-<service>
 
 FROM python:3.12-slim
+
+# A version bump busts this layer so apt runs against a fresh index.
+ARG IMAGE_VERSION=dev
 
 WORKDIR /app
 
@@ -12,7 +15,9 @@ ENV PYTHONUNBUFFERED=1 \
 
 # Minimal system dependencies
 # hadolint ignore=DL3008
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN echo "base packages for ${IMAGE_VERSION}" \
+    && apt-get update && apt-get upgrade -y \
+    && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
 

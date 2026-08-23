@@ -136,12 +136,14 @@ jobs:
 
       - name: Install test dependencies
         run: |
+          # Pinned to the versions the other packages lock in poetry.lock: this
+          # job has no lock file, so an unpinned tool silently changes the gate.
           pip install --quiet \
             "pydantic==2.7.1" \
             "aiokafka==0.10.0" \
-            pytest \
-            pytest-cov \
-            ruff
+            "pytest==8.4.2" \
+            "pytest-cov==7.1.0" \
+            "ruff==0.15.20"
 
       - name: Ruff lint — pure core modules (hypotheses / scoring / report / models)
         run: |

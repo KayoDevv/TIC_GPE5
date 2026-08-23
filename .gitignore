@@ -64,3 +64,6 @@ scripts/validation/*_test/
 validation/logs/
 validation_*.log
 tmp/
+
+# SAST scan output (ci-sast.yml uploads it as an artifact; local runs land here)
+semgrep.json

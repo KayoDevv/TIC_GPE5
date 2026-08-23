@@ -58,3 +58,20 @@ CVE-2025-62727
 CVE-2026-48818
 # CVE-2026-54283 — request.form() limits silently ignored (fixed 1.3.1) (HIGH)
 CVE-2026-54283
+
+# ── pip vendored libs (llm-layer) ───────────────────────────────────────────
+# python:3.14-slim ships pip 26.2.1, which vendors msgpack and setuptools under
+# pip/_vendor/. Trivy reads pip/_vendor/vendor.txt and reports both as fixable,
+# but neither is installed as a distribution and neither can be upgraded: the
+# versions are frozen inside pip itself and 26.2.1 is the latest release, so no
+# `pip install --upgrade` changes what vendor.txt declares.
+#
+# Not exploitable here: the vendored code only ever runs when pip runs, and
+# nothing in the image invokes pip after build — the container starts
+# `python -m llm_layer` as UID 10003 and installs nothing at runtime.
+# Revisit when a pip release refreshes its vendor set.
+#
+# GHSA-6v7p-g79w-8964 — msgpack 1.1.2 out-of-bounds read on Unpacker reuse (HIGH)
+GHSA-6v7p-g79w-8964
+# CVE-2025-47273 — setuptools 70.3.0 path traversal in PackageIndex (HIGH)
+CVE-2025-47273

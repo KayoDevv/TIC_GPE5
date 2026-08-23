@@ -1,0 +1,98 @@
+name: CI - SAST
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+  pull-requests: read   # dorny/paths-filter lists changed files via the PR API
+
+concurrency:
+  group: ci-sast-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Skip the scan on a PR that touches no scannable source (e.g. docs- or
+  # manifest-only), like every other ci-* workflow. See .github/filters.yml.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      sast: ${{ steps.filter.outputs.sast }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dorny/paths-filter@v4
+        id: filter
+        with:
+          filters: .github/filters.yml
+
+  semgrep:
+    needs: changes
+    if: ${{ needs.changes.outputs.sast == 'true' }}
+    name: Semgrep SAST
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      # Pinned: an unpinned semgrep silently changes its rule engine between
+      # runs, so the same commit could pass today and fail tomorrow.
+      - name: Install semgrep
+        run: pip install semgrep==1.173.0
+
+      # One scan, JSON out. The gate belongs to the report script, so findings
+      # must not fail this step — but a broken scan still has to.
+      - name: Semgrep scan
+        run: |
+          set +e
+          semgrep scan \
+            --config=p/default \
+            --config=p/python \
+            --config=p/typescript \
+            --metrics=off \
+            --exclude=node_modules \
+            --exclude='*.min.js' \
+            --exclude=apps/frontend/.wxt \
+            --json --output=semgrep.json \
+            .
+          rc=$?
+          # 0 = clean, 1 = findings. Anything else (unreachable registry, bad
+          # ruleset, crash) would leave an empty report that reads as "clean".
+          [ "$rc" -le 1 ] || exit "$rc"
+
+      # Prints every severity, fails on ERROR only.
+      - name: Report findings
+        run: python3 scripts/ci/semgrep_report.py semgrep.json
+
+      - name: Upload semgrep report
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: semgrep-report
+          path: semgrep.json
+          retention-days: 7
+
+  # Single stable status for branch protection — require THIS instead of the
+  # scoped `semgrep` job, which produces no check context when the filter skips
+  # it. Passes when the scan succeeded or was legitimately skipped.
+  sast-result:
+    name: SAST result
+    if: ${{ always() }}
+    needs: [changes, semgrep]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail if the scan failed
+        run: |
+          for r in "${{ needs.changes.result }}" "${{ needs.semgrep.result }}"; do
+            echo "job result: $r"
+            if [ "$r" = "failure" ] || [ "$r" = "cancelled" ]; then
+              echo "::error::the SAST scan failed"
+              exit 1
+            fi
+          done
+          echo "SAST passed or was skipped."

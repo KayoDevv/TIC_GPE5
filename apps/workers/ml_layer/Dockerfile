@@ -1,4 +1,4 @@
-# ghcr-image: charon-ml-layer:v1.0.0
+# ghcr-image: charon-ml-layer:v1.0.1
 # ML Layer — "The Static Analyst". Consumes file.requested, extracts 16 static
 # PDF features (pikepdf) and scores them with a LightGBM->ONNX model, producing
 # ml_layer.result. SLA < 500 ms.
@@ -6,12 +6,20 @@
 
 FROM python:3.12-slim
 
+# A version bump busts this layer so apt runs against a fresh index.
+ARG IMAGE_VERSION=dev
+
 WORKDIR /app
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONPATH=/app/apps/workers/ml_layer/src \
     MODEL_PATH=/app/apps/workers/ml_layer/models/ml_model_pdf.onnx
+
+RUN echo "base packages for ${IMAGE_VERSION}" \
+    && apt-get update \
+    && apt-get upgrade -y \
+    && rm -rf /var/lib/apt/lists/*
 
 # Shared contracts/Kafka helpers, then the ML Layer's own runtime deps. pikepdf
 # wheels bundle libqpdf, so no system qpdf is needed.

@@ -19,6 +19,7 @@ runs:
   steps:
     # ── Python ────────────────────────────────────────────────────────────────
     - name: Set up Python ${{ inputs.python-version }}
+      id: setup-python
       uses: actions/setup-python@v5
       with:
         python-version: ${{ inputs.python-version }}
@@ -42,16 +43,16 @@ runs:
       with:
         path: ${{ inputs.working-directory }}/.venv
         key: >-
-          venv-${{ runner.os }}-py${{ inputs.python-version }}-${{
+          venv-${{ runner.os }}-py${{ steps.setup-python.outputs.python-version }}-${{
             hashFiles(format('{0}/poetry.lock', inputs.working-directory))
           }}
         restore-keys: |
-          venv-${{ runner.os }}-py${{ inputs.python-version }}-
+          venv-${{ runner.os }}-py${{ steps.setup-python.outputs.python-version }}-
 
     # ── Install ───────────────────────────────────────────────────────────────
-    # Skip if the exact virtualenv is already cached.
+    # Never skipped: when the runner's Python patch moves, the restored .venv is
+    # broken and poetry recreates it EMPTY, leaving the dev tools missing.
     - name: Install project dependencies (runtime + dev)
-      if: steps.cache-venv.outputs.cache-hit != 'true'
       shell: bash
       working-directory: ${{ inputs.working-directory }}
       run: poetry install --with dev

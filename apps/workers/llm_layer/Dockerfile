@@ -1,15 +1,23 @@
-# ghcr-image: charon-llm-layer:v1.0.0
+# ghcr-image: charon-llm-layer:v1.0.1
 # LLM Layer image — "The Semantic Analyst".
 # Consumes sandbox_layer.result, produces llm_layer.result (binary verdict + text).
 # Build context = monorepo root: make build-<service>
 
 FROM python:3.14-slim
 
+# A version bump busts this layer so apt runs against a fresh index.
+ARG IMAGE_VERSION=dev
+
 WORKDIR /app
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONPATH=/app/apps/workers/llm_layer/src
+
+RUN echo "base packages for ${IMAGE_VERSION}" \
+    && apt-get update \
+    && apt-get upgrade -y \
+    && rm -rf /var/lib/apt/lists/*
 
 # Shared contracts/Kafka helpers (pulls pydantic[email] + aiokafka), then the
 # LLM Layer's own runtime deps. No dev/test tooling in the runtime image.

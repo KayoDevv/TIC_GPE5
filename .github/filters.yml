@@ -80,6 +80,18 @@ lint-terraform:
   - '**/*.tf'
   - '**/*.tfvars'
 
+# ── Security gates ──────────────────────────────────────────────────────────
+# Semgrep scans the whole tree, but only when a PR touches source it can read
+# (or the SAST plumbing itself) — a docs- or manifest-only PR skips the scan.
+sast:
+  - '.github/workflows/ci-sast.yml'
+  - 'scripts/ci/semgrep_report.py'
+  - '**/*.py'
+  - '**/*.ts'
+  - '**/*.tsx'
+  - '**/*.js'
+  - '**/*.jsx'
+
 # ── Contract / schema gates ─────────────────────────────────────────────────
 schemas:
   - 'packages/kafka-schemas/**'

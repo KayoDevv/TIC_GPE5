@@ -1,15 +1,23 @@
-# ghcr-image: charon-core-backend:v1.0.0
+# ghcr-image: charon-core-backend:v1.0.1
 # Core Backend — FastAPI API gateway. Validates uploads, stores to S3/MinIO,
 # produces file.requested, consumes verdict.result, streams verdicts over WS.
 # Build context = monorepo root: make build-<service>
 
 FROM python:3.12-slim
 
+# A version bump busts this layer so apt runs against a fresh index.
+ARG IMAGE_VERSION=dev
+
 WORKDIR /app
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONPATH=/app/apps/core-backend/src
+
+RUN echo "base packages for ${IMAGE_VERSION}" \
+    && apt-get update \
+    && apt-get upgrade -y \
+    && rm -rf /var/lib/apt/lists/*
 
 # Shared contracts/Kafka helpers (pulls pydantic + aiokafka), then the backend's
 # own runtime deps. No dev/test tooling in the runtime image.
