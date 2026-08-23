@@ -11,9 +11,9 @@ variable "kafka_chart_version" {
 }
 
 variable "keda_chart_version" {
-  description = "KEDA chart version — must match the deployed release (helm list -n keda) so plan/apply does not up/downgrade it. Currently 2.20.0 on the cluster."
+  description = "KEDA chart version — must match the deployed release (helm list -n keda) so plan/apply does not up/downgrade it. Currently 2.20.1 on the cluster."
   type        = string
-  default     = "2.20.0"
+  default     = "2.20.1"
 }
 
 variable "kafka_dev_external_access" {

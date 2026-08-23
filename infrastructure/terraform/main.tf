@@ -3,7 +3,7 @@
 # k3s, CNI, image build/import, and the kustomize workers.
 
 terraform {
-  required_version = ">= 1.6"
+  required_version = ">= 1.10"
 
   required_providers {
     kubernetes = {
@@ -30,6 +30,8 @@ terraform {
 
     access_key = "minioadmin"
     secret_key = "minioadmin"
+
+    use_lockfile = true
 
     use_path_style              = true
     skip_credentials_validation = true

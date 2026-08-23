@@ -216,9 +216,9 @@ status:
 # ══════════════════════════════════════════════════════════════════════════════
 
 .PHONY: configuration _apt-deps install-k3s install-kubectl install-helm install-docker install-k9s \
-        setup-kubeconfig setup-calico fix-dns-fai setup-coredns-zone
+        setup-kubeconfig setup-calico fix-dns-fai harden-kubelet setup-coredns-zone
 
-configuration: _apt-deps install-docker install-k3s install-kubectl install-helm install-k9s setup-kubeconfig setup-calico fix-dns-fai setup-coredns-zone install
+configuration: _apt-deps install-docker install-k3s install-kubectl install-helm install-k9s setup-kubeconfig setup-calico fix-dns-fai harden-kubelet setup-coredns-zone install
 	@echo ""
 	@echo "=== Configuration complete ==="
 	@echo "Tools installed: k3s, kubectl, helm, docker, k9s + Python deps."
@@ -348,6 +348,25 @@ fix-dns-fai:
 	fi
 	sudo systemctl restart k3s
 	@echo "ISP DNS fixed (resolv-conf -> 1.1.1.1 / 8.8.8.8). k3s restarted."
+
+K3S_SERVICE ?= k3s
+
+harden-kubelet:
+	@if [ ! -d /etc/rancher/k3s ]; then \
+		echo "ERROR: /etc/rancher/k3s not found — install k3s first (make install-k3s)."; \
+		exit 1; \
+	fi
+	@if ! sudo grep -q '^kubelet-arg:' /etc/rancher/k3s/config.yaml 2>/dev/null; then \
+		printf 'kubelet-arg:\n  - "system-reserved=cpu=500m,memory=1Gi,ephemeral-storage=2Gi"\n  - "kube-reserved=cpu=500m,memory=1Gi,ephemeral-storage=2Gi"\n  - "eviction-hard=memory.available<750Mi,nodefs.available<10%%"\n' \
+			| sudo tee -a /etc/rancher/k3s/config.yaml >/dev/null; \
+		echo "config.yaml: 'kubelet-arg' reservations added."; \
+		sudo systemctl restart $(K3S_SERVICE); \
+		echo "Waiting for K3s API..."; \
+		for i in $$(seq 1 30); do kubectl get nodes >/dev/null 2>&1 && break; sleep 2; done; \
+	else \
+		echo "config.yaml: 'kubelet-arg' already present — left untouched."; \
+	fi
+	@kubectl describe node $$(hostname) 2>/dev/null | sed -n '/Allocatable/,/System Info/p' || true
 
 # Charon internal DNS zone (coredns-custom). Idempotent; additive.
 setup-coredns-zone:

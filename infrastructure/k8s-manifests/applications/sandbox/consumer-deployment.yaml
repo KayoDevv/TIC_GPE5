@@ -94,8 +94,8 @@ spec:
             - name: SANDBOX_DNS_SERVICE
               value: "sinkhole-dns.sinkhole.svc.cluster.local"
           resources:
-            requests: {cpu: "100m", memory: "128Mi"}
-            limits: {cpu: "500m", memory: "256Mi"}
+            requests: {cpu: "100m", memory: "128Mi", ephemeral-storage: "128Mi"}
+            limits: {cpu: "500m", memory: "256Mi", ephemeral-storage: "256Mi"}
           securityContext:
             allowPrivilegeEscalation: false
             runAsNonRoot: true

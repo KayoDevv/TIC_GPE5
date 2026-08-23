@@ -13,6 +13,8 @@ resource "helm_release" "keda" {
   create_namespace = true
   wait             = true
   timeout          = 300
+
+  values = [file("${path.module}/../k8s-manifests/applications/keda/values.yaml")]
 }
 
 resource "helm_release" "kafka" {

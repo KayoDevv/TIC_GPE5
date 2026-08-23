@@ -23,8 +23,6 @@ spec:
         lagThreshold: "5"           # +1 replica per 5 lagging messages
         offsetResetPolicy: earliest
 ---
-# Guard: the namespace can NEVER run more than ~6 analyses simultaneously
-# even if KEDA goes haywire. Protects the cluster against a burst.
 apiVersion: v1
 kind: ResourceQuota
 metadata:
@@ -32,9 +30,11 @@ metadata:
   namespace: sandbox
 spec:
   hard:
-    pods: "12"                      # up to 3 consumers + analysis jobs
-    requests.cpu: "10"
-    requests.memory: "16Gi"
-    limits.cpu: "20"
-    limits.memory: "20Gi"
+    pods: "8"
+    requests.cpu: "2"
+    requests.memory: "3Gi"
+    limits.cpu: "6"
+    limits.memory: "5Gi"
+    requests.ephemeral-storage: "3Gi"
+    limits.ephemeral-storage: "6Gi"
     count/jobs.batch: "30"
