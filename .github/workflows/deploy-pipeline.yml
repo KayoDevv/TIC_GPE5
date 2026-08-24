@@ -26,8 +26,12 @@ concurrency:
 
 env:
   SSH_OPTS: "-i ~/.ssh/id_deploy -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts"
-  # Set when the SSH user's default kubeconfig isn't the K3s one.
-  REMOTE_KUBECONFIG: ""
+  # On this node `kubectl` is the `k3s kubectl` wrapper, which reads
+  # /etc/rancher/k3s/k3s.yaml (root, 0600) and ignores ~/.kube/config unless
+  # KUBECONFIG is set — so the deploy user's own copy is only picked up when
+  # this is non-empty. Single-quoted: $HOME must reach the node unexpanded and
+  # be resolved there, not on the runner.
+  REMOTE_KUBECONFIG: '$HOME/.kube/config'
 
 jobs:
   # workflow_run.head_branch is the tag name when the trigger was a tag push.

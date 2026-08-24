@@ -21,7 +21,9 @@ concurrency:
 
 env:
   SSH_OPTS: "-i ~/.ssh/id_deploy -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts"
-  REMOTE_KUBECONFIG: ""
+  # See deploy-pipeline.yml: `kubectl` on the node is the k3s wrapper and ignores
+  # ~/.kube/config unless KUBECONFIG is set. $HOME is resolved on the node.
+  REMOTE_KUBECONFIG: '$HOME/.kube/config'
 
 jobs:
   deploy:
