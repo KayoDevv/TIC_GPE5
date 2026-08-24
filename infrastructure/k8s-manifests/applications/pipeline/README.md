@@ -12,7 +12,8 @@ extension. Everything here is lightweight (fits well within GPE-NYX's headroom).
 | `redis` | verdict Saga state store (ephemeral) | `redis:7.4-alpine` |
 
 **Not here:** the LLM's `vLLM + Llama-3.3-70B` (needs a GPU) — dev/HF profile is used
-instead; and the frontend (browser extension, not server-deployed).
+instead; and the extension itself (a browser artifact, never server-deployed — it is
+handed out as a ZIP by `applications/website`, which does run in this namespace).
 
 ## Prerequisites (owned elsewhere / one-time)
 - Namespace `pipeline` + the `kafka-allow` ingress rule for it → **Terraform**

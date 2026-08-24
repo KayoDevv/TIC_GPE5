@@ -1,0 +1,12 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: pipeline
+# The `pipeline` namespace and the ghcr-pull secret are owned elsewhere
+# (Terraform namespaces.tf, one-time node bootstrap).
+resources:
+  - deployment.yaml
+
+# Derived from the Dockerfile headers by `make sync-versions`.
+images:
+  - name: ghcr.io/kayodevv/charon-website
+    newTag: v1.0.0

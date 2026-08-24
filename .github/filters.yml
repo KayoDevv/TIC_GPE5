@@ -42,8 +42,11 @@ verdict-layer:
   - *global
   - *shared_py
   - 'apps/workers/verdict_layer/**'
-frontend:
+# The website image builds the extension into itself, so a change to the
+# extension source must rebuild it too.
+website:
   - *global
+  - 'apps/website/**'
   - 'apps/frontend/**'
 # The three sandbox images share one source tree -> any change rebuilds all three.
 sandbox-consumer:

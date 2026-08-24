@@ -96,12 +96,12 @@ jobs:
           ssh $SSH_OPTS "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
             "${REMOTE_KUBECONFIG:+KUBECONFIG=$REMOTE_KUBECONFIG} kubectl get nodes -o wide"
 
-      - name: Ship pipeline manifests to VM
+      - name: Ship pipeline + website manifests to VM
         run: |
           set -euo pipefail
-          tar czf - -C infrastructure/k8s-manifests/applications pipeline \
+          tar czf - -C infrastructure/k8s-manifests/applications pipeline website \
           | ssh $SSH_OPTS "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
-            'rm -rf ~/charon-deploy/pipeline && mkdir -p ~/charon-deploy && tar xzf - -C ~/charon-deploy'
+            'rm -rf ~/charon-deploy/pipeline ~/charon-deploy/website && mkdir -p ~/charon-deploy && tar xzf - -C ~/charon-deploy'
 
       - name: Apply pipeline (versions come from the kustomization)
         run: |
@@ -116,6 +116,16 @@ jobs:
               k -n pipeline rollout status "deploy/$s" --timeout=180s
             done
             k -n pipeline get pods -o wide
+          REMOTE
+
+      - name: Apply website (static page + extension ZIP, NodePort 30081)
+        run: |
+          ssh $SSH_OPTS "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
+            "KC=$REMOTE_KUBECONFIG bash -seuo pipefail" <<'REMOTE'
+            k() { KUBECONFIG=${KC:-$HOME/.kube/config} kubectl "$@"; }
+            cd ~/charon-deploy/website
+            k apply -k .
+            k -n pipeline rollout status deploy/website --timeout=180s
           REMOTE
 
       - name: Ship sandbox manifests to VM

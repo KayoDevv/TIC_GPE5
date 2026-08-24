@@ -21,9 +21,9 @@
       "dockerfile": "apps/core-backend/Dockerfile"
     },
     {
-      "name": "frontend",
-      "image": "charon-frontend",
-      "dockerfile": "apps/frontend/Dockerfile"
+      "name": "website",
+      "image": "charon-website",
+      "dockerfile": "apps/website/Dockerfile"
     },
     {
       "name": "ml-layer",

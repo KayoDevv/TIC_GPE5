@@ -92,7 +92,9 @@ jobs:
           push: false
           load: true
           tags: charon/${{ matrix.name }}:pr-${{ github.event.pull_request.number }}
-          build-args: IMAGE_VERSION=${{ steps.check.outputs.version }}
+          build-args: |
+            IMAGE_VERSION=${{ steps.check.outputs.version }}
+            VITE_API_BASE_URL=${{ vars.CHARON_API_BASE_URL }}
           cache-from: type=gha,scope=${{ matrix.name }}
           cache-to: type=gha,mode=max,scope=${{ matrix.name }}
 

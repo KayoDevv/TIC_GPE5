@@ -115,7 +115,9 @@ jobs:
           push: false
           load: true
           tags: charon/${{ matrix.name }}:scan
-          build-args: IMAGE_VERSION=${{ matrix.version }}
+          build-args: |
+            IMAGE_VERSION=${{ matrix.version }}
+            VITE_API_BASE_URL=${{ vars.CHARON_API_BASE_URL }}
           cache-from: type=gha,scope=${{ matrix.name }}
           cache-to: type=gha,mode=max,scope=${{ matrix.name }}
 
@@ -137,7 +139,9 @@ jobs:
           platforms: linux/amd64
           push: true
           tags: ghcr.io/${{ env.OWNER }}/${{ matrix.image }}:${{ matrix.version }}
-          build-args: IMAGE_VERSION=${{ matrix.version }}
+          build-args: |
+            IMAGE_VERSION=${{ matrix.version }}
+            VITE_API_BASE_URL=${{ vars.CHARON_API_BASE_URL }}
           cache-from: type=gha,scope=${{ matrix.name }}
           cache-to: type=gha,mode=max,scope=${{ matrix.name }}
 

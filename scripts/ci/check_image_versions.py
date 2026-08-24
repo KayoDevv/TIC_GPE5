@@ -36,6 +36,7 @@ MK_VARIABLE_BY_IMAGE = {
     "charon-verdict-layer": "VERDICT_VERSION",
     "charon-llm-layer": "LLM_VERSION",
     "inetsim-sinkhole": "SINKHOLE_VERSION",
+    "charon-website": "WEBSITE_VERSION",
 }
 
 

@@ -630,6 +630,35 @@ launch-pipeline: import-pipeline-images deploy-pipeline
 undeploy-pipeline:
 	kubectl delete -k $(PIPELINE_DIR)/ --ignore-not-found
 
+# ── Website ───────────────────────────────────────────────────────────────────
+# Static Nuxt page whose only job is to hand out the extension. The ZIP is built
+# inside the image (wxt zip) and baked into the site, so the extension version is
+# the website image version. VITE_API_BASE_URL is inlined by Vite at build time:
+# an image built with the wrong value points the extension at the wrong backend.
+WEBSITE_DIR      := infrastructure/k8s-manifests/applications/website
+WEBSITE_API_URL  ?= http://$(NODE_IP):30080   # on GPE-NYX this resolves to the same address the Dockerfile defaults to
+
+.PHONY: build-website import-website-image deploy-website launch-website undeploy-website
+
+build-website:
+	docker build -t $(WEBSITE_IMAGE) \
+	             --build-arg VITE_API_BASE_URL=$(WEBSITE_API_URL) \
+	             -f apps/website/Dockerfile .
+
+import-website-image: build-website
+	docker save $(WEBSITE_IMAGE) | sudo k3s ctr images import -
+	@echo "Website image imported into K3s."
+
+deploy-website: setup-kubeconfig
+	kubectl apply -k $(WEBSITE_DIR)/
+	kubectl -n pipeline rollout status deploy/website --timeout=120s
+	@echo "Website deployed: http://$(NODE_IP):30081 (extension ZIP built against $(WEBSITE_API_URL))"
+
+launch-website: import-website-image deploy-website
+
+undeploy-website:
+	kubectl delete -k $(WEBSITE_DIR)/ --ignore-not-found
+
 .PHONY: deploy-sandbox deploy-sinkhole
 deploy-sandbox: setup-kubeconfig
 	kubectl apply -k $(PROD_OVERLAY)/
