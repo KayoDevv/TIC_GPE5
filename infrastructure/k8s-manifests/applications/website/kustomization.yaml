@@ -6,6 +6,7 @@ namespace: pipeline
 resources:
   - deployment.yaml
   - ingress.yaml
+  - netpol.yaml
 
 # Derived from the Dockerfile headers by `make sync-versions`.
 images:

@@ -1,0 +1,33 @@
+# The `pipeline` namespace is Calico default-deny on ingress, and nothing there
+# allowed kube-system -> pipeline: Traefik reached the site only during the
+# window where Felix had not finished reprogramming after a k3s restart, then
+# started answering 502.
+#
+# core-backend's NodePort is unaffected by the same policy because NodePort
+# traffic arrives DNATed from the host, which Calico lets through to a local
+# pod — a pod-to-pod hop from kube-system is not.
+#
+# NetworkPolicies are additive, so this grants Traefik its own exception without
+# touching `deny-all-default` or `pipeline-allow` (both created out-of-band, 50
+# days ago; neither is in this repo nor in networkpolicy.tf).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: website-allow-traefik
+  namespace: pipeline
+  labels:
+    app: website
+    app.kubernetes.io/part-of: charon
+spec:
+  podSelector:
+    matchLabels:
+      app: website
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: TCP
+          port: 8080

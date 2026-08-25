@@ -27,6 +27,19 @@ It defaults to `http://localhost:8000`; the published image must be built with
 the LAN address of core-backend's NodePort 30080, or the extension will call
 localhost on the user's machine.
 
+## Why there is a NetworkPolicy here
+
+`pipeline` is Calico default-deny on ingress and nothing allowed kube-system to
+reach it, so Traefik answered 502. `netpol.yaml` grants that one hop
+(kube-system -> `app=website`, port 8080); policies are additive, so it leaves
+`deny-all-default` and `pipeline-allow` untouched. Those two live outside this
+repo — they were applied by hand and are in neither the manifests nor
+`networkpolicy.tf`.
+
+core-backend's NodePort never needed this: NodePort traffic arrives DNATed from
+the host, which Calico allows through to a local pod. A pod-to-pod hop from
+another namespace is not.
+
 ## Deploy
 
 ```bash
