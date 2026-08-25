@@ -1,11 +1,18 @@
 # Website
 
-Static Nuxt page served by nginx, exposed on the LAN via NodePort **30081**. Its
-only function is to hand out `charon-extension.zip`.
+Static Nuxt page served by nginx, exposed on the LAN through k3s's bundled
+Traefik on **port 80** (`http://<node>/`). Its only function is to hand out
+`charon-extension.zip`.
+
+It started on NodePort 30081, which never worked: the network path between the
+LAN and the node rejects that port whatever listens on it — reproduced with a
+plain HTTP server in place of the Service, while 80, 443, 22, 6443, 30080 and
+32090 all connect. Ports 80/443 reach Traefik, so the site goes through it and
+the Service is a plain ClusterIP.
 
 | Object | Role | Image |
 |---|---|---|
-| `website` | nginx serving the generated site + the extension ZIP | `ghcr.io/kayodevv/charon-website` |
+| `website` | nginx serving the generated site + the extension ZIP, behind Traefik | `ghcr.io/kayodevv/charon-website` |
 
 ## The ZIP is baked into the image
 

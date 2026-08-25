@@ -1,0 +1,25 @@
+# NodePort 30081 is unreachable from outside the node: the network path RSTs
+# that port whatever listens on it (verified with a plain HTTP server standing
+# in for the Service). Ports 80/443 do reach the node, where k3s's bundled
+# Traefik already listens, so the site is exposed through it instead.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: website
+  namespace: pipeline
+  labels:
+    app: website
+    app.kubernetes.io/part-of: charon
+spec:
+  ingressClassName: traefik
+  rules:
+    # No host: the node is reached by IP, and Traefik routes nothing else today.
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: website
+                port:
+                  number: 8080

@@ -59,10 +59,12 @@ metadata:
   name: website
   namespace: pipeline
 spec:
-  type: NodePort
+  # ClusterIP, not NodePort: 30081 never reached the node from outside (the path
+  # RSTs it whatever listens there), so the site is fronted by Traefik on :80.
+  # See ingress.yaml.
+  type: ClusterIP
   selector:
     app: website
   ports:
     - port: 8080
       targetPort: 8080
-      nodePort: 30081

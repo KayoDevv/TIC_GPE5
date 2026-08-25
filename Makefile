@@ -652,7 +652,7 @@ import-website-image: build-website
 deploy-website: setup-kubeconfig
 	kubectl apply -k $(WEBSITE_DIR)/
 	kubectl -n pipeline rollout status deploy/website --timeout=120s
-	@echo "Website deployed: http://$(NODE_IP):30081 (extension ZIP built against $(WEBSITE_API_URL))"
+	@echo "Website deployed: http://$(NODE_IP)/ via Traefik (extension ZIP built against $(WEBSITE_API_URL))"
 
 launch-website: import-website-image deploy-website
 

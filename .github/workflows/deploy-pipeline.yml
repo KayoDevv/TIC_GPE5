@@ -122,7 +122,7 @@ jobs:
             k -n pipeline get pods -o wide
           REMOTE
 
-      - name: Apply website (static page + extension ZIP, NodePort 30081)
+      - name: Apply website (static page + extension ZIP, Traefik ingress on :80)
         run: |
           ssh $SSH_OPTS "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
             "KC=$REMOTE_KUBECONFIG bash -seuo pipefail" <<'REMOTE'

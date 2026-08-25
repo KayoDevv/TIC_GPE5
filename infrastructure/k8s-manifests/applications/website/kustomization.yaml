@@ -5,6 +5,7 @@ namespace: pipeline
 # (Terraform namespaces.tf, one-time node bootstrap).
 resources:
   - deployment.yaml
+  - ingress.yaml
 
 # Derived from the Dockerfile headers by `make sync-versions`.
 images:
