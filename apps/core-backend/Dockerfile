@@ -1,4 +1,4 @@
-# ghcr-image: charon-core-backend:v1.0.1
+# ghcr-image: charon-core-backend:v1.0.2
 # Core Backend — FastAPI API gateway. Validates uploads, stores to S3/MinIO,
 # produces file.requested, consumes verdict.result, streams verdicts over WS.
 # Build context = monorepo root: make build-<service>
@@ -30,7 +30,8 @@ RUN pip install --no-cache-dir ./packages/core \
         "python-jose[cryptography]>=3.3,<4" \
         "pydantic-settings>=2.6,<3" \
         "python-multipart>=0.0.12,<0.1" \
-        "httpx>=0.27,<0.28"
+        "httpx>=0.27,<0.28" \
+        "redis>=5.2,<6"
 
 COPY apps/core-backend/src /app/apps/core-backend/src
 

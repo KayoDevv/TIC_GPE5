@@ -9,7 +9,7 @@ extension. Everything here is lightweight (fits well within GPE-NYX's headroom).
 | `ml-layer` | static PDF features + ONNX inference → `ml_layer.result` | `ghcr.io/kayodevv/charon-ml-layer` |
 | `verdict-layer` | Saga aggregator (Redis) → `verdict.result` | `ghcr.io/kayodevv/charon-verdict-layer` |
 | `llm-layer` | semantic analyst, **dev profile → HF router** (no GPU here) | `ghcr.io/kayodevv/charon-llm-layer` |
-| `redis` | verdict Saga state store (ephemeral) | `redis:7.4-alpine` |
+| `redis` | verdict Saga state store + core-backend verdict mailbox (ephemeral) | `redis:7.4-alpine` |
 
 **Not here:** the LLM's `vLLM + Llama-3.3-70B` (needs a GPU) — dev/HF profile is used
 instead; and the extension itself (a browser artifact, never server-deployed — it is

@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager, suppress
 from typing import AsyncIterator, cast
 
 from fastapi import FastAPI, Request
+from redis.asyncio import Redis
 from zt_shared.kafka import KafkaPublisher, KafkaSubscriber
 from zt_shared.models.events import VerdictResultEvent
 
@@ -11,9 +12,9 @@ from backend.dependencies import get_s3_client, get_settings
 from backend.routes.analyze import router as analyze_router
 from backend.routes.health import router as health_router
 from backend.routes.ws import router as ws_router
-from backend.services.job_owner import JobOwnerRegistry
 from backend.services.storage import create_s3_client
-from backend.services.verdict_consumer import VerdictDispatcher, build_verdict_handler
+from backend.services.verdict_consumer import build_verdict_handler
+from backend.services.verdict_mailbox import VerdictMailbox
 
 logger = logging.getLogger(__name__)
 
@@ -25,9 +26,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     - KafkaPublisher: started on boot, stopped on shutdown
     - S3 client: created on boot, stored in app state
-    - Verdict consumer: subscribes to verdict.result and dispatches each verdict
-      to the WebSocket waiting on that job_id (without it, verdicts never reach
-      the client — the dispatcher would have no producer).
+    - Redis: job ownership and the verdict mailbox, shared by every replica
+    - Verdict consumer: subscribes to verdict.result and hands each verdict to the
+      mailbox, where the WebSocket waiting on that job_id picks it up (without it,
+      verdicts never reach the client).
     """
     settings = get_settings()
 
@@ -40,22 +42,23 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     s3_client = create_s3_client(settings)
 
-    dispatcher = VerdictDispatcher()
-    job_owners = JobOwnerRegistry(settings.job_owner_ttl_seconds)
+    redis = Redis.from_url(settings.redis_url, decode_responses=True)
+    mailbox = VerdictMailbox(
+        redis, settings.job_owner_ttl_seconds, settings.verdict_ttl_seconds
+    )
     verdict_subscriber = KafkaSubscriber(
         bootstrap_servers=settings.kafka_bootstrap_servers,
         group_id=settings.kafka_consumer_group_id,
         topic=settings.kafka_topic_verdict_result,
         model=VerdictResultEvent,
-        handler=build_verdict_handler(dispatcher),
+        handler=build_verdict_handler(mailbox),
     )
     # start() runs the consume loop, so it must live in its own task.
     verdict_task = asyncio.create_task(verdict_subscriber.start())
 
     app.state.publisher = publisher
     app.state.s3_client = s3_client
-    app.state.verdict_dispatcher = dispatcher
-    app.state.job_owners = job_owners
+    app.state.verdict_mailbox = mailbox
     app.state.verdict_subscriber = verdict_subscriber
 
     logger.info("Core Backend started.")
@@ -68,6 +71,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     with suppress(asyncio.CancelledError):
         await verdict_task
     await publisher.stop()
+    await redis.aclose()
     logger.info("Core Backend stopped.")
 
 

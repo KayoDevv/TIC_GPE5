@@ -111,7 +111,17 @@ async def analyze(
     filename = file.filename or "unknown"
 
     # Claims the job for this tenant; the verdict WebSocket checks it before streaming.
-    request.app.state.job_owners.register(str(job_id), current_user.tenant_id)
+    try:
+        await request.app.state.verdict_mailbox.claim(str(job_id), current_user.tenant_id)
+    except Exception as e:
+        logger.error(f"Job registration failed for job {job_id}: {e}")
+        return JSONResponse(
+            status_code=500,
+            content=ErrorDTO(
+                error="JOB_REGISTRATION_FAILED",
+                message="Failed to register the analysis job.",
+            ).model_dump(),
+        )
 
     # --- 1. Upload to S3 ---
     try:

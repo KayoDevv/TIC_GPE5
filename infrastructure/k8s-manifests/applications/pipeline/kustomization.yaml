@@ -16,7 +16,7 @@ resources:
 # Derived from the Dockerfile headers by `make sync-versions`.
 images:
   - name: ghcr.io/kayodevv/charon-core-backend
-    newTag: v1.0.1
+    newTag: v1.0.2
   - name: ghcr.io/kayodevv/charon-ml-layer
     newTag: v1.0.1
   - name: ghcr.io/kayodevv/charon-verdict-layer

@@ -1,5 +1,6 @@
-# Redis — Verdict Layer Saga state store (per-job partial state, TTL 300s).
-# In-cluster only; reached by verdict-layer as redis://redis:6379/0.
+# Redis — Verdict Layer Saga state store (per-job partial state, TTL 300s) and the
+# core-backend verdict mailbox (job owner TTL 900s, verdict TTL 300s).
+# In-cluster only; reached by verdict-layer and core-backend as redis://redis:6379/0.
 ---
 apiVersion: apps/v1
 kind: Deployment

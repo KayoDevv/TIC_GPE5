@@ -34,6 +34,9 @@ spec:
               valueFrom: {configMapKeyRef: {name: charon-endpoints, key: KAFKA_BOOTSTRAP_SERVERS}}
             - name: S3_ENDPOINT_URL
               valueFrom: {configMapKeyRef: {name: charon-endpoints, key: MINIO_ENDPOINT_URL}}
+            # Job ownership + verdict mailbox: a verdict waits here for its WebSocket.
+            - name: REDIS_URL
+              valueFrom: {configMapKeyRef: {name: charon-endpoints, key: REDIS_URL}}
             - name: S3_BUCKET_NAME
               value: "zero-trust-files"
             - name: S3_ACCESS_KEY

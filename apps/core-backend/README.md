@@ -2,7 +2,7 @@
 
 Secure entry point for the GPE-ETNA platform. Handles file upload, authentication, async analysis dispatch, and real-time verdict delivery.
 
-**Stack:** Python · FastAPI · aiokafka · boto3 (S3/MinIO) · python-jose (JWT)
+**Stack:** Python · FastAPI · aiokafka · boto3 (S3/MinIO) · redis (verdict mailbox) · python-jose (JWT)
 
 ---
 
@@ -35,7 +35,7 @@ Secure entry point for the GPE-ETNA platform. Handles file upload, authenticatio
        │
        ▼
 8. Verdict Layer emits verdict.result to Kafka
-   Backend consumes it → pushes JSON payload over WebSocket
+   Backend consumes it → stores it in the Redis mailbox → pushes JSON payload over WebSocket
        │
        ▼
 9. Extension receives verdict, updates UI:
@@ -72,7 +72,7 @@ Submit a file for analysis.
 | `400 Bad Request` | `ErrorDTO` | File exceeds 35 MB or missing fields |
 | `401 Unauthorized` | `ErrorDTO` | Missing, invalid, or expired JWT |
 | `413 Payload Too Large` | `ErrorDTO` | Enforced at reverse-proxy level before FastAPI |
-| `500 Internal Server Error` | `ErrorDTO` | S3 upload or Kafka publish failure |
+| `500 Internal Server Error` | `ErrorDTO` | Job registration (Redis), S3 upload or Kafka publish failure |
 
 ---
 
@@ -83,9 +83,10 @@ Real-time verdict delivery channel.
 **Auth:** JWT passed as query parameter `?token=<JWT>` (WebSocket does not support headers).
 
 **Lifecycle:**
-1. Client connects → server validates JWT and `job_id` format
-2. Server holds the connection open, subscribed to the `verdict.result` Kafka topic
-3. On receipt of matching `job_id` verdict → server sends `VerdictMessageDTO` as JSON text frame
+1. Client connects → server validates JWT, `job_id` format and that the caller's tenant owns the job
+2. Server holds the connection open, waiting on the job's verdict in the Redis mailbox (a verdict
+   that arrived before the client connected is delivered at once)
+3. Server sends `VerdictMessageDTO` as JSON text frame
 4. Server closes the connection (code `1000`)
 
 **Error cases:**
@@ -93,7 +94,7 @@ Real-time verdict delivery channel.
 | Condition | Behavior |
 |---|---|
 | Invalid JWT | Close with code `4001` |
-| Invalid `job_id` format | Close with code `4003` |
+| Invalid `job_id` format, or a job the tenant does not own | Close with code `4003` |
 | No verdict after 130 s | Close with code `4008` (timeout — slightly above Sandbox 125 s limit) |
 
 ---
@@ -175,6 +176,7 @@ class ErrorDTO(BaseModel):
 | `MISSING_FIELDS` | 400 | Required form fields absent |
 | `INVALID_TOKEN` | 401 | JWT missing, malformed, or expired |
 | `UPLOAD_FAILED` | 500 | S3/MinIO upload error |
+| `JOB_REGISTRATION_FAILED` | 500 | Redis unreachable when claiming the job |
 | `KAFKA_PUBLISH_FAILED` | 500 | Kafka emit error |
 
 ---
@@ -193,8 +195,12 @@ class ErrorDTO(BaseModel):
 4. `await publisher.publish("file.requested", event)` — key = `str(job_id)`
 
 **Consume flow:**
-- One Kafka consumer per application instance, subscribed to `verdict.result`
-- On receipt: look up the open WebSocket by `job_id` → push `VerdictMessageDTO` → close socket
+- One consumer group shared by every instance, subscribed to `verdict.result`
+- On receipt: store the verdict in Redis (`core-backend:job:{job_id}:verdict`, TTL 300 s) and
+  publish it on the channel of the same name. The WebSocket for that job, on whichever instance,
+  reads it or is woken by the publish, then pushes `VerdictMessageDTO` and closes the socket.
+- Job ownership (`core-backend:job:{job_id}:owner`, TTL 900 s) lives in the same Redis, so a
+  restart or a second replica does not orphan jobs.
 
 ---
 

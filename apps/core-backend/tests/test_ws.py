@@ -1,4 +1,3 @@
-import asyncio
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -10,8 +9,7 @@ from starlette.websockets import WebSocketDisconnect
 
 from backend.auth import JWTPayload
 from backend.main import create_app
-from backend.services.job_owner import JobOwnerRegistry
-from backend.services.verdict_consumer import VerdictDispatcher
+from backend.routes.ws import ws_verdict
 
 TENANT_ID = "tenant-abc"
 OWNER = JWTPayload(sub="user-123", tenant_id=TENANT_ID)
@@ -60,22 +58,25 @@ def _create_test_app() -> object:
 
     app.state.publisher = AsyncMock()
     app.state.s3_client = MagicMock()
-    app.state.verdict_dispatcher = VerdictDispatcher()
-    app.state.job_owners = JobOwnerRegistry(900)
+    app.state.verdict_mailbox = _mailbox(owner=None, verdict=None)
     return app
+
+
+def _mailbox(owner: str | None, verdict: dict[str, object] | None) -> MagicMock:
+    """A mailbox where the job belongs to `owner` and `verdict` is what the wait yields."""
+    mailbox = MagicMock()
+    mailbox.owner = AsyncMock(return_value=owner)
+    mailbox.wait = AsyncMock(return_value=verdict)
+    return mailbox
 
 
 class TestWebSocketRoute:
     """Tests for WS /api/v1/ws/{job_id}."""
 
     async def test_verdict_received_and_connection_closed(self) -> None:
-        """When a verdict is dispatched, the WS must send it and close."""
-        import threading
-
+        """The verdict found in the mailbox must be sent, then the socket closed."""
         app = _create_test_app()
-        token = _build_token()
         job_id = "550e8400-e29b-41d4-a716-446655440000"
-
         verdict_payload = {
             "job_id": job_id,
             "final_decision": "allowed",
@@ -83,53 +84,63 @@ class TestWebSocketRoute:
             "technical_summary": None,
             "timestamp": "2025-01-01T00:00:00Z",
         }
-
-        # Capture the event loop the WS handler runs on (recorded when the route
-        # registers its callback). The verdict must be dispatched *on that loop*
-        # via run_coroutine_threadsafe — dispatching from a foreign loop only sets
-        # the asyncio.Event's flag without waking the idle loop, so it would not be
-        # observed until the next timer tick (the 130s timeout). In production the
-        # verdict consumer and the WS share one loop, so this races correctly.
-        dispatcher = app.state.verdict_dispatcher
-        captured: dict[str, asyncio.AbstractEventLoop] = {}
-        original_register = dispatcher.register
-
-        def _register_capturing_loop(jid: str, cb: object) -> None:
-            captured["loop"] = asyncio.get_running_loop()
-            original_register(jid, cb)  # type: ignore[arg-type]
+        app.state.verdict_mailbox = _mailbox(owner=TENANT_ID, verdict=verdict_payload)
 
         with (
             patch("backend.routes.ws.authenticate_websocket", new_callable=AsyncMock) as mock_auth,
             patch("backend.routes.ws.get_settings") as mock_settings,
-            patch.object(dispatcher, "register", _register_capturing_loop),
         ):
             mock_auth.return_value = OWNER
-            app.state.job_owners.register(job_id, TENANT_ID)
-            # Cap the verdict wait so any future delivery regression fails in
-            # seconds, not the full 130s production timeout.
             mock_settings.return_value = MagicMock(ws_verdict_timeout_seconds=8)
 
             from starlette.testclient import TestClient
 
-            client = TestClient(app)
-
-            def dispatch_after_delay() -> None:
-                """Dispatch the verdict on the WS handler's loop after a short delay."""
-                import time
-
-                time.sleep(0.1)
-                asyncio.run_coroutine_threadsafe(
-                    dispatcher.dispatch(job_id, verdict_payload), captured["loop"]
-                ).result(timeout=5)
-
-            with client.websocket_connect(f"/api/v1/ws/{job_id}?token={token}") as ws:
-                thread = threading.Thread(target=dispatch_after_delay)
-                thread.start()
+            with TestClient(app).websocket_connect(f"/api/v1/ws/{job_id}?token=t") as ws:
                 data = ws.receive_json()
-                thread.join()
 
-            assert data["job_id"] == job_id
-            assert data["final_decision"] == "allowed"
+        assert data == verdict_payload
+        app.state.verdict_mailbox.wait.assert_awaited_once_with(job_id, 8)
+
+    async def test_missing_verdict_closes_with_4008(self) -> None:
+        """When the mailbox wait times out, the socket must close with 4008."""
+        app = _create_test_app()
+        job_id = "550e8400-e29b-41d4-a716-446655440000"
+        app.state.verdict_mailbox = _mailbox(owner=TENANT_ID, verdict=None)
+
+        with (
+            patch("backend.routes.ws.authenticate_websocket", new_callable=AsyncMock) as mock_auth,
+            patch("backend.routes.ws.get_settings") as mock_settings,
+        ):
+            mock_auth.return_value = OWNER
+            mock_settings.return_value = MagicMock(ws_verdict_timeout_seconds=1)
+
+            from starlette.testclient import TestClient
+
+            with TestClient(app).websocket_connect(f"/api/v1/ws/{job_id}?token=t") as ws:
+                with pytest.raises(WebSocketDisconnect) as closed:
+                    ws.receive_json()
+
+        assert closed.value.code == 4008
+
+    async def test_client_gone_before_the_verdict_is_sent(self) -> None:
+        """A client that left while waiting must not crash the handler."""
+        job_id = "550e8400-e29b-41d4-a716-446655440000"
+        websocket = MagicMock()
+        websocket.accept = AsyncMock()
+        websocket.close = AsyncMock()
+        websocket.send_text = AsyncMock(side_effect=WebSocketDisconnect())
+        websocket.app.state.verdict_mailbox = _mailbox(owner=TENANT_ID, verdict={"job_id": job_id})
+
+        with (
+            patch("backend.routes.ws.authenticate_websocket", new_callable=AsyncMock) as mock_auth,
+            patch("backend.routes.ws.get_settings") as mock_settings,
+        ):
+            mock_auth.return_value = OWNER
+            mock_settings.return_value = MagicMock(ws_verdict_timeout_seconds=1)
+
+            await ws_verdict(websocket, job_id)
+
+        websocket.close.assert_not_awaited()
 
     async def test_missing_token_closes_with_4001(self) -> None:
         """A WS connection without token must be closed with code 4001."""
@@ -179,7 +190,7 @@ class TestWebSocketRoute:
         """A job claimed by one tenant must not stream to another (CWE-639)."""
         app = _create_test_app()
         job_id = "550e8400-e29b-41d4-a716-446655440000"
-        app.state.job_owners.register(job_id, TENANT_ID)
+        app.state.verdict_mailbox = _mailbox(owner=TENANT_ID, verdict=None)
 
         with patch("backend.routes.ws.authenticate_websocket", new_callable=AsyncMock) as mock_auth:
             mock_auth.return_value = OTHER_TENANT

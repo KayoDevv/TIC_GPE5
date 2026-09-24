@@ -7,7 +7,6 @@ from backend.auth import JWTPayload
 from backend.dependencies import get_current_user
 from backend.main import create_app
 from backend.routes.analyze import MAX_BODY_TEXT_LENGTH, MAX_SUBJECT_LENGTH
-from backend.services.job_owner import JobOwnerRegistry
 
 # --- Helpers ---
 
@@ -35,7 +34,7 @@ def _create_test_app(authenticated: bool = True):
 
     app.state.publisher = mock_publisher
     app.state.s3_client = MagicMock()
-    app.state.job_owners = JobOwnerRegistry(900)
+    app.state.verdict_mailbox = AsyncMock()
 
     if authenticated:
         app.dependency_overrides[get_current_user] = lambda: MOCK_USER
@@ -67,6 +66,7 @@ class TestAnalyzeRoute:
         assert "job_id" in body
         assert "message" in body
         mock_publisher.publish.assert_awaited_once()
+        app.state.verdict_mailbox.claim.assert_awaited_once_with(body["job_id"], "tenant-abc")
 
     async def test_file_too_large_returns_400(self) -> None:
         """A file exceeding 35 MB must be rejected with 400."""
@@ -209,3 +209,23 @@ class TestAnalyzeRoute:
 
         assert response.status_code == 500
         assert response.json()["error"] == "KAFKA_PUBLISH_FAILED"
+
+    async def test_job_registration_failure_returns_500(self) -> None:
+        """If the job cannot be claimed, nothing is uploaded and the route returns 500."""
+        app, mock_publisher = _create_test_app()
+        app.state.verdict_mailbox.claim.side_effect = Exception("Redis is down")
+
+        with patch("backend.routes.analyze.upload_file", new_callable=AsyncMock) as mock_upload:
+            transport = ASGITransport(app=app)
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    "/api/v1/analyze",
+                    data=VALID_FORM_DATA,
+                    files=[SMALL_FILE],
+                    headers={"Authorization": "Bearer fake-token"},
+                )
+
+        assert response.status_code == 500
+        assert response.json()["error"] == "JOB_REGISTRATION_FAILED"
+        mock_upload.assert_not_awaited()
+        mock_publisher.publish.assert_not_awaited()

@@ -38,9 +38,14 @@ class Settings(BaseSettings):
     # --- Upload ---
     max_file_size_bytes: int = 35 * 1024 * 1024  # 35 MB
 
+    # --- Redis (job ownership + verdict hand-off, shared by every replica) ---
+    redis_url: str = "redis://localhost:6379/0"
+
     # --- WebSocket ---
     ws_verdict_timeout_seconds: int = 130
     # How long a submitted job stays claimable by its tenant on the WebSocket.
     job_owner_ttl_seconds: int = 900
+    # How long a verdict waits for its WebSocket (same bound as the Verdict Layer state).
+    verdict_ttl_seconds: int = 300
 
     model_config = {"env_prefix": "", "env_file": ".env", "extra": "ignore"}

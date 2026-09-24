@@ -1,7 +1,5 @@
-import asyncio
 import json
 import logging
-from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -57,9 +55,8 @@ async def ws_verdict(websocket: WebSocket, job_id: str) -> None:
     1. Authenticate via guard
     2. Validate job_id via guard
     3. Check the caller's tenant owns the job
-    4. Register a callback in the VerdictDispatcher
-    5. Wait for verdict or timeout (130s)
-    6. Send verdict and close connection
+    4. Wait for the verdict in the mailbox, or time out (130s)
+    5. Send verdict and close connection
     """
     # --- 1. Auth guard ---
     identity = await authenticate_websocket(websocket)
@@ -74,42 +71,24 @@ async def ws_verdict(websocket: WebSocket, job_id: str) -> None:
     # --- 3. Ownership guard ---
     # Unknown and foreign jobs get the same answer: distinguishing them would
     # turn this endpoint into an oracle for which job_ids exist.
-    if websocket.app.state.job_owners.owner(job_id) != identity.tenant_id:
+    mailbox = websocket.app.state.verdict_mailbox
+    if await mailbox.owner(job_id) != identity.tenant_id:
         await websocket.close(code=4003, reason="Unknown job_id")
         return
 
-    # --- 4. Accept connection and register callback ---
+    # --- 4. Wait for the verdict, which may already be in the mailbox ---
     settings = get_settings()
     await websocket.accept()
+    verdict = await mailbox.wait(job_id, settings.ws_verdict_timeout_seconds)
 
-    verdict_event = asyncio.Event()
-    verdict_data: dict[str, Any] = {}
-
-    async def on_verdict(data: dict[str, Any]) -> None:
-        nonlocal verdict_data
-        verdict_data = data
-        verdict_event.set()
-
-    dispatcher = websocket.app.state.verdict_dispatcher
-    dispatcher.register(job_id, on_verdict)
-
-    try:
-        # --- 5. Wait for verdict or timeout ---
-        await asyncio.wait_for(
-            verdict_event.wait(),
-            timeout=settings.ws_verdict_timeout_seconds,
-        )
-
-        # --- 6. Send verdict and close ---
-        await websocket.send_text(json.dumps(verdict_data))
-        await websocket.close(code=1000)
-
-    except asyncio.TimeoutError:
+    if verdict is None:
         logger.warning(f"WebSocket timeout for job {job_id}")
         await websocket.close(code=4008, reason="Verdict timeout")
+        return
 
+    # --- 5. Send verdict and close ---
+    try:
+        await websocket.send_text(json.dumps(verdict))
+        await websocket.close(code=1000)
     except WebSocketDisconnect:
         logger.info(f"Client disconnected for job {job_id}")
-
-    finally:
-        dispatcher.unregister(job_id)
