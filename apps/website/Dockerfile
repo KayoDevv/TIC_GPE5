@@ -1,4 +1,4 @@
-# ghcr-image: charon-website:v1.0.0
+# ghcr-image: charon-website:v1.1.0
 # Website — static Nuxt landing page whose only job is to hand out the browser
 # extension. The extension ZIP is built in the first stage and copied into the
 # site's public/ before `nuxt generate`, so the image is self-contained: one
@@ -30,10 +30,13 @@ FROM node:22-alpine AS site
 
 WORKDIR /build
 COPY apps/website/package.json apps/website/package-lock.json ./
-RUN npm ci
+# postinstall (`nuxt prepare`) is deferred until app/ is in place: run against a
+# bare package.json it types the auto-imports from the wrong srcDir, and the
+# vue-tsc pass inside `nuxt generate` then fails on every composable.
+RUN npm ci --ignore-scripts
 COPY apps/website/ ./
 COPY --from=extension /charon-extension.zip public/charon-extension.zip
-RUN npm run generate
+RUN npm run postinstall && npm run generate
 
 FROM nginxinc/nginx-unprivileged:1.29-alpine
 
