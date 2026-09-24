@@ -9,6 +9,7 @@ PR opened → main
     ├── ci-sast.yml             Semgrep SAST over the Python and TypeScript sources
     ├── ci-tests.yml            Ruff + mypy + pytest (100 % coverage) for each Python package
     ├── ci-build.yml            Docker image build verification — no push (all 9 images)
+    ├── ci-sca.yml              Dependency CVEs in the lock files (Trivy fs)
     ├── sandbox-llm-contract.yml  Sandbox → LLM contract: golden fixtures + LLM validator + CONTRACT_VERSION alignment
     └── schema-compatibility.yml  Kafka JSON schema BACKWARD_TRANSITIVE check (only when packages/kafka-schemas/** changes)
 
@@ -74,6 +75,21 @@ reads the source code itself — the only layer that was uncovered.
 | Trigger | PR → `main` |
 | Jobs | Matrix build across all 6 services — skips gracefully if no Dockerfile exists yet |
 | Note | Build only, no push. Purpose: verify the Dockerfile compiles before merge |
+
+### `ci-sca.yml` — Dependency CVEs (SCA)
+| | |
+|---|---|
+| Trigger | PR → `main`, when the `sca` filter matches (any lock file, manifest, or the SCA plumbing) |
+| Jobs | `trivy fs` over the repository — reads `poetry.lock` and `package-lock.json` directly |
+| Gate | `CRITICAL` blocks the merge; `HIGH` is printed without blocking |
+
+Covers what `ci-build.yml` structurally cannot. Trivy on an image only sees
+what was installed into it, so the declared dependency tree stays unscanned:
+`apps/frontend` and `apps/website` ship no image at all, and no image carries
+the dev groups (pytest, ruff, mypy) that still run in CI with access to the
+runner. Same severity split as the SAST gate — the top severity blocks, the
+rest stays visible — because the repository had a HIGH backlog when the scan
+landed. Tighten to `CRITICAL,HIGH` once that backlog is cleared.
 
 ### `schema-compatibility.yml` — Kafka Schema Compatibility
 | | |
@@ -141,6 +157,7 @@ Build · ml-layer
 Build · llm-layer
 Build · verdict-layer
 SAST result
+SCA result
 ```
 
 > `schema-compatibility` and `sandbox-llm-contract` only run when their respective paths change. Do **not** add them as required checks — GitHub marks skipped jobs as passing, so they gate correctly without blocking unrelated PRs.

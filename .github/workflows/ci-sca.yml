@@ -1,0 +1,85 @@
+name: CI - SCA
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: read   # dorny/paths-filter lists changed files via the PR API
+
+concurrency:
+  group: ci-sca-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Only when a manifest or lock file moves. See .github/filters.yml.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      sca: ${{ steps.filter.outputs.sca }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dorny/paths-filter@v4
+        id: filter
+        with:
+          filters: .github/filters.yml
+
+  dependencies:
+    needs: changes
+    if: ${{ needs.changes.outputs.sca == 'true' }}
+    name: Dependency CVEs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      # ci-build scans what ends up inside an image, which leaves the declared
+      # dependency tree uncovered: the frontend and website ship no image at
+      # all, and no image carries the dev groups. This reads the lock files
+      # themselves (poetry.lock, package-lock.json).
+      #
+      # Reported but not blocking, so the existing HIGH backlog does not freeze
+      # every PR. Same shape as the semgrep gate: the top severity blocks, the
+      # rest stays visible. Flip this to the gate below once the backlog is
+      # cleared.
+      - name: Report dependency CVEs (Trivy)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          format: table
+          exit-code: "0"
+          ignore-unfixed: true
+          severity: CRITICAL,HIGH
+          trivyignores: .trivyignore
+
+      - name: Block on CRITICAL
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          severity: CRITICAL
+          trivyignores: .trivyignore
+
+  # Single stable status for branch protection — require THIS instead of the
+  # scoped `dependencies` job, which publishes no check context when skipped.
+  sca-result:
+    name: SCA result
+    if: ${{ always() }}
+    needs: [changes, dependencies]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail if the scan failed
+        run: |
+          for r in "${{ needs.changes.result }}" "${{ needs.dependencies.result }}"; do
+            echo "job result: $r"
+            if [ "$r" = "failure" ] || [ "$r" = "cancelled" ]; then
+              echo "::error::a CRITICAL dependency CVE was found"
+              exit 1
+            fi
+          done
+          echo "SCA passed or was skipped."

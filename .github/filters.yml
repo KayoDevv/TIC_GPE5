@@ -133,3 +133,14 @@ test-sandbox-layer:
 test-frontend:
   - *global
   - 'apps/frontend/**'
+
+# ── Dependency scan (ci-sca job gate) ───────────────────────────────────────
+# The lock files are the scan input, so only they — and the SCA plumbing —
+# need to trigger a rescan.
+sca:
+  - '.github/workflows/ci-sca.yml'
+  - '.trivyignore'
+  - '**/poetry.lock'
+  - '**/pyproject.toml'
+  - '**/package-lock.json'
+  - '**/package.json'

@@ -4,14 +4,14 @@ version = "0.1.0"
 description = "FastAPI API Gateway for GPE-ETNA Zero-Trust platform"
 authors = [{name = "GPE-ETNA Team"}]
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.11"
 dynamic = ["dependencies"]
 
 [tool.poetry]
 packages = [{ include = "backend", from = "src" }]
 
 [tool.poetry.dependencies]
-python = "^3.9"
+python = "^3.11"
 fastapi = "^0.128.8"
 uvicorn = { version = "^0.39.0", extras = ["standard"] }
 aiokafka = "^0.12.0"
