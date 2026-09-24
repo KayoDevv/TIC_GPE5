@@ -1,4 +1,3 @@
-import { ApiError } from './network';
 import { extractJwtCandidates, isJwtExpired, pickBestJwtToken } from './jwt';
 import { loadSettings, saveSettings } from './settings';
 
@@ -67,7 +66,8 @@ async function discoverTokenSamplesFromActiveTab(): Promise<string[]> {
   }
 }
 
-export async function resolveJwtTokenAutomatically(): Promise<string> {
+// Null when no usable token exists: the backend, not the popup, decides whether one is needed.
+export async function resolveJwtTokenAutomatically(): Promise<string | null> {
   const settings = await loadSettings();
 
   if (settings.cachedJwtToken && !isJwtExpired(settings.cachedJwtToken)) {
@@ -79,9 +79,7 @@ export async function resolveJwtTokenAutomatically(): Promise<string> {
   const bestToken = pickBestJwtToken(candidates);
 
   if (!bestToken) {
-    throw new ApiError(
-      'No valid SSO JWT found automatically. Open an authenticated webmail/SSO tab and retry.'
-    );
+    return null;
   }
 
   await saveSettings({

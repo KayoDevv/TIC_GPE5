@@ -104,13 +104,13 @@ Stored in `chrome.storage.local`:
 ## Automatic Token Resolution
 
 The backend specification requires an SSO-issued JWT and does not issue tokens itself.
-The popup therefore auto-discovers a JWT from the active tab context (session/local storage, cookie
-string, URL), caches it, and reuses it while valid. The footer reports which source was used.
+The popup auto-discovers a JWT from the active tab context (session/local storage, cookie string,
+URL), caches it, and reuses it while valid.
 
-If no valid token is found:
-
-- Open an authenticated corporate SSO/webmail tab
-- Re-open the popup and retry
+The popup never refuses to call the API for lack of a token: the backend owns that decision. When
+no token is found it sends the `anonymous` marker instead. The backend accepts it while
+`AUTH_DEV_MODE` is on (SSO/JWKS not wired yet) and answers 401 once real JWT verification is
+enforced, which the popup then shows as the error.
 
 ## Run
 

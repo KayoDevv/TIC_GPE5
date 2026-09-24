@@ -88,17 +88,27 @@ describe('useAnalysisSession', () => {
     expect(session.jobId.value).toBe('job-1');
     expect(session.hasTimedOut.value).toBe(false);
     expect(session.progressRatio.value).toBe(1);
-    expect(session.tokenSource.value).toBe('cached');
   });
 
-  it('reports a token discovered on the active tab', async () => {
+  it('sends the token found for the session', async () => {
     vi.mocked(resolveJwtTokenAutomatically).mockResolvedValue('fresh-token');
     const session = createSession();
     session.selectFile(buildFile());
 
     await session.startAnalysis();
 
-    expect(session.tokenSource.value).toBe('active-tab');
+    expect(vi.mocked(runAnalysis).mock.calls.at(-1)?.[0].jwtToken).toBe('fresh-token');
+  });
+
+  it('lets the backend decide when no token was found', async () => {
+    vi.mocked(resolveJwtTokenAutomatically).mockResolvedValue(null);
+    const session = createSession();
+    session.selectFile(buildFile());
+
+    await session.startAnalysis();
+
+    expect(vi.mocked(runAnalysis).mock.calls.at(-1)?.[0].jwtToken).toBe('anonymous');
+    expect(session.phase.value).toBe('completed');
   });
 
   it('flags a timed-out analysis without a verdict', async () => {
@@ -168,7 +178,6 @@ describe('useAnalysisSession', () => {
     expect(session.selectedFile.value).toBeNull();
     expect(session.verdict.value).toBeNull();
     expect(session.jobId.value).toBeNull();
-    expect(session.tokenSource.value).toBeNull();
     expect(session.progressRatio.value).toBe(0);
   });
 

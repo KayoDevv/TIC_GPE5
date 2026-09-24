@@ -46,12 +46,12 @@ describe('popup application', () => {
     vi.mocked(runAnalysis).mockResolvedValue(BLOCKED_OUTCOME);
   });
 
-  it('opens on the drop zone with an unresolved session', () => {
+  it('opens on the drop zone without any session label', () => {
     const wrapper = mount(App);
 
     expect(wrapper.text()).toContain('drop an attachment here');
     expect(wrapper.find('[role="img"]').attributes('aria-label')).toBe('Standby');
-    expect(wrapper.text()).toContain('Session token: not resolved');
+    expect(wrapper.text()).not.toContain('Session token');
   });
 
   it('starts the analysis as soon as a file is dropped', async () => {
@@ -67,7 +67,6 @@ describe('popup application', () => {
 
     expect(wrapper.text()).toContain('Malicious');
     expect(wrapper.text()).toContain('The document drops an executable payload.');
-    expect(wrapper.text()).toContain('Session token: cached');
     expect(wrapper.find('.popup-shell').classes()).toContain('blocked');
 
     await wrapper.find('.details-toggle').trigger('click');
@@ -84,6 +83,15 @@ describe('popup application', () => {
 
     expect(wrapper.text()).toContain('drop an attachment here');
     expect(wrapper.find('.popup-shell').classes()).toContain('idle');
+  });
+
+  it('still calls the backend when no SSO token was found', async () => {
+    vi.mocked(resolveJwtTokenAutomatically).mockResolvedValue(null);
+    const wrapper = await mountWithDroppedFile();
+    await flushPromises();
+
+    expect(vi.mocked(runAnalysis).mock.calls.at(-1)?.[0].jwtToken).toBe('anonymous');
+    expect(wrapper.text()).toContain('Malicious');
   });
 
   it('treats an analysis timeout as a suspicious verdict', async () => {

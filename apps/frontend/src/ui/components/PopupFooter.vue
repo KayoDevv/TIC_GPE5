@@ -1,11 +1,10 @@
 <script setup lang="ts">
-defineProps<{ version: string; sessionLabel: string }>();
+defineProps<{ version: string }>();
 </script>
 
 <template>
   <footer class="footer">
     <span class="version">CHARON v{{ version }}</span>
-    <span class="session">{{ sessionLabel }}</span>
   </footer>
 </template>
 
@@ -26,12 +25,5 @@ defineProps<{ version: string; sessionLabel: string }>();
 .version {
   flex-shrink: 0;
   color: var(--faint);
-}
-
-.session {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--muted);
 }
 </style>

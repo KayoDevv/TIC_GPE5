@@ -11,11 +11,7 @@ import PopupShell from '../../src/ui/components/PopupShell.vue';
 import VerdictPanel from '../../src/ui/components/VerdictPanel.vue';
 import { connectToolbarIcon, resolveCharonState } from '../../src/ui/charonState';
 import { readExtensionVersion } from '../../src/ui/extensionVersion';
-import {
-  useAnalysisSession,
-  type AnalysisPhase,
-  type TokenSource
-} from '../../src/ui/useAnalysisSession';
+import { useAnalysisSession, type AnalysisPhase } from '../../src/ui/useAnalysisSession';
 import { useTheme } from '../../src/ui/useTheme';
 import {
   buildVerdictDetails,
@@ -33,13 +29,6 @@ const STATUS_LABELS: Record<AnalysisPhase, string> = {
   failed: 'Failed'
 };
 
-const TOKEN_SOURCE_LABELS: Record<TokenSource, string> = {
-  cached: 'Session token: cached',
-  'active-tab': 'Session token: active tab'
-};
-
-const UNRESOLVED_SESSION_LABEL = 'Session token: not resolved';
-
 const {
   phase,
   selectedFile,
@@ -47,7 +36,6 @@ const {
   jobId,
   hasTimedOut,
   errorMessage,
-  tokenSource,
   progressRatio,
   history,
   selectFile,
@@ -62,9 +50,6 @@ const activeTab = ref<AnalysisTabKey>('analysis');
 const extensionVersion = readExtensionVersion();
 
 const statusLabel = computed(() => STATUS_LABELS[phase.value]);
-const sessionLabel = computed(() =>
-  tokenSource.value ? TOKEN_SOURCE_LABELS[tokenSource.value] : UNRESOLVED_SESSION_LABEL
-);
 
 const verdictPresentation = computed<VerdictPresentation | null>(() => {
   if (hasTimedOut.value) {
@@ -134,7 +119,7 @@ function closePopup(): void {
         <HistoryPanel v-else :entries="history" />
       </div>
 
-      <PopupFooter :version="extensionVersion" :session-label="sessionLabel" />
+      <PopupFooter :version="extensionVersion" />
     </PopupShell>
   </main>
 </template>

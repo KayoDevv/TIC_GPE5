@@ -9,7 +9,6 @@ import { resolveJwtTokenAutomatically } from '../p0/tokenResolver';
 export type { HistoryEntry };
 
 export type AnalysisPhase = 'idle' | 'selected' | 'analyzing' | 'completed' | 'failed';
-export type TokenSource = 'cached' | 'active-tab';
 
 export interface AnalysisSession {
   phase: Ref<AnalysisPhase>;
@@ -18,17 +17,11 @@ export interface AnalysisSession {
   jobId: Ref<string | null>;
   hasTimedOut: Ref<boolean>;
   errorMessage: Ref<string | null>;
-  tokenSource: Ref<TokenSource | null>;
   progressRatio: Ref<number>;
   history: Ref<HistoryEntry[]>;
   selectFile: (file: File) => void;
   startAnalysis: () => Promise<void>;
   reset: () => void;
-}
-
-interface ResolvedToken {
-  token: string;
-  source: TokenSource;
 }
 
 const ANALYSIS_TIMEOUT_MS = 130_000;
@@ -37,6 +30,9 @@ const MAX_PENDING_PROGRESS_RATIO = 0.98;
 const COMPLETED_PROGRESS_RATIO = 1;
 const UNKNOWN_ERROR_MESSAGE = 'Unknown error during analysis.';
 const TIMEOUT_HISTORY_DECISION = 'warning';
+// Sent when no SSO token was found. The backend answers it: accepted in dev mode, 401 once SSO
+// is enforced, and the popup then shows that error instead of refusing to call the API.
+const ANONYMOUS_TOKEN = 'anonymous';
 
 function describeError(error: unknown): string {
   if (error instanceof ApiError || error instanceof Error) {
@@ -46,11 +42,6 @@ function describeError(error: unknown): string {
   return UNKNOWN_ERROR_MESSAGE;
 }
 
-async function resolveToken(cachedToken: string): Promise<ResolvedToken> {
-  const token = await resolveJwtTokenAutomatically();
-  return { token, source: token === cachedToken ? 'cached' : 'active-tab' };
-}
-
 export function useAnalysisSession(): AnalysisSession {
   const phase = ref<AnalysisPhase>('idle');
   const selectedFile = ref<File | null>(null);
@@ -58,7 +49,6 @@ export function useAnalysisSession(): AnalysisSession {
   const jobId = ref<string | null>(null);
   const hasTimedOut = ref(false);
   const errorMessage = ref<string | null>(null);
-  const tokenSource = ref<TokenSource | null>(null);
   const progressRatio = ref(0);
   const history = ref<HistoryEntry[]>([]);
 
@@ -97,7 +87,6 @@ export function useAnalysisSession(): AnalysisSession {
     stopProgressTimer();
     clearOutcome();
     selectedFile.value = file;
-    tokenSource.value = null;
     phase.value = 'selected';
   }
 
@@ -105,7 +94,6 @@ export function useAnalysisSession(): AnalysisSession {
     stopProgressTimer();
     clearOutcome();
     selectedFile.value = null;
-    tokenSource.value = null;
     phase.value = 'idle';
   }
 
@@ -138,14 +126,13 @@ export function useAnalysisSession(): AnalysisSession {
 
     try {
       const settings = await loadSettings();
-      const resolved = await resolveToken(settings.cachedJwtToken);
-      tokenSource.value = resolved.source;
+      const jwtToken = (await resolveJwtTokenAutomatically()) ?? ANONYMOUS_TOKEN;
 
       applyOutcome(
         file,
         await runAnalysis({
           apiBaseUrl: settings.apiBaseUrl,
-          jwtToken: resolved.token,
+          jwtToken,
           file,
           timeoutMs: ANALYSIS_TIMEOUT_MS
         })
@@ -167,7 +154,6 @@ export function useAnalysisSession(): AnalysisSession {
     jobId,
     hasTimedOut,
     errorMessage,
-    tokenSource,
     progressRatio,
     history,
     selectFile,
