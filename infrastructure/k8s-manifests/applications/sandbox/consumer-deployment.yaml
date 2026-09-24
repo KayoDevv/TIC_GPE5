@@ -85,9 +85,9 @@ spec:
             # headers by make sync-versions. Both tags must already be in
             # containerd: the Jobs run imagePullPolicy: Never.
             - name: SANDBOX_JOB_IMAGE
-              value: "ghcr.io/kayodevv/ubuntu-sandbox:v1.2.0"
+              value: "ghcr.io/kayodevv/ubuntu-sandbox:v1.2.1"
             - name: SANDBOX_PDF_JOB_IMAGE
-              value: "ghcr.io/kayodevv/ubuntu-pdf-sandbox:v1.2.1"
+              value: "ghcr.io/kayodevv/ubuntu-pdf-sandbox:v1.2.2"
             - name: SANDBOX_TIMEOUT_S
               value: "300"
             # Hijack the sample's DNS to the sinkhole (split-DNS via hostAliases).

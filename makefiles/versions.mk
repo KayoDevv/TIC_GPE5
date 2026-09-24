@@ -3,8 +3,8 @@
 
 OWNER ?= kayodevv
 
-AGENT_VERSION    ?= v1.2.0
-PDF_VERSION      ?= v1.2.1
+AGENT_VERSION    ?= v1.2.1
+PDF_VERSION      ?= v1.2.2
 CONSUMER_VERSION ?= v1.1.1
 BACKEND_VERSION  ?= v1.0.1
 ML_VERSION       ?= v1.0.1

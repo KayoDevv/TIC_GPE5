@@ -1,4 +1,4 @@
-# ghcr-image: ubuntu-pdf-sandbox:v1.2.1
+# ghcr-image: ubuntu-pdf-sandbox:v1.2.2
 # PDF sandbox image.
 # Runs in a batch/v1 K8s Job with cap SYS_PTRACE.
 # Tools: mupdf 1.24.10 (built from source) + pdfid + strace + Python agent
@@ -73,6 +73,9 @@ RUN make HAVE_X11=no HAVE_GLUT=no -j"$(nproc)" tools && \
 #   ubuntu@sha256:<digest-from-docker-inspect>
 FROM ubuntu:22.04
 
+# A version bump busts this layer so apt runs against a fresh index.
+ARG IMAGE_VERSION=dev
+
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
     NODE_PATH=/opt/pdfjs/node_modules
@@ -82,7 +85,9 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 # Runtime deps only — no build toolchain, no mupdf-tools (we use the built one)
 # hadolint ignore=DL3008
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN echo "base packages for ${IMAGE_VERSION}" \
+    && apt-get update && apt-get upgrade -y \
+    && apt-get install -y --no-install-recommends \
     strace \
     procps \
     iproute2 \

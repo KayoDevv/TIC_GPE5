@@ -31,7 +31,7 @@ spec:
         - name: analysis
           # Tag written out: the consumer applies this file, not kustomize.
           # Never: the Job has no pull secret, so a pull can only 401.
-          image: ghcr.io/kayodevv/ubuntu-sandbox:v1.2.0
+          image: ghcr.io/kayodevv/ubuntu-sandbox:v1.2.1
           imagePullPolicy: Never
           # PDF path uses run_pdf_analysis.py + the ubuntu-pdf-sandbox image.
           command: ["python3", "/opt/agent/run_analysis.py"]

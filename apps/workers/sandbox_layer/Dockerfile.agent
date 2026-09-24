@@ -1,4 +1,4 @@
-# ghcr-image: ubuntu-sandbox:v1.2.0
+# ghcr-image: ubuntu-sandbox:v1.2.1
 # Hardened guest image for ELF sample execution.
 # Runs in a batch/v1 K8s Job with cap SYS_PTRACE.
 # Contains the analysis agent (run_analysis.py) + Python deps.
@@ -9,12 +9,17 @@
 
 FROM ubuntu:22.04
 
+# A version bump busts this layer so apt runs against a fresh index.
+ARG IMAGE_VERSION=dev
+
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1
 
 # Analysis tools + Python
 # hadolint ignore=DL3008
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN echo "base packages for ${IMAGE_VERSION}" \
+    && apt-get update && apt-get upgrade -y \
+    && apt-get install -y --no-install-recommends \
     strace \
     inotify-tools \
     tcpdump \
