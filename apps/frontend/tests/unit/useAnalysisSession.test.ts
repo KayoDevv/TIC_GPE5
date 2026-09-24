@@ -1,9 +1,11 @@
+import { flushPromises } from '@vue/test-utils';
 import { effectScope } from 'vue';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError, runAnalysis, type AnalysisOutcome } from '../../src/p0/network';
 import { loadSettings } from '../../src/p0/settings';
 import { resolveJwtTokenAutomatically } from '../../src/p0/tokenResolver';
 import { useAnalysisSession, type AnalysisSession } from '../../src/ui/useAnalysisSession';
+import { stubChromeStorage } from './fakeChromeStorage';
 
 vi.mock('../../src/p0/network', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../src/p0/network')>();
@@ -49,6 +51,11 @@ describe('useAnalysisSession', () => {
     });
     vi.mocked(resolveJwtTokenAutomatically).mockResolvedValue(CACHED_TOKEN);
     vi.mocked(runAnalysis).mockResolvedValue(VERDICT_OUTCOME);
+    stubChromeStorage();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
   });
 
   it('starts idle and becomes ready once a file is selected', () => {
@@ -164,4 +171,32 @@ describe('useAnalysisSession', () => {
     expect(session.tokenSource.value).toBeNull();
     expect(session.progressRatio.value).toBe(0);
   });
+
+  it('records every completed analysis in the history, newest first', async () => {
+    const session = createSession();
+    session.selectFile(buildFile());
+    await session.startAnalysis();
+
+    vi.mocked(runAnalysis).mockResolvedValue({ kind: 'timeout', jobId: 'job-3' });
+    session.selectFile(new File(['x'], 'slow.iso'));
+    await session.startAnalysis();
+    await flushPromises();
+
+    expect(session.history.value.map((entry) => [entry.name, entry.decision, entry.score])).toEqual([
+      ['slow.iso', 'warning', null],
+      ['sample.pdf', 'blocked', null]
+    ]);
+  });
+
+  it('does not record a failed analysis', async () => {
+    vi.mocked(runAnalysis).mockRejectedValue(new ApiError('boom'));
+    const session = createSession();
+    session.selectFile(buildFile());
+
+    await session.startAnalysis();
+    await flushPromises();
+
+    expect(session.history.value).toEqual([]);
+  });
 });
+

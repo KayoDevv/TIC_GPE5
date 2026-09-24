@@ -33,6 +33,8 @@ export type AnalysisOutcome =
       jobId: string;
     };
 
+import { parseJwtPayload } from './jwt';
+
 export class ApiError extends Error {
   constructor(message: string, readonly statusCode?: number) {
     super(message);
@@ -41,6 +43,14 @@ export class ApiError extends Error {
 }
 
 const DEFAULT_TIMEOUT_MS = 130_000;
+const UNKNOWN_UPLOADER = 'unknown-uploader';
+const WS_CLOSE_TIMEOUT = 4008;
+const WS_CLOSE_AUTH_FAILED = 4001;
+
+interface ErrorPayload {
+  message?: string;
+  detail?: { message?: string };
+}
 
 function normalizeBaseUrl(baseUrl: string): string {
   return baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
@@ -54,12 +64,28 @@ export function buildWebSocketUrl(baseUrl: string, jobId: string, jwtToken: stri
   return url.toString();
 }
 
+// A manual upload has no email, so the sender is the signed-in user the JWT names.
+export function describeUploader(jwtToken: string): string {
+  const payload = parseJwtPayload(jwtToken);
+  const claims = [payload?.email, payload?.preferred_username, payload?.sub];
+  const uploader = claims.find(
+    (claim): claim is string => typeof claim === 'string' && claim.trim() !== ''
+  );
+  return uploader ?? UNKNOWN_UPLOADER;
+}
+
+// Handled failures come back as `{ error, message }`, rejected requests (400, 401) as
+// `{ detail: { error, message } }`.
+export function readErrorMessage(payload: ErrorPayload): string | undefined {
+  return payload.message ?? payload.detail?.message;
+}
+
 async function requestJobId(input: AnalysisInput): Promise<string> {
   const analyzeUrl = `${normalizeBaseUrl(input.apiBaseUrl)}/api/v1/analyze`;
 
   const formData = new FormData();
   formData.append('file', input.file, input.file.name);
-  formData.append('sender', 'user@example.com');
+  formData.append('sender', describeUploader(input.jwtToken));
   formData.append('subject', `Manual upload: ${input.file.name}`);
   formData.append('body_text', 'Manual file upload from extension drag-and-drop UI.');
 
@@ -75,10 +101,7 @@ async function requestJobId(input: AnalysisInput): Promise<string> {
     let message = `Analyze request failed (${response.status}).`;
 
     try {
-      const errorPayload = (await response.json()) as { message?: string };
-      if (errorPayload.message) {
-        message = errorPayload.message;
-      }
+      message = readErrorMessage((await response.json()) as ErrorPayload) ?? message;
     } catch {
       // Keep fallback message when body is not JSON.
     }
@@ -122,15 +145,18 @@ async function waitForVerdict(
       }
     });
 
+    // Fires after the verdict message too; the promise is settled by then, so it is a no-op.
     socket.addEventListener('close', (event) => {
-      if (event.code === 4008) {
-        clearTimeout(timeoutHandle);
-        resolve({ kind: 'timeout', jobId });
-      }
+      clearTimeout(timeoutHandle);
 
-      if (event.code === 4001) {
-        clearTimeout(timeoutHandle);
+      if (event.code === WS_CLOSE_TIMEOUT) {
+        resolve({ kind: 'timeout', jobId });
+      } else if (event.code === WS_CLOSE_AUTH_FAILED) {
         reject(new ApiError('WebSocket authentication failed. Check JWT token.'));
+      } else {
+        reject(
+          new ApiError(`Verdict channel closed before the verdict arrived (code ${event.code}).`)
+        );
       }
     });
 

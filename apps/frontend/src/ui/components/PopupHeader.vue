@@ -1,107 +1,188 @@
 <script setup lang="ts">
-import ShieldIcon from '../icons/ShieldIcon.vue';
+import CharonGlyph from '../icons/CharonGlyph.vue';
+import type { CharonState } from '../charonState';
+import type { Theme } from '../useTheme';
 
-defineProps<{ statusLabel: string; isActive: boolean }>();
+defineProps<{ state: CharonState; statusLabel: string; theme: Theme }>();
+defineEmits<{ toggleTheme: []; close: [] }>();
 </script>
 
 <template>
-  <header class="header">
-    <div class="identity">
-      <span class="logo"><ShieldIcon class="logo-icon" /></span>
-      <span>
-        <span class="title">Charon</span>
-        <span class="subtitle">Malware analysis</span>
+  <header class="header" :class="state">
+    <div class="lockup">
+      <span class="glyph" role="img" :aria-label="statusLabel" :title="statusLabel">
+        <CharonGlyph class="glyph-icon" :state="state" />
       </span>
+      <span class="title">Charon</span>
     </div>
 
-    <div class="status">
-      <span class="status-dot" :class="{ active: isActive }" />
-      <span class="status-label">{{ statusLabel }}</span>
+    <div class="actions">
+      <button
+        type="button"
+        class="icon-button"
+        :aria-label="theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'"
+        @click="$emit('toggleTheme')"
+      >
+        <svg v-if="theme === 'dark'" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+          <circle cx="7" cy="7" r="2.6" stroke="currentColor" stroke-width="1.1" />
+          <path
+            d="M7 1v1.6M7 11.4V13M1 7h1.6M11.4 7H13M2.8 2.8l1.1 1.1M10.1 10.1l1.1 1.1M11.2 2.8l-1.1 1.1M3.9 10.1l-1.1 1.1"
+            stroke="currentColor"
+            stroke-width="1.1"
+            stroke-linecap="round"
+          />
+        </svg>
+        <svg v-else viewBox="0 0 14 14" fill="none" aria-hidden="true">
+          <path
+            d="M11.8 8.6A5.2 5.2 0 0 1 5.4 2.2a5.2 5.2 0 1 0 6.4 6.4Z"
+            stroke="currentColor"
+            stroke-width="1.1"
+            stroke-linejoin="round"
+          />
+        </svg>
+      </button>
+      <button type="button" class="icon-button" aria-label="Close" @click="$emit('close')">
+        <svg class="close-icon" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+          <path d="M2 2l8 8M10 2l-8 8" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" />
+        </svg>
+      </button>
     </div>
   </header>
 </template>
 
 <style scoped>
 .header {
-  padding: var(--space-lg) var(--space-xl);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  border-bottom: 1px solid var(--border-soft);
-  background: rgba(255, 255, 255, 0.04);
-}
-
-.identity {
-  display: flex;
-  align-items: center;
-  gap: var(--space-md);
-}
-
-.logo {
-  width: 30px;
-  height: 30px;
-  border-radius: 9px;
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.18), rgba(255, 255, 255, 0.06));
-  border: 1px solid rgba(255, 255, 255, 0.22);
-  border-top: 1px solid rgba(255, 255, 255, 0.35);
-  box-shadow: var(--shadow-raised);
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
-  color: rgba(255, 255, 255, 0.8);
-  flex-shrink: 0;
+  min-height: 32px;
+  padding: 2px var(--space-xl) 0;
 }
 
-.logo-icon {
+.lockup {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.glyph {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  color: var(--state-color);
+}
+
+.glyph-icon {
   width: 16px;
   height: 16px;
 }
 
 .title {
-  display: block;
-  font-size: var(--text-size-title);
+  font-family: var(--font-display);
   font-weight: 600;
-  color: var(--text-primary);
-  letter-spacing: -0.01em;
-}
-
-.subtitle {
-  display: block;
-  font-size: var(--text-size-micro);
-  color: var(--text-muted);
-  font-family: var(--font-mono);
-  letter-spacing: var(--tracking-label);
+  font-size: var(--text-size-title);
+  letter-spacing: var(--tracking-title);
   text-transform: uppercase;
+  color: var(--text);
+  /* Recentres the lockup: the trailing letter-spacing would push it left. */
+  transform: translateX(0.12em);
 }
 
-.status {
+.analyzing .title,
+.allowed .title,
+.warning .title,
+.blocked .title {
+  color: var(--state-color);
+}
+
+.actions {
+  position: absolute;
+  top: 50%;
+  right: var(--space-md);
+  display: flex;
+  gap: 2px;
+  transform: translateY(-50%);
+}
+
+.icon-button {
   display: flex;
   align-items: center;
-  gap: var(--space-sm);
-  padding: var(--space-xs) var(--space-md);
-  border-radius: var(--radius-pill);
-  background: var(--surface-raised);
-  border: 1px solid var(--border-regular);
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius);
+  color: var(--muted);
+  cursor: pointer;
+  transition:
+    color var(--motion-fast),
+    background-color var(--motion-fast);
 }
 
-.status-dot {
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: rgba(255, 255, 255, 0.3);
-  transition: all var(--motion-base);
+.icon-button:hover {
+  color: var(--text);
+  background: var(--card-2);
 }
 
-.status-dot.active {
-  background: var(--tone-allowed);
-  box-shadow: 0 0 6px var(--tone-allowed-glow);
+.icon-button svg {
+  width: 14px;
+  height: 14px;
 }
 
-.status-label {
-  font-size: var(--text-size-micro);
-  color: var(--text-muted);
-  font-family: var(--font-mono);
-  letter-spacing: var(--tracking-label);
-  text-transform: uppercase;
+.icon-button .close-icon {
+  width: 12px;
+  height: 12px;
+}
+
+/* Motion grammar: idle breathes, analysis turns, suspicion wavers. */
+.idle .glyph-icon {
+  animation: breathe 4.5s ease-in-out infinite;
+}
+
+.analyzing .glyph-icon {
+  animation: spin 1.4s linear infinite;
+}
+
+.warning .glyph {
+  animation: waver 2.2s ease-in-out infinite;
+}
+
+@keyframes breathe {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.55;
+    transform: scale(0.94);
+  }
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes waver {
+  0%,
+  100% {
+    transform: rotate(0deg);
+  }
+  20% {
+    transform: rotate(-4deg);
+  }
+  45% {
+    transform: rotate(3deg);
+  }
+  60% {
+    transform: rotate(-2deg);
+  }
+  80% {
+    transform: rotate(1.5deg);
+  }
 }
 </style>

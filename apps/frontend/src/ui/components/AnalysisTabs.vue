@@ -6,14 +6,15 @@ defineEmits<{ 'update:activeTab': [tab: AnalysisTabKey] }>();
 </script>
 
 <template>
-  <nav class="tabs">
+  <nav class="tabs" role="tablist">
     <button
       v-for="tab in ANALYSIS_TABS"
       :key="tab.key"
       type="button"
+      role="tab"
       class="tab"
       :class="{ active: tab.key === activeTab }"
-      :aria-current="tab.key === activeTab"
+      :aria-selected="tab.key === activeTab"
       @click="$emit('update:activeTab', tab.key)"
     >
       {{ tab.label }}
@@ -24,29 +25,34 @@ defineEmits<{ 'update:activeTab': [tab: AnalysisTabKey] }>();
 <style scoped>
 .tabs {
   display: flex;
-  padding: 0 var(--space-xl);
-  border-bottom: 1px solid var(--border-soft);
+  gap: var(--space-sm);
+  margin: var(--space-lg) var(--space-xl);
+  border-bottom: 1px solid var(--border);
 }
 
 .tab {
-  padding: 11px var(--space-lg);
-  font-size: var(--text-size-small);
-  font-weight: 500;
-  color: var(--text-muted);
-  background: none;
-  border: none;
-  border-bottom: 1.5px solid transparent;
+  flex: 1;
   margin-bottom: -1px;
+  padding: 8px var(--space-xs) 9px;
+  border-bottom: 1.5px solid transparent;
+  font-family: var(--font-display);
+  font-size: var(--text-size-label);
+  font-weight: 500;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--muted);
   cursor: pointer;
-  transition: color var(--motion-fast);
+  transition:
+    color var(--motion-fast),
+    border-color var(--motion-fast);
 }
 
 .tab:hover {
-  color: var(--text-secondary);
+  color: var(--text);
 }
 
 .tab.active {
-  color: var(--text-primary);
-  border-bottom-color: rgba(255, 255, 255, 0.7);
+  color: var(--accent-text);
+  border-bottom-color: var(--or);
 }
 </style>

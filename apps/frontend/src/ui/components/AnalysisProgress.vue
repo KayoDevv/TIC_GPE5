@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed } from 'vue';
-import ScanningOrb from './ScanningOrb.vue';
 import { PIPELINE_LAYERS } from '../pipelineLayers';
 
 const PERCENT_SCALE = 100;
@@ -12,10 +11,10 @@ const progressPercent = computed(() => Math.round(props.progressRatio * PERCENT_
 
 <template>
   <div class="progress-view">
-    <ScanningOrb />
-
-    <p class="headline">Analysis in progress</p>
-    <p class="file-name">{{ props.fileName }}</p>
+    <div class="panel">
+      <span class="overline">Analysis in progress</span>
+      <p class="message">analysing “{{ props.fileName }}”…</p>
+    </div>
 
     <div
       class="track"
@@ -28,12 +27,13 @@ const progressPercent = computed(() => Math.round(props.progressRatio * PERCENT_
     </div>
 
     <div class="elapsed">
-      <span class="elapsed-label">Elapsed against deadline</span>
-      <span class="elapsed-value">{{ progressPercent }}%</span>
+      <span>Elapsed against deadline</span>
+      <span>{{ progressPercent }}%</span>
     </div>
 
     <ul class="layers">
       <li v-for="layer in PIPELINE_LAYERS" :key="layer" class="layer">
+        <span class="layer-dot" />
         <span class="layer-name">{{ layer }}</span>
         <span class="layer-state">running</span>
       </li>
@@ -42,107 +42,107 @@ const progressPercent = computed(() => Math.round(props.progressRatio * PERCENT_
 </template>
 
 <style scoped>
-.progress-view {
+.panel {
   display: flex;
   flex-direction: column;
   align-items: center;
+  justify-content: center;
+  gap: var(--space-md);
+  min-height: 110px;
+  padding: 18px var(--space-lg);
+  border: 1px dashed var(--or);
+  border-radius: var(--radius);
+  background: var(--or-soft);
 }
 
-.headline {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  letter-spacing: 0.12em;
-  color: var(--text-secondary);
+.overline {
+  font-family: var(--font-display);
+  font-size: var(--text-size-overline);
+  font-weight: 500;
+  letter-spacing: var(--tracking-overline);
   text-transform: uppercase;
-  margin-bottom: var(--space-sm);
+  color: var(--accent-text);
 }
 
-.file-name {
-  font-family: var(--font-mono);
-  font-size: var(--text-size-micro);
-  color: rgba(255, 255, 255, 0.28);
-  margin-bottom: var(--space-xl);
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.message {
+  max-width: 250px;
+  overflow-wrap: anywhere;
+  font-size: var(--text-size-body);
+  font-style: italic;
+  line-height: 1.6;
+  text-align: center;
+  color: var(--text-2);
 }
 
 .track {
-  width: 100%;
   height: 2px;
-  border-radius: 2px;
-  background: rgba(255, 255, 255, 0.08);
+  margin-top: var(--space-lg);
+  background: var(--border);
   overflow: hidden;
-  margin-bottom: var(--space-md);
 }
 
 .fill {
   display: block;
   height: 100%;
-  border-radius: 2px;
-  background: linear-gradient(90deg, rgba(255, 255, 255, 0.5), rgba(255, 255, 255, 0.9));
-  box-shadow: 0 0 8px rgba(255, 255, 255, 0.5);
-  transition: width var(--motion-fast) linear;
+  background: var(--or);
+  transition: width 250ms linear;
 }
 
 .elapsed {
   display: flex;
   justify-content: space-between;
-  width: 100%;
-  margin-bottom: var(--space-xl);
+  margin: var(--space-sm) 0 var(--space-md);
   font-family: var(--font-mono);
-  font-size: var(--text-size-label);
-}
-
-.elapsed-label {
-  color: rgba(255, 255, 255, 0.28);
-}
-
-.elapsed-value {
-  color: var(--text-secondary);
-  font-weight: 600;
+  font-size: var(--text-size-micro);
+  letter-spacing: 0.08em;
+  color: var(--faint);
 }
 
 .layers {
-  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
   list-style: none;
 }
 
 .layer {
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  padding: var(--space-sm) 0;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-  font-size: var(--text-size-small);
+  gap: 9px;
+  padding: 8px 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--card-2);
+}
+
+.layer-dot {
+  width: 8px;
+  height: 8px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--or);
+  animation: pulse 1.4s ease-in-out infinite;
 }
 
 .layer-name {
-  color: var(--text-secondary);
+  flex: 1;
+  font-size: 11.5px;
+  color: var(--text-2);
 }
 
 .layer-state {
   font-family: var(--font-mono);
-  font-size: var(--text-size-micro);
-  letter-spacing: 0.06em;
-  color: var(--text-muted);
-  animation: blink 1.4s ease-in-out infinite;
+  font-size: 9.5px;
+  color: var(--faint);
 }
 
-@keyframes blink {
+@keyframes pulse {
   0%,
   100% {
-    opacity: 0.35;
-  }
-  50% {
     opacity: 1;
   }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .layer-state {
-    animation: none;
+  50% {
+    opacity: 0.35;
   }
 }
 </style>

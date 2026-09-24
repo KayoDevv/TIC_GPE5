@@ -49,46 +49,46 @@ describe('popup application', () => {
   it('opens on the drop zone with an unresolved session', () => {
     const wrapper = mount(App);
 
-    expect(wrapper.text()).toContain('Drop a file here');
-    expect(wrapper.text()).toContain('Standby');
+    expect(wrapper.text()).toContain('drop an attachment here');
+    expect(wrapper.find('[role="img"]').attributes('aria-label')).toBe('Standby');
     expect(wrapper.text()).toContain('Session token: not resolved');
   });
 
-  it('shows the selected file and waits for an explicit start', async () => {
+  it('starts the analysis as soon as a file is dropped', async () => {
     const wrapper = await mountWithDroppedFile();
 
+    expect(runAnalysis).toHaveBeenCalledOnce();
     expect(wrapper.text()).toContain('invoice.pdf');
-    expect(wrapper.text()).toContain('Start analysis');
-    expect(runAnalysis).not.toHaveBeenCalled();
   });
 
   it('renders the verdict returned by the analysis layers', async () => {
     const wrapper = await mountWithDroppedFile();
-
-    await wrapper.find('.glass-button').trigger('click');
     await flushPromises();
 
     expect(wrapper.text()).toContain('Malicious');
     expect(wrapper.text()).toContain('The document drops an executable payload.');
-    expect(wrapper.text()).toContain('94 / 100');
     expect(wrapper.text()).toContain('Session token: cached');
+    expect(wrapper.find('.popup-shell').classes()).toContain('blocked');
+
+    await wrapper.find('.details-toggle').trigger('click');
+
+    expect(wrapper.text()).toContain('94 / 100');
+    expect(wrapper.text()).toContain('Threat model: malicious');
   });
 
   it('returns to the drop zone after the verdict is acknowledged', async () => {
     const wrapper = await mountWithDroppedFile();
-    await wrapper.find('.glass-button').trigger('click');
     await flushPromises();
 
-    await wrapper.find('.glass-button').trigger('click');
+    await wrapper.find('.verdict .popup-button').trigger('click');
 
-    expect(wrapper.text()).toContain('Drop a file here');
+    expect(wrapper.text()).toContain('drop an attachment here');
+    expect(wrapper.find('.popup-shell').classes()).toContain('idle');
   });
 
   it('treats an analysis timeout as a suspicious verdict', async () => {
     vi.mocked(runAnalysis).mockResolvedValue({ kind: 'timeout', jobId: 'job-10' });
     const wrapper = await mountWithDroppedFile();
-
-    await wrapper.find('.glass-button').trigger('click');
     await flushPromises();
 
     expect(wrapper.text()).toContain('Timed out');
@@ -98,25 +98,33 @@ describe('popup application', () => {
   it('renders a failed analysis with a retry action', async () => {
     vi.mocked(runAnalysis).mockRejectedValueOnce(new ApiError('Analyze request failed (413).'));
     const wrapper = await mountWithDroppedFile();
-
-    await wrapper.find('.glass-button').trigger('click');
     await flushPromises();
 
     expect(wrapper.text()).toContain('Analysis failed');
     expect(wrapper.text()).toContain('Analyze request failed (413).');
 
-    await wrapper.findAll('.glass-button')[1].trigger('click');
+    await wrapper.findAll('.popup-button')[1].trigger('click');
     await flushPromises();
 
     expect(wrapper.text()).toContain('Malicious');
   });
 
-  it('parks the unimplemented tabs behind a placeholder', async () => {
+  it('lists the verdict in the history tab', async () => {
+    const wrapper = await mountWithDroppedFile();
+    await flushPromises();
+
+    await wrapper.findAll('.tab')[1].trigger('click');
+
+    expect(wrapper.find('.history').text()).toContain('invoice.pdf');
+    expect(wrapper.find('.history').text()).toContain('94/100');
+    expect(wrapper.text()).not.toContain('drop an attachment here');
+  });
+
+  it('switches to the dark theme from the header', async () => {
     const wrapper = mount(App);
 
-    await wrapper.findAll('.tab')[2].trigger('click');
+    await wrapper.find('.header button').trigger('click');
 
-    expect(wrapper.text()).toContain('Coming soon');
-    expect(wrapper.text()).not.toContain('Drop a file here');
+    expect(document.documentElement.classList.contains('theme-dark')).toBe(true);
   });
 });

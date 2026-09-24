@@ -1,9 +1,12 @@
 /** Popup state machine driving the P0 analysis flow exposed by `src/p0`. */
 
 import { onScopeDispose, ref, type Ref } from 'vue';
+import { loadHistory, recordHistory, type HistoryEntry } from '../p0/history';
 import { ApiError, runAnalysis, type AnalysisOutcome, type VerdictMessage } from '../p0/network';
 import { loadSettings } from '../p0/settings';
 import { resolveJwtTokenAutomatically } from '../p0/tokenResolver';
+
+export type { HistoryEntry };
 
 export type AnalysisPhase = 'idle' | 'selected' | 'analyzing' | 'completed' | 'failed';
 export type TokenSource = 'cached' | 'active-tab';
@@ -17,6 +20,7 @@ export interface AnalysisSession {
   errorMessage: Ref<string | null>;
   tokenSource: Ref<TokenSource | null>;
   progressRatio: Ref<number>;
+  history: Ref<HistoryEntry[]>;
   selectFile: (file: File) => void;
   startAnalysis: () => Promise<void>;
   reset: () => void;
@@ -32,6 +36,7 @@ const PROGRESS_TICK_MS = 250;
 const MAX_PENDING_PROGRESS_RATIO = 0.98;
 const COMPLETED_PROGRESS_RATIO = 1;
 const UNKNOWN_ERROR_MESSAGE = 'Unknown error during analysis.';
+const TIMEOUT_HISTORY_DECISION = 'warning';
 
 function describeError(error: unknown): string {
   if (error instanceof ApiError || error instanceof Error) {
@@ -55,6 +60,11 @@ export function useAnalysisSession(): AnalysisSession {
   const errorMessage = ref<string | null>(null);
   const tokenSource = ref<TokenSource | null>(null);
   const progressRatio = ref(0);
+  const history = ref<HistoryEntry[]>([]);
+
+  void loadHistory().then((entries) => {
+    history.value = entries;
+  });
 
   let progressTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -99,12 +109,21 @@ export function useAnalysisSession(): AnalysisSession {
     phase.value = 'idle';
   }
 
-  function applyOutcome(outcome: AnalysisOutcome): void {
+  function applyOutcome(file: File, outcome: AnalysisOutcome): void {
     jobId.value = outcome.jobId;
     hasTimedOut.value = outcome.kind === 'timeout';
     verdict.value = outcome.kind === 'verdict' ? outcome.verdict : null;
     progressRatio.value = COMPLETED_PROGRESS_RATIO;
     phase.value = 'completed';
+
+    void recordHistory({
+      name: file.name,
+      decision: verdict.value?.final_decision ?? TIMEOUT_HISTORY_DECISION,
+      score: verdict.value?.technical_summary?.ml_layer_score ?? null,
+      time: Date.now()
+    }).then((entries) => {
+      history.value = entries;
+    });
   }
 
   async function startAnalysis(): Promise<void> {
@@ -123,6 +142,7 @@ export function useAnalysisSession(): AnalysisSession {
       tokenSource.value = resolved.source;
 
       applyOutcome(
+        file,
         await runAnalysis({
           apiBaseUrl: settings.apiBaseUrl,
           jwtToken: resolved.token,
@@ -149,6 +169,7 @@ export function useAnalysisSession(): AnalysisSession {
     errorMessage,
     tokenSource,
     progressRatio,
+    history,
     selectFile,
     startAnalysis,
     reset

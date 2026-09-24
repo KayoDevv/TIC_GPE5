@@ -9,19 +9,30 @@
 }
 
 body {
-  width: calc(var(--shell-width) + var(--space-2xl));
-  padding: var(--space-md);
-  font-family: var(--font-sans);
-  color: var(--text-primary);
-  background:
-    radial-gradient(ellipse 420px 320px at 15% 20%, rgba(120, 80, 255, 0.55) 0%, transparent 65%),
-    radial-gradient(ellipse 380px 280px at 85% 80%, rgba(20, 160, 255, 0.45) 0%, transparent 65%),
-    radial-gradient(ellipse 300px 300px at 75% 15%, rgba(255, 60, 120, 0.3) 0%, transparent 60%),
-    radial-gradient(ellipse 320px 240px at 25% 85%, rgba(0, 200, 160, 0.28) 0%, transparent 60%),
-    #0a0a14;
-  background-attachment: fixed;
+  width: var(--shell-width);
+  font-family: var(--font-serif);
+  color: var(--text);
+  background: var(--card);
+  -webkit-font-smoothing: antialiased;
 }
 
 button {
-  font-family: inherit;
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+}
+
+:focus-visible {
+  outline: 2px solid var(--or);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
 }

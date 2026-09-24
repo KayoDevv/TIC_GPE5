@@ -15,18 +15,30 @@ export interface SummaryMetric {
   value: string;
 }
 
+export interface SummaryBadge {
+  label: string;
+  tone: VerdictTone | null;
+}
+
+export interface IndicatorRow {
+  code: string;
+  text: string;
+}
+
+export interface VerdictDetails {
+  tiles: SummaryMetric[];
+  badges: SummaryBadge[];
+  indicators: IndicatorRow[];
+}
+
 interface DecisionPresentation {
   tone: VerdictTone;
   label: string;
   defaultDetail: string;
 }
 
-interface MetricExtractor {
-  label: string;
-  read: (summary: TechnicalSummary) => string | null;
-}
-
 const RISK_SCORE_SCALE = 100;
+const UNKNOWN_INDICATOR_CODE = 'IOC';
 
 const DECISION_PRESENTATIONS: Record<VerdictDecision, DecisionPresentation> = {
   allowed: {
@@ -52,37 +64,6 @@ export const TIMEOUT_PRESENTATION: VerdictPresentation = {
   detail: 'Analysis exceeded its deadline. The file is treated as suspicious.'
 };
 
-const METRIC_EXTRACTORS: MetricExtractor[] = [
-  {
-    label: 'Risk score',
-    read: (summary) =>
-      summary.ml_layer_score == null ? null : `${summary.ml_layer_score} / ${RISK_SCORE_SCALE}`
-  },
-  {
-    label: 'Indicators',
-    read: (summary) =>
-      summary.sandbox_layer_iocs == null ? null : String(summary.sandbox_layer_iocs.length)
-  },
-  {
-    label: 'Sandbox',
-    read: (summary) =>
-      summary.sandbox_layer_timeout == null
-        ? null
-        : summary.sandbox_layer_timeout
-          ? 'Timed out'
-          : 'Completed'
-  },
-  {
-    label: 'Threat model',
-    read: (summary) =>
-      summary.llm_layer_malicious == null
-        ? null
-        : summary.llm_layer_malicious
-          ? 'Malicious'
-          : 'Clean'
-  }
-];
-
 export function presentVerdict(verdict: VerdictMessage): VerdictPresentation {
   const presentation = DECISION_PRESENTATIONS[verdict.final_decision];
 
@@ -93,13 +74,66 @@ export function presentVerdict(verdict: VerdictMessage): VerdictPresentation {
   };
 }
 
-export function buildSummaryMetrics(summary: TechnicalSummary | null | undefined): SummaryMetric[] {
-  if (!summary) {
-    return [];
+function readTiles(summary: TechnicalSummary): SummaryMetric[] {
+  const tiles: SummaryMetric[] = [];
+
+  if (summary.ml_layer_score != null) {
+    tiles.push({ label: 'Risk score', value: `${summary.ml_layer_score} / ${RISK_SCORE_SCALE}` });
   }
 
-  return METRIC_EXTRACTORS.map((extractor) => ({
-    label: extractor.label,
-    value: extractor.read(summary)
-  })).filter((metric): metric is SummaryMetric => metric.value !== null);
+  if (summary.sandbox_layer_iocs != null) {
+    tiles.push({ label: 'Indicators', value: String(summary.sandbox_layer_iocs.length) });
+  }
+
+  return tiles;
+}
+
+function readBadges(summary: TechnicalSummary): SummaryBadge[] {
+  const badges: SummaryBadge[] = [];
+
+  if (summary.llm_layer_malicious != null) {
+    badges.push(
+      summary.llm_layer_malicious
+        ? { label: 'Threat model: malicious', tone: 'blocked' }
+        : { label: 'Threat model: clean', tone: null }
+    );
+  }
+
+  if (summary.sandbox_layer_timeout != null) {
+    badges.push(
+      summary.sandbox_layer_timeout
+        ? { label: 'Sandbox: timed out', tone: 'warning' }
+        : { label: 'Sandbox: completed', tone: null }
+    );
+  }
+
+  return badges;
+}
+
+function readText(ioc: Record<string, unknown>, key: string): string | null {
+  const value = ioc[key];
+  return typeof value === 'string' && value.trim() ? value : null;
+}
+
+function readIndicators(summary: TechnicalSummary): IndicatorRow[] {
+  return (summary.sandbox_layer_iocs ?? []).map((ioc) => ({
+    code: readText(ioc, 'mitre_tactic') ?? readText(ioc, 'type') ?? UNKNOWN_INDICATOR_CODE,
+    text: readText(ioc, 'description') ?? readText(ioc, 'value') ?? ''
+  }));
+}
+
+export function buildVerdictDetails(summary: TechnicalSummary | null | undefined): VerdictDetails {
+  if (!summary) {
+    return { tiles: [], badges: [], indicators: [] };
+  }
+
+  return {
+    tiles: readTiles(summary),
+    badges: readBadges(summary),
+    indicators: readIndicators(summary)
+  };
+}
+
+export function hasVerdictDetails(details: VerdictDetails): boolean {
+  return details.tiles.length + details.badges.length + details.indicators.length > 0;
 }

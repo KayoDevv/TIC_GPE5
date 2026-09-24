@@ -1,11 +1,21 @@
 import { mount } from '@vue/test-utils';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import AnalysisErrorPanel from '../../src/ui/components/AnalysisErrorPanel.vue';
 import AnalysisProgress from '../../src/ui/components/AnalysisProgress.vue';
 import AnalysisTabs from '../../src/ui/components/AnalysisTabs.vue';
 import FileDropZone from '../../src/ui/components/FileDropZone.vue';
-import SelectedFileCard from '../../src/ui/components/SelectedFileCard.vue';
+import HistoryPanel from '../../src/ui/components/HistoryPanel.vue';
+import PopupHeader from '../../src/ui/components/PopupHeader.vue';
 import VerdictPanel from '../../src/ui/components/VerdictPanel.vue';
+import type { VerdictDetails } from '../../src/ui/verdictPresentation';
+
+const NO_DETAILS: VerdictDetails = { tiles: [], badges: [], indicators: [] };
+
+const BLOCKED_DETAILS: VerdictDetails = {
+  tiles: [{ label: 'Risk score', value: '94 / 100' }],
+  badges: [{ label: 'Threat model: malicious', tone: 'blocked' }],
+  indicators: [{ code: 'T1055', text: 'Process Injection' }]
+};
 
 function buildFile(): File {
   return new File(['payload'], 'sample.pdf', { type: 'application/pdf' });
@@ -51,38 +61,47 @@ describe('FileDropZone', () => {
     const wrapper = mount(FileDropZone);
 
     await wrapper.trigger('dragover');
-    expect(wrapper.text()).toContain('Release to analyse');
+    expect(wrapper.text()).toContain('release to analyse');
+    expect(wrapper.classes()).toContain('dragging');
 
     await wrapper.trigger('dragleave');
-    expect(wrapper.text()).toContain('Drop a file here');
+    expect(wrapper.text()).toContain('drop an attachment here');
   });
 });
 
-describe('SelectedFileCard', () => {
-  it('renders the file name and its human-readable size', () => {
-    const wrapper = mount(SelectedFileCard, { props: { file: buildFile() } });
+describe('PopupHeader', () => {
+  it('exposes the analysis status on the glyph and colours the lockup by state', () => {
+    const wrapper = mount(PopupHeader, {
+      props: { state: 'blocked', statusLabel: 'Complete', theme: 'light' }
+    });
 
-    expect(wrapper.text()).toContain('sample.pdf');
-    expect(wrapper.text()).toContain('7 B');
-    expect(wrapper.find('button').exists()).toBe(false);
+    expect(wrapper.classes()).toContain('blocked');
+    expect(wrapper.find('[role="img"]').attributes('aria-label')).toBe('Complete');
   });
 
-  it('emits a removal request when it is removable', async () => {
-    const wrapper = mount(SelectedFileCard, { props: { file: buildFile(), removable: true } });
+  it('asks for a theme switch and for the popup to close', async () => {
+    const wrapper = mount(PopupHeader, {
+      props: { state: 'idle', statusLabel: 'Standby', theme: 'dark' }
+    });
 
-    await wrapper.find('button').trigger('click');
+    const [themeButton, closeButton] = wrapper.findAll('button');
+    expect(themeButton.attributes('aria-label')).toBe('Switch to light theme');
+    await themeButton.trigger('click');
+    await closeButton.trigger('click');
 
-    expect(wrapper.emitted('remove')).toHaveLength(1);
+    expect(wrapper.emitted('toggleTheme')).toHaveLength(1);
+    expect(wrapper.emitted('close')).toHaveLength(1);
   });
 });
 
 describe('AnalysisTabs', () => {
   it('emits the tab selected by the user', async () => {
-    const wrapper = mount(AnalysisTabs, { props: { activeTab: 'file' } });
+    const wrapper = mount(AnalysisTabs, { props: { activeTab: 'analysis' } });
 
     await wrapper.findAll('button')[1].trigger('click');
 
-    expect(wrapper.emitted('update:activeTab')?.[0]).toEqual(['hash']);
+    expect(wrapper.emitted('update:activeTab')?.[0]).toEqual(['history']);
+    expect(wrapper.findAll('[role="tab"]')[0].attributes('aria-selected')).toBe('true');
   });
 });
 
@@ -99,20 +118,55 @@ describe('AnalysisProgress', () => {
 });
 
 describe('VerdictPanel', () => {
-  it('renders the verdict tone, metrics and job reference', () => {
+  it('renders the verdict tone, file and job reference', () => {
     const wrapper = mount(VerdictPanel, {
       props: {
         presentation: { tone: 'blocked', label: 'Malicious', detail: 'Dropper detected.' },
         file: buildFile(),
-        metrics: [{ label: 'Risk score', value: '94 / 100' }],
+        details: BLOCKED_DETAILS,
         jobId: 'job-1'
       }
     });
 
-    expect(wrapper.find('.verdict').classes()).toContain('blocked');
+    expect(wrapper.classes()).toContain('blocked');
     expect(wrapper.text()).toContain('Malicious');
-    expect(wrapper.text()).toContain('94 / 100');
+    expect(wrapper.text()).toContain('Dropper detected.');
+    expect(wrapper.text()).toContain('sample.pdf · 7 B');
     expect(wrapper.text()).toContain('job-1');
+  });
+
+  it('keeps the technical details folded until asked', async () => {
+    const wrapper = mount(VerdictPanel, {
+      props: {
+        presentation: { tone: 'blocked', label: 'Malicious', detail: 'Dropper detected.' },
+        file: null,
+        details: BLOCKED_DETAILS,
+        jobId: null
+      }
+    });
+
+    expect(wrapper.text()).not.toContain('94 / 100');
+
+    await wrapper.find('.details-toggle').trigger('click');
+
+    expect(wrapper.text()).toContain('94 / 100');
+    expect(wrapper.text()).toContain('T1055');
+    expect(wrapper.text()).toContain('Process Injection');
+    expect(wrapper.find('.badge').classes()).toContain('blocked');
+    expect(wrapper.find('.details-toggle').text()).toBe('Hide details');
+  });
+
+  it('hides the details toggle when nothing was reported', () => {
+    const wrapper = mount(VerdictPanel, {
+      props: {
+        presentation: { tone: 'warning', label: 'Timed out', detail: 'Deadline exceeded.' },
+        file: null,
+        details: NO_DETAILS,
+        jobId: null
+      }
+    });
+
+    expect(wrapper.find('.details-toggle').exists()).toBe(false);
   });
 
   it('asks for a new analysis when the action is used', async () => {
@@ -120,12 +174,12 @@ describe('VerdictPanel', () => {
       props: {
         presentation: { tone: 'allowed', label: 'Clean', detail: 'No threat detected.' },
         file: null,
-        metrics: [],
+        details: NO_DETAILS,
         jobId: null
       }
     });
 
-    await wrapper.find('button').trigger('click');
+    await wrapper.find('.popup-button').trigger('click');
 
     expect(wrapper.emitted('restart')).toHaveLength(1);
   });
@@ -151,5 +205,31 @@ describe('AnalysisErrorPanel', () => {
     await wrapper.find('button').trigger('click');
 
     expect(wrapper.emitted('restart')).toHaveLength(1);
+  });
+});
+
+describe('HistoryPanel', () => {
+  it('says so when nothing was analysed yet', () => {
+    const wrapper = mount(HistoryPanel, { props: { entries: [] } });
+
+    expect(wrapper.text()).toContain('no analysis yet.');
+  });
+
+  it('lists past verdicts with their decision and risk score', () => {
+    const wrapper = mount(HistoryPanel, {
+      props: {
+        entries: [
+          { name: 'setup.exe', decision: 'blocked', score: 96, time: 2 },
+          { name: 'image.iso', decision: 'warning', score: null, time: 1 }
+        ]
+      }
+    });
+
+    const rows = wrapper.findAll('.row');
+    expect(rows).toHaveLength(2);
+    expect(rows[0].text()).toContain('setup.exe');
+    expect(rows[0].text()).toContain('96/100');
+    expect(rows[0].find('.dot').classes()).toContain('blocked');
+    expect(rows[1].find('.score').exists()).toBe(false);
   });
 });

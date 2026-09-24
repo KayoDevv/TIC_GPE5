@@ -1,24 +1,24 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, ref, watch } from 'vue';
 import AnalysisErrorPanel from '../../src/ui/components/AnalysisErrorPanel.vue';
 import AnalysisProgress from '../../src/ui/components/AnalysisProgress.vue';
 import AnalysisTabs from '../../src/ui/components/AnalysisTabs.vue';
-import ComingSoonPanel from '../../src/ui/components/ComingSoonPanel.vue';
 import FileDropZone from '../../src/ui/components/FileDropZone.vue';
-import GlassButton from '../../src/ui/components/GlassButton.vue';
-import GlassShell from '../../src/ui/components/GlassShell.vue';
+import HistoryPanel from '../../src/ui/components/HistoryPanel.vue';
 import PopupFooter from '../../src/ui/components/PopupFooter.vue';
 import PopupHeader from '../../src/ui/components/PopupHeader.vue';
-import SelectedFileCard from '../../src/ui/components/SelectedFileCard.vue';
+import PopupShell from '../../src/ui/components/PopupShell.vue';
 import VerdictPanel from '../../src/ui/components/VerdictPanel.vue';
+import { connectToolbarIcon, resolveCharonState } from '../../src/ui/charonState';
 import { readExtensionVersion } from '../../src/ui/extensionVersion';
 import {
   useAnalysisSession,
   type AnalysisPhase,
   type TokenSource
 } from '../../src/ui/useAnalysisSession';
+import { useTheme } from '../../src/ui/useTheme';
 import {
-  buildSummaryMetrics,
+  buildVerdictDetails,
   presentVerdict,
   TIMEOUT_PRESENTATION,
   type VerdictPresentation
@@ -49,16 +49,19 @@ const {
   errorMessage,
   tokenSource,
   progressRatio,
+  history,
   selectFile,
   startAnalysis,
   reset
 } = useAnalysisSession();
 
-const activeTab = ref<AnalysisTabKey>('file');
+const { theme, toggleTheme } = useTheme();
+const showToolbarState = connectToolbarIcon();
+
+const activeTab = ref<AnalysisTabKey>('analysis');
 const extensionVersion = readExtensionVersion();
 
 const statusLabel = computed(() => STATUS_LABELS[phase.value]);
-const isPipelineActive = computed(() => phase.value === 'analyzing' || phase.value === 'completed');
 const sessionLabel = computed(() =>
   tokenSource.value ? TOKEN_SOURCE_LABELS[tokenSource.value] : UNRESOLVED_SESSION_LABEL
 );
@@ -71,25 +74,39 @@ const verdictPresentation = computed<VerdictPresentation | null>(() => {
   return verdict.value ? presentVerdict(verdict.value) : null;
 });
 
-const summaryMetrics = computed(() => buildSummaryMetrics(verdict.value?.technical_summary));
+const charonState = computed(() =>
+  resolveCharonState(phase.value, verdictPresentation.value?.tone ?? null)
+);
+
+const verdictDetails = computed(() => buildVerdictDetails(verdict.value?.technical_summary));
+
+watch(charonState, showToolbarState);
+
+function analyse(file: File): void {
+  selectFile(file);
+  void startAnalysis();
+}
+
+function closePopup(): void {
+  window.close();
+}
 </script>
 
 <template>
   <main class="popup">
-    <GlassShell>
-      <PopupHeader :status-label="statusLabel" :is-active="isPipelineActive" />
+    <PopupShell :state="charonState">
+      <PopupHeader
+        :state="charonState"
+        :status-label="statusLabel"
+        :theme="theme"
+        @toggle-theme="toggleTheme"
+        @close="closePopup"
+      />
       <AnalysisTabs v-model:active-tab="activeTab" />
 
       <div class="body">
-        <template v-if="activeTab === 'file'">
-          <template v-if="phase === 'idle' || phase === 'selected'">
-            <FileDropZone @select="selectFile" />
-
-            <div v-if="selectedFile" class="selection">
-              <SelectedFileCard :file="selectedFile" removable @remove="reset" />
-              <GlassButton @click="startAnalysis">Start analysis</GlassButton>
-            </div>
-          </template>
+        <template v-if="activeTab === 'analysis'">
+          <FileDropZone v-if="phase === 'idle' || phase === 'selected'" @select="analyse" />
 
           <AnalysisProgress
             v-else-if="phase === 'analyzing' && selectedFile"
@@ -101,7 +118,7 @@ const summaryMetrics = computed(() => buildSummaryMetrics(verdict.value?.technic
             v-else-if="phase === 'completed' && verdictPresentation"
             :presentation="verdictPresentation"
             :file="selectedFile"
-            :metrics="summaryMetrics"
+            :details="verdictDetails"
             :job-id="jobId"
             @restart="reset"
           />
@@ -114,28 +131,17 @@ const summaryMetrics = computed(() => buildSummaryMetrics(verdict.value?.technic
           />
         </template>
 
-        <ComingSoonPanel v-else />
+        <HistoryPanel v-else :entries="history" />
       </div>
 
       <PopupFooter :version="extensionVersion" :session-label="sessionLabel" />
-    </GlassShell>
+    </PopupShell>
   </main>
 </template>
 
 <style scoped>
-.popup {
-  display: flex;
-  justify-content: center;
-}
-
 .body {
-  padding: 20px var(--space-xl) var(--space-2xl);
-  min-height: 260px;
-}
-
-.selection {
-  display: grid;
-  gap: var(--space-lg);
-  margin-top: var(--space-lg);
+  min-height: 110px;
+  padding: 0 var(--space-xl);
 }
 </style>

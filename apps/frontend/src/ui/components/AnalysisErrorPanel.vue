@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import GlassButton from './GlassButton.vue';
+import PopupButton from './PopupButton.vue';
 
 defineProps<{ message: string }>();
 defineEmits<{ retry: []; restart: [] }>();
@@ -8,43 +8,42 @@ defineEmits<{ retry: []; restart: [] }>();
 <template>
   <div class="error-view">
     <div class="banner" role="alert">
-      <p class="title">Analysis failed</p>
+      <span class="overline">Analysis failed</span>
       <p class="message">{{ message }}</p>
     </div>
 
     <div class="actions">
-      <GlassButton variant="secondary" @click="$emit('restart')">Choose another file</GlassButton>
-      <GlassButton @click="$emit('retry')">Retry</GlassButton>
+      <PopupButton variant="secondary" @click="$emit('restart')">Choose another file</PopupButton>
+      <PopupButton @click="$emit('retry')">Retry</PopupButton>
     </div>
   </div>
 </template>
 
 <style scoped>
-.banner {
-  border-radius: var(--radius-panel);
-  padding: var(--space-xl);
-  margin-bottom: var(--space-lg);
-  background: rgba(244, 63, 94, 0.08);
-  border: 1px solid rgba(244, 63, 94, 0.22);
-  box-shadow: var(--shadow-inset-highlight);
-}
-
-.title {
-  font-size: var(--text-size-body);
-  font-weight: 600;
-  color: var(--tone-blocked);
+.overline {
+  display: block;
   margin-bottom: var(--space-sm);
+  font-family: var(--font-display);
+  font-size: var(--text-size-overline);
+  font-weight: 500;
+  letter-spacing: var(--tracking-overline);
+  text-transform: uppercase;
+  color: var(--blocked);
 }
 
 .message {
-  font-size: var(--text-size-small);
-  color: rgba(255, 255, 255, 0.55);
-  line-height: 1.5;
+  margin-bottom: var(--space-lg);
+  padding: 2px 0 2px 12px;
+  border-left: 2px solid var(--blocked);
+  overflow-wrap: anywhere;
+  font-size: 12.5px;
+  line-height: 1.65;
+  color: var(--text-2);
 }
 
 .actions {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: var(--space-md);
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 8px;
 }
 </style>

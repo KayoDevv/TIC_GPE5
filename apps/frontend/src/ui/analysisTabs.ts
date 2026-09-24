@@ -1,6 +1,6 @@
-/** Popup navigation tabs; only the file tab is implemented in the current scope. */
+/** Popup navigation tabs: the analysis flow and the local verdict history. */
 
-export type AnalysisTabKey = 'file' | 'hash' | 'url';
+export type AnalysisTabKey = 'analysis' | 'history';
 
 export interface AnalysisTab {
   key: AnalysisTabKey;
@@ -8,7 +8,6 @@ export interface AnalysisTab {
 }
 
 export const ANALYSIS_TABS: AnalysisTab[] = [
-  { key: 'file', label: 'File' },
-  { key: 'hash', label: 'Hash' },
-  { key: 'url', label: 'URL' }
+  { key: 'analysis', label: 'Analysis' },
+  { key: 'history', label: 'History' }
 ];

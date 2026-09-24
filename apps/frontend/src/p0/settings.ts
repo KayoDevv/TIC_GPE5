@@ -1,3 +1,5 @@
+import { canUseChromeStorage } from './storage';
+
 export interface P0Settings {
   apiBaseUrl: string;
   cachedJwtToken: string;
@@ -9,10 +11,6 @@ export const DEFAULT_SETTINGS: P0Settings = {
   apiBaseUrl: ENV_API_BASE_URL,
   cachedJwtToken: ''
 };
-
-function canUseChromeStorage(): boolean {
-  return typeof chrome !== 'undefined' && Boolean(chrome.storage?.local);
-}
 
 export async function loadSettings(): Promise<P0Settings> {
   if (!canUseChromeStorage()) {

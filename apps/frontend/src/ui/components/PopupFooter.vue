@@ -4,34 +4,34 @@ defineProps<{ version: string; sessionLabel: string }>();
 
 <template>
   <footer class="footer">
-    <span class="version">Charon v{{ version }}</span>
+    <span class="version">CHARON v{{ version }}</span>
     <span class="session">{{ sessionLabel }}</span>
   </footer>
 </template>
 
 <style scoped>
 .footer {
-  padding: var(--space-md) var(--space-xl);
-  border-top: 1px solid var(--border-soft);
-  background: var(--surface-sunken);
   display: flex;
   justify-content: space-between;
   align-items: center;
   gap: var(--space-md);
+  margin: 12px var(--space-xl) 0;
+  padding-top: 11px;
+  border-top: 1px solid var(--border);
   font-family: var(--font-mono);
   font-size: var(--text-size-micro);
-  letter-spacing: 0.06em;
+  letter-spacing: 0.08em;
 }
 
 .version {
-  color: var(--text-faint);
   flex-shrink: 0;
+  color: var(--faint);
 }
 
 .session {
-  color: var(--text-muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  color: var(--muted);
 }
 </style>
