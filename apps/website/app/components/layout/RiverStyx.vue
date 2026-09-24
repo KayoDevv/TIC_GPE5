@@ -159,6 +159,7 @@ watch(progress, renderFrame);
         opacity="0.13"
       />
 
+      <!-- The wake repaints on every scroll frame: an SVG filter here drops frames. -->
       <path
         ref="pathEl"
         class="wake wake--wide"
@@ -169,7 +170,6 @@ watch(progress, renderFrame);
         stroke-width="20"
         stroke-linecap="round"
         vector-effect="non-scaling-stroke"
-        filter="url(#styx-wc)"
         opacity="0.07"
       />
       <path
@@ -181,7 +181,6 @@ watch(progress, renderFrame);
         stroke-width="8"
         stroke-linecap="round"
         vector-effect="non-scaling-stroke"
-        filter="url(#styx-wc)"
         opacity="0.15"
       />
       <path

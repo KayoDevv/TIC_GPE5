@@ -1,4 +1,4 @@
-# ghcr-image: charon-website:v1.1.0
+# ghcr-image: charon-website:v1.1.1
 # Website — static Nuxt landing page whose only job is to hand out the browser
 # extension. The extension ZIP is built in the first stage and copied into the
 # site's public/ before `nuxt generate`, so the image is self-contained: one
