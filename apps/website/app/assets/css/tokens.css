@@ -1,0 +1,91 @@
+:root {
+  --font-display: "Cinzel", "Trajan Pro", serif;
+  --font-sans: "Spectral", Georgia, serif;
+  --font-mono: "Space Mono", ui-monospace, monospace;
+}
+
+.theme-light {
+  --bg: #f4f1e8;
+  --bg-alt: #ece7da;
+  --card: #fbf9f3;
+  --card-inset: #f4f1e8;
+  --border: #ded7c5;
+  --border-strong: #c9c0a9;
+  --text: #1c1b16;
+  --text-2: #3e3a30;
+  --muted: #6b6552;
+  --faint: #8a8170;
+  --gold: #b08d57;
+  --gold-2: #c7a66e;
+  --gold-deep: #936f3c;
+  --btn-bg: #b08d57;
+  --btn-text: #1c1b16;
+  --nav-bg: rgba(244, 241, 232, 0.82);
+  --grid-line: rgba(28, 27, 22, 0.05);
+  --slash: rgba(28, 27, 22, 0.15);
+  --safe: #3f6f5e;
+  --warn: #b07d24;
+  --danger: #a8322a;
+  --shadow-product: 0 30px 60px -30px rgba(28, 27, 22, 0.22);
+  --arch-trace: rgba(176, 141, 87, 0.38);
+  --arch-pulse-core: #7a5e32;
+  --arch-pulse-mid: #b08d57;
+  --arch-pulse-bright-core: #936f3c;
+  --arch-pulse-bright-mid: #c7a66e;
+  --arch-chip: #1c1b16;
+  --icon-base: #8a8170;
+  --demo-frame: #ece7da;
+  --demo-chrome: #f4f1e8;
+  --demo-page: #fbf9f3;
+  --demo-card: #ffffff;
+  --demo-inset: rgba(0, 0, 0, 0.05);
+  --demo-dot: #1c1b16;
+  --demo-tab-bg: rgba(251, 249, 243, 0.96);
+  --demo-tab-border: #c9c0a9;
+  --demo-popover-bg: rgba(251, 249, 243, 0.98);
+  --demo-accent: #936f3c;
+  --demo-chip-text: #ffffff;
+}
+
+.theme-dark {
+  --bg: #1c1b16;
+  --bg-alt: #211f19;
+  --card: #26251e;
+  --card-inset: #191813;
+  --border: rgba(244, 241, 232, 0.1);
+  --border-strong: rgba(244, 241, 232, 0.24);
+  --text: #f4f1e8;
+  --text-2: #ded7c5;
+  --muted: #aba28c;
+  --faint: #8a8170;
+  --gold: #c7a66e;
+  --gold-2: #e0c68c;
+  --gold-deep: #b08d57;
+  --btn-bg: #c7a66e;
+  --btn-text: #1c1b16;
+  --nav-bg: rgba(28, 27, 22, 0.78);
+  --grid-line: rgba(244, 241, 232, 0.03);
+  --slash: rgba(244, 241, 232, 0.15);
+  --safe: #5e9c86;
+  --warn: #daa63c;
+  --danger: #d2564a;
+  --shadow-product: 0 30px 60px -30px rgba(0, 0, 0, 0.6);
+  --arch-trace: rgba(199, 166, 110, 0.3);
+  --arch-pulse-core: #e0c68c;
+  --arch-pulse-mid: #b08d57;
+  --arch-pulse-bright-core: #f4f1e8;
+  --arch-pulse-bright-mid: #c7a66e;
+  --arch-chip: #191813;
+  --icon-base: #aba28c;
+  --demo-frame: #191813;
+  --demo-chrome: #211f19;
+  --demo-page: #1c1b16;
+  --demo-card: rgba(244, 241, 232, 0.04);
+  --demo-inset: rgba(255, 255, 255, 0.06);
+  --demo-dot: #f4f1e8;
+  --demo-tab-bg: rgba(28, 27, 22, 0.95);
+  --demo-tab-border: rgba(199, 166, 110, 0.4);
+  --demo-popover-bg: rgba(38, 37, 30, 0.97);
+  --demo-accent: #c7a66e;
+  --demo-chip-text: #0a0a0b;
+}

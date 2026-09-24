@@ -11,4 +11,4 @@ resources:
 # Derived from the Dockerfile headers by `make sync-versions`.
 images:
   - name: ghcr.io/kayodevv/charon-website
-    newTag: v1.0.0
+    newTag: v1.1.0

@@ -1,0 +1,146 @@
+* {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+}
+
+.font-display {
+  font-family: var(--font-display);
+}
+.font-sans2 {
+  font-family: var(--font-sans);
+}
+.font-mono2 {
+  font-family: var(--font-mono);
+}
+
+.text-balance {
+  text-wrap: balance;
+}
+
+.grain::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.025;
+  z-index: 1;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+::-webkit-scrollbar {
+  width: 9px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(176, 141, 87, 0.3);
+  border-radius: 20px;
+}
+
+.engraving {
+  filter: sepia(0.3);
+}
+.theme-dark .engraving {
+  filter: invert(1) sepia(0.35);
+}
+.flip-x {
+  transform: scaleX(-1);
+}
+
+.btn-lift {
+  transition:
+    transform 200ms cubic-bezier(0.2, 0.7, 0.3, 1),
+    filter 200ms ease-out;
+}
+.btn-lift:hover {
+  transform: translateY(-2px);
+  filter: brightness(1.08);
+}
+.btn-lift:active {
+  transform: translateY(0);
+}
+
+.tb-center {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .btn-lift,
+  .btn-lift:hover {
+    transform: none;
+  }
+}
+
+.arch-pulse {
+  offset-anchor: 10px 0px;
+  animation-name: arch-path-travel;
+  animation-iteration-count: infinite;
+  animation-timing-function: cubic-bezier(0.75, -0.01, 0, 0.99);
+}
+.arch-line-1 {
+  offset-path: path("M 10 20 h 79.5 q 5 0 5 5 v 30");
+  animation-duration: 5s;
+  animation-delay: 1s;
+}
+.arch-line-2 {
+  offset-path: path("M 180 10 h -69.7 q -5 0 -5 5 v 40");
+  animation-duration: 2s;
+  animation-delay: 6s;
+}
+.arch-line-3 {
+  offset-path: path("M 130 20 v 21.8 q 0 5 -5 5 h -25");
+  animation-duration: 6s;
+  animation-delay: 4s;
+}
+.arch-line-4 {
+  offset-path: path("M 170 80 v -21.8 q 0 -5 -5 -5 h -65");
+  animation-duration: 3s;
+  animation-delay: 3s;
+}
+.arch-line-5 {
+  offset-path: path("M 135 65 h 15 q 5 0 5 5 v 10 q 0 5 -5 5 h -39.8 q -5 0 -5 -5 v -35");
+  animation-duration: 4s;
+  animation-delay: 9s;
+}
+.arch-line-6 {
+  offset-path: path("M 94.8 95 v -46");
+  animation-duration: 7s;
+  animation-delay: 3s;
+}
+.arch-line-7 {
+  offset-path: path("M 88 88 v -15 q 0 -5 -5 -5 h -10 q -5 0 -5 -5 v -5 q 0 -5 5 -5 h 28");
+  animation-duration: 4s;
+  animation-delay: 4s;
+}
+.arch-line-8 {
+  offset-path: path("M 30 30 h 25 q 5 0 5 5 v 6.5 q 0 5 5 5 h 35");
+  animation-duration: 3s;
+  animation-delay: 3s;
+}
+
+@keyframes arch-path-travel {
+  0% {
+    offset-distance: 0%;
+  }
+  100% {
+    offset-distance: 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .arch-pulse {
+    animation: none;
+    visibility: hidden;
+  }
+}
