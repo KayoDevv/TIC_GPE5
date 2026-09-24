@@ -6,7 +6,7 @@
 .frise-ribbon {
   position: fixed;
   top: 0;
-  left: 0;
+  left: -120px;
   right: 0;
   height: 12px;
   z-index: 60;
@@ -16,16 +16,15 @@
   mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M0 11 H12 M1.8 11 V1.8 H10.3 V7.3 H5.3 V5 H7.7' fill='none' stroke='%23000' stroke-width='1.6'/%3E%3C/svg%3E")
     repeat-x left bottom / 12px 12px;
   animation: frise-drift 60s linear infinite;
+  will-change: transform;
 }
 
 @keyframes frise-drift {
   from {
-    -webkit-mask-position: 0 bottom;
-    mask-position: 0 bottom;
+    transform: translateX(0);
   }
   to {
-    -webkit-mask-position: 120px bottom;
-    mask-position: 120px bottom;
+    transform: translateX(120px);
   }
 }
 

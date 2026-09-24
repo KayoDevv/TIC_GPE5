@@ -6,8 +6,8 @@ const WAKE_OVERSHOOT = -40;
 const BOAT_MAX_T = 0.997;
 
 const progress = useScrollProgress();
-const rootEl = ref<HTMLDivElement | null>(null);
 const pathEl = ref<SVGPathElement | null>(null);
+const wakeEl = ref<SVGSVGElement | null>(null);
 const boatEl = ref<HTMLDivElement | null>(null);
 const fogEl = ref<HTMLDivElement | null>(null);
 const riverHeight = ref<number | null>(null);
@@ -31,12 +31,12 @@ function measure(): void {
 }
 
 function renderFrame(): void {
-  const root = rootEl.value;
+  const wake = wakeEl.value;
   const path = pathEl.value;
-  if (!root || !path) return;
+  if (!wake || !path) return;
   const t = clamp01(progress.value / endFraction.value);
   const dash = PATH_LENGTH - (PATH_LENGTH - WAKE_OVERSHOOT) * t;
-  root.style.setProperty("--dash", String(dash));
+  wake.style.setProperty("--dash", String(dash));
   const boatT = Math.min(t, BOAT_MAX_T);
   const point = path.getPointAtLength(boatT * path.getTotalLength());
   positionAtPoint(boatEl.value, point);
@@ -48,8 +48,8 @@ function positionAtPoint(
   point: { x: number; y: number },
 ): void {
   if (!el) return;
-  el.style.left = `${point.x}%`;
-  el.style.top = `${point.y / 10}%`;
+  el.style.setProperty("--x", String(point.x));
+  el.style.setProperty("--y", String(point.y / 10));
 }
 
 onMounted(() => {
@@ -71,12 +71,12 @@ watch(progress, renderFrame);
 
 <template>
   <div
-    ref="rootEl"
     class="river pointer-events-none absolute inset-x-0 top-0 -z-10 overflow-hidden"
     aria-hidden="true"
     :style="{ height: riverHeight ? `${riverHeight}px` : '100%' }"
   >
-    <svg class="h-full w-full" viewBox="0 0 100 1000" preserveAspectRatio="none">
+    <!-- Static layer: its filters rasterize once, so nothing that moves may live in it. -->
+    <svg class="river-layer" viewBox="0 0 100 1000" preserveAspectRatio="none">
       <defs>
         <linearGradient id="styx-grad" x1="0" y1="0" x2="0" y2="1">
           <stop offset="0" stop-color="var(--gold-2)" stop-opacity="0" />
@@ -158,8 +158,15 @@ watch(progress, renderFrame);
         vector-effect="non-scaling-stroke"
         opacity="0.13"
       />
+    </svg>
 
-      <!-- The wake repaints on every scroll frame: an SVG filter here drops frames. -->
+    <!-- The wake repaints on every scroll frame: an SVG filter here drops frames. -->
+    <svg
+      ref="wakeEl"
+      class="river-layer"
+      viewBox="0 0 100 1000"
+      preserveAspectRatio="none"
+    >
       <path
         ref="pathEl"
         class="wake wake--wide"
@@ -196,12 +203,8 @@ watch(progress, renderFrame);
       />
     </svg>
 
-    <div ref="fogEl" class="fog absolute -translate-x-1/2 -translate-y-1/2" />
-    <div
-      ref="boatEl"
-      class="absolute -translate-x-1/2 -translate-y-1/2"
-      style="left: 56%; top: 0"
-    >
+    <div ref="fogEl" class="fog river-mover -translate-x-1/2 -translate-y-1/2" />
+    <div ref="boatEl" class="river-mover -translate-x-1/2 -translate-y-1/2">
       <svg width="26" height="26" viewBox="0 0 13 13" fill="none" style="opacity: 0.55">
         <path
           d="M2 8C4.3 9.6 5.4 10.4 6.5 10.4S8.7 9.6 11 8"
@@ -223,8 +226,25 @@ watch(progress, renderFrame);
 <style scoped>
 .river {
   --dash: 1000;
+  container-type: size;
   -webkit-mask-image: linear-gradient(180deg, #000 84%, transparent 100%);
   mask-image: linear-gradient(180deg, #000 84%, transparent 100%);
+}
+
+.river-layer {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  will-change: transform;
+}
+
+.river-mover {
+  position: absolute;
+  left: 0;
+  top: 0;
+  will-change: transform;
+  transform: translate(calc(var(--x, 50) * 1cqw), calc(var(--y, 0) * 1cqh));
 }
 
 .wake {
@@ -241,8 +261,6 @@ watch(progress, renderFrame);
 }
 
 .fog {
-  left: 50%;
-  top: 0;
   width: 300px;
   height: 220px;
   background: radial-gradient(
