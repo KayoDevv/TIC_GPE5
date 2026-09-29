@@ -40,10 +40,30 @@ content-script download interception yet).
 - Folds the technical summary (risk score, indicators with their MITRE ATT&CK code, threat model and
   sandbox badges) behind **Show details**.
 - Keeps the last 20 verdicts in the `History` tab.
-- Mirrors the state on the toolbar icon (idle / analysing / allowed / warning / blocked). The
-  background worker resets it to idle when the popup closes, since the analysis lives in the popup.
+- Mirrors the state on the toolbar icon (idle / analysing / allowed / warning / blocked).
+- Adds a **side tab** on the right edge of every http(s) page (Shadow DOM, so page CSS cannot reach
+  it). It shows the current state, opens a popover with the verdict, and grows into a drop pad as
+  soon as a file is dragged over the page: dropping a file on it starts an analysis.
 
-No content scripts, no download interception, no provider-specific parsing.
+The analysis runs in the **background worker**, not in the popup or the page. The popup and the
+side tab send it the file (`charon:analyse`, base64 over an extension message) and both render the
+same shared snapshot (`charonSession` in `chrome.storage.local`). Closing the popup no longer stops
+an analysis; one analysis runs at a time. The worker keeps itself alive while the verdict socket
+is silent, and a worker that restarts mid-analysis marks it as interrupted.
+
+No download interception, no provider-specific parsing.
+
+## Install and update
+
+Chrome only auto-updates store or policy-installed extensions, so the team runs the unpacked build.
+It keeps its ID (and its history and settings) as long as it is reloaded from the same folder:
+
+```bash
+apps/frontend/scripts/update-extension.sh
+```
+
+The script downloads the ZIP the website serves into `~/charon-extension`. The first time, load that
+folder with **Load unpacked** on `chrome://extensions`; after each update, click its reload arrow.
 
 ## UI Architecture
 
@@ -53,20 +73,24 @@ JWT, settings, history and theme storage) and is **never** imported from a compo
 
 ```
 entrypoints/
-  background.ts               toolbar icon per state
+  background.ts               runs the analysis, toolbar icon per state
   popup/App.vue               composition + phase routing only
-  popup/style.css             reset, popup sizing
+  popup/style.css             reset, popup sizing, web fonts
+  side-tab.content/index.ts   mounts SideTab in a shadow root on every http(s) page
+src/p0/
+  analysisRunner.ts           one analysis at a time, published as the shared snapshot
+  session.ts fileMessage.ts   the shared snapshot and the file hand-off to the worker
 public/icons/eye/             toolbar icon PNGs, one per state and size
 src/ui/
-  theme.css                   design tokens (palette light/dark, fonts, spacing, motion)
-  useAnalysisSession.ts       popup state machine over src/p0
+  theme.css                   design tokens (palette light/dark, spacing, motion) for :root and :host
+  useAnalysisSession.ts       live view of the shared snapshot + requests to the worker
   useTheme.ts                 light/dark preference
-  charonState.ts              popup state -> lockup colour + toolbar icon
+  charonState.ts              snapshot -> lockup colour, side tab and toolbar icon
   verdictPresentation.ts      verdict payload -> tone, label, details
   fileSize.ts analysisTabs.ts pipelineLayers.ts extensionVersion.ts
   components/                 PopupShell, PopupHeader, AnalysisTabs, FileDropZone,
                               AnalysisProgress, VerdictPanel, AnalysisErrorPanel, HistoryPanel,
-                              PopupButton, PopupFooter
+                              PopupButton, PopupFooter, SideTab
   icons/                      CharonGlyph (inline SVG stroked with `currentColor`)
 ```
 
@@ -83,9 +107,12 @@ Rules:
 The design comes from the Charon V5 mockup (a standalone MV3 prototype). Deviations are deliberate:
 
 - All copy is English (`docs/CONTRIBUTING.md` §1); the mock is French.
-- Only the popup is built. The mock's options page, in-page pin, demo (mock) verdicts, runtime
-  backend URL and download interception are not: the API URL is fixed at build time and the
-  prototype's verdicts were simulated from the file name.
+- The popup and the in-page side tab are built. The mock's options page (tab position, auto-close,
+  icon shape), demo (mock) verdicts, runtime backend URL and download interception are not: the tab
+  is fixed on the right edge, the API URL is fixed at build time and the prototype's verdicts were
+  simulated from the file name.
+- The side tab uses the page's serif and monospace fonts: web fonts load only in the popup, so no
+  font file is injected into the pages you visit.
 - The mock's "reason" line (derived client-side from a guessed decision matrix) is replaced by the
   file name and size.
 - Progress keeps the real analysis layers and the elapsed time against the analysis deadline.
@@ -100,6 +127,7 @@ Stored in `chrome.storage.local`:
 - `cachedJwtToken` (auto-discovered)
 - `charonHistory` (last 20 verdicts: file name, decision, risk score, time)
 - `theme` (`light` or `dark`)
+- `charonSession` (the analysis in flight or its outcome, written by the background worker)
 
 ## Automatic Token Resolution
 

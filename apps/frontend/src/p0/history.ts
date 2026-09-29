@@ -1,7 +1,7 @@
 /** Local history of the verdicts shown by the popup, newest first. */
 
 import type { VerdictDecision } from './network';
-import { canUseChromeStorage } from './storage';
+import { canUseChromeStorage, watchStorageKey } from './storage';
 
 export interface HistoryEntry {
   name: string;
@@ -30,4 +30,10 @@ export async function recordHistory(entry: HistoryEntry): Promise<HistoryEntry[]
   }
 
   return history;
+}
+
+export function watchHistory(listener: (history: HistoryEntry[]) => void): () => void {
+  return watchStorageKey<HistoryEntry[]>(HISTORY_KEY, (value) =>
+    listener(Array.isArray(value) ? value : [])
+  );
 }

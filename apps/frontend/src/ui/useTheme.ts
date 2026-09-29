@@ -1,7 +1,7 @@
-/** Light/dark theme of the popup, applied as a class on the document root. */
+/** Light/dark theme: the popup applies it to its document, the side tab only reads it. */
 
-import { ref, type Ref } from 'vue';
-import { loadTheme, saveTheme, type Theme } from '../p0/theme';
+import { onScopeDispose, ref, type Ref } from 'vue';
+import { loadTheme, saveTheme, watchTheme, type Theme } from '../p0/theme';
 
 export type { Theme };
 
@@ -36,4 +36,24 @@ export function useTheme(): ThemeControl {
   }
 
   return { theme, toggleTheme };
+}
+
+// Follows the stored theme without touching the document: the side tab lives in someone
+// else's page, so it applies the theme to its own shadow-root wrapper.
+export function useStoredTheme(): Ref<Theme> {
+  const theme = ref<Theme>('light');
+  let changed = false;
+
+  const stop = watchTheme((value) => {
+    changed = true;
+    theme.value = value;
+  });
+  void loadTheme().then((value) => {
+    if (!changed) {
+      theme.value = value;
+    }
+  });
+  onScopeDispose(stop);
+
+  return theme;
 }

@@ -1,163 +1,133 @@
-/** Popup state machine driving the P0 analysis flow exposed by `src/p0`. */
+/** Live view of the background worker's analysis, shared by the popup and the side tab. */
 
-import { onScopeDispose, ref, type Ref } from 'vue';
-import { loadHistory, recordHistory, type HistoryEntry } from '../p0/history';
-import { ApiError, runAnalysis, type AnalysisOutcome, type VerdictMessage } from '../p0/network';
-import { loadSettings } from '../p0/settings';
-import { resolveJwtTokenAutomatically } from '../p0/tokenResolver';
+import { computed, onScopeDispose, ref, watch, type ComputedRef, type Ref } from 'vue';
+import {
+  encodeFile,
+  RESET_MESSAGE,
+  RETRY_MESSAGE,
+  sendToBackground
+} from '../p0/fileMessage';
+import { loadHistory, watchHistory, type HistoryEntry } from '../p0/history';
+import type { VerdictMessage } from '../p0/network';
+import {
+  ANALYSIS_TIMEOUT_MS,
+  IDLE_SNAPSHOT,
+  loadSnapshot,
+  watchSnapshot,
+  type AnalysisSnapshot,
+  type SessionFile,
+  type SessionPhase
+} from '../p0/session';
 
-export type { HistoryEntry };
-
-export type AnalysisPhase = 'idle' | 'selected' | 'analyzing' | 'completed' | 'failed';
+export type { HistoryEntry, SessionFile };
+export type AnalysisPhase = SessionPhase;
 
 export interface AnalysisSession {
-  phase: Ref<AnalysisPhase>;
-  selectedFile: Ref<File | null>;
-  verdict: Ref<VerdictMessage | null>;
-  jobId: Ref<string | null>;
-  hasTimedOut: Ref<boolean>;
-  errorMessage: Ref<string | null>;
-  progressRatio: Ref<number>;
+  snapshot: Ref<AnalysisSnapshot>;
+  phase: ComputedRef<AnalysisPhase>;
+  file: ComputedRef<SessionFile | null>;
+  verdict: ComputedRef<VerdictMessage | null>;
+  jobId: ComputedRef<string | null>;
+  hasTimedOut: ComputedRef<boolean>;
+  errorMessage: ComputedRef<string | null>;
+  progressRatio: ComputedRef<number>;
   history: Ref<HistoryEntry[]>;
-  selectFile: (file: File) => void;
-  startAnalysis: () => Promise<void>;
-  reset: () => void;
+  analyse: (file: File) => Promise<void>;
+  retry: () => Promise<void>;
+  reset: () => Promise<void>;
 }
 
-const ANALYSIS_TIMEOUT_MS = 160_000;
 const PROGRESS_TICK_MS = 250;
 const MAX_PENDING_PROGRESS_RATIO = 0.98;
 const COMPLETED_PROGRESS_RATIO = 1;
-const UNKNOWN_ERROR_MESSAGE = 'Unknown error during analysis.';
-const TIMEOUT_HISTORY_DECISION = 'warning';
-// Sent when no SSO token was found. The backend answers it: accepted in dev mode, 401 once SSO
-// is enforced, and the popup then shows that error instead of refusing to call the API.
-const ANONYMOUS_TOKEN = 'anonymous';
 
-function describeError(error: unknown): string {
-  if (error instanceof ApiError || error instanceof Error) {
-    return error.message;
-  }
+export async function requestAnalysis(file: File): Promise<void> {
+  await sendToBackground(await encodeFile(file));
+}
 
-  return UNKNOWN_ERROR_MESSAGE;
+export function useSessionSnapshot(): Ref<AnalysisSnapshot> {
+  const snapshot = ref<AnalysisSnapshot>(IDLE_SNAPSHOT);
+  let changed = false;
+
+  const stop = watchSnapshot((value) => {
+    changed = true;
+    snapshot.value = value;
+  });
+  void loadSnapshot().then((value) => {
+    // A change that arrived while storage was being read is the newer state.
+    if (!changed) {
+      snapshot.value = value;
+    }
+  });
+  onScopeDispose(stop);
+
+  return snapshot;
 }
 
 export function useAnalysisSession(): AnalysisSession {
-  const phase = ref<AnalysisPhase>('idle');
-  const selectedFile = ref<File | null>(null);
-  const verdict = ref<VerdictMessage | null>(null);
-  const jobId = ref<string | null>(null);
-  const hasTimedOut = ref(false);
-  const errorMessage = ref<string | null>(null);
-  const progressRatio = ref(0);
+  const snapshot = useSessionSnapshot();
   const history = ref<HistoryEntry[]>([]);
+  const now = ref(Date.now());
+  let ticker: ReturnType<typeof setInterval> | null = null;
 
   void loadHistory().then((entries) => {
     history.value = entries;
   });
+  const stopHistory = watchHistory((entries) => {
+    history.value = entries;
+  });
 
-  let progressTimer: ReturnType<typeof setInterval> | null = null;
+  const phase = computed(() => snapshot.value.phase);
 
-  function stopProgressTimer(): void {
-    if (progressTimer !== null) {
-      clearInterval(progressTimer);
-      progressTimer = null;
+  function stopTicker(): void {
+    if (ticker !== null) {
+      clearInterval(ticker);
+      ticker = null;
     }
   }
 
-  function startProgressTimer(): void {
-    stopProgressTimer();
-    const startedAt = Date.now();
+  watch(
+    phase,
+    (value) => {
+      stopTicker();
+      if (value === 'analyzing') {
+        now.value = Date.now();
+        ticker = setInterval(() => (now.value = Date.now()), PROGRESS_TICK_MS);
+      }
+    },
+    { immediate: true }
+  );
 
-    progressTimer = setInterval(() => {
-      const elapsedRatio = (Date.now() - startedAt) / ANALYSIS_TIMEOUT_MS;
-      progressRatio.value = Math.min(elapsedRatio, MAX_PENDING_PROGRESS_RATIO);
-    }, PROGRESS_TICK_MS);
-  }
+  onScopeDispose(() => {
+    stopTicker();
+    stopHistory();
+  });
 
-  function clearOutcome(): void {
-    verdict.value = null;
-    jobId.value = null;
-    hasTimedOut.value = false;
-    errorMessage.value = null;
-    progressRatio.value = 0;
-  }
-
-  function selectFile(file: File): void {
-    stopProgressTimer();
-    clearOutcome();
-    selectedFile.value = file;
-    phase.value = 'selected';
-  }
-
-  function reset(): void {
-    stopProgressTimer();
-    clearOutcome();
-    selectedFile.value = null;
-    phase.value = 'idle';
-  }
-
-  function applyOutcome(file: File, outcome: AnalysisOutcome): void {
-    jobId.value = outcome.jobId;
-    hasTimedOut.value = outcome.kind === 'timeout';
-    verdict.value = outcome.kind === 'verdict' ? outcome.verdict : null;
-    progressRatio.value = COMPLETED_PROGRESS_RATIO;
-    phase.value = 'completed';
-
-    void recordHistory({
-      name: file.name,
-      decision: verdict.value?.final_decision ?? TIMEOUT_HISTORY_DECISION,
-      score: verdict.value?.technical_summary?.ml_layer_score ?? null,
-      time: Date.now()
-    }).then((entries) => {
-      history.value = entries;
-    });
-  }
-
-  async function startAnalysis(): Promise<void> {
-    const file = selectedFile.value;
-    if (!file || phase.value === 'analyzing') {
-      return;
+  const progressRatio = computed(() => {
+    if (phase.value === 'completed') {
+      return COMPLETED_PROGRESS_RATIO;
     }
 
-    clearOutcome();
-    phase.value = 'analyzing';
-    startProgressTimer();
-
-    try {
-      const settings = await loadSettings();
-      const jwtToken = (await resolveJwtTokenAutomatically()) ?? ANONYMOUS_TOKEN;
-
-      applyOutcome(
-        file,
-        await runAnalysis({
-          apiBaseUrl: settings.apiBaseUrl,
-          jwtToken,
-          file,
-          timeoutMs: ANALYSIS_TIMEOUT_MS
-        })
-      );
-    } catch (error: unknown) {
-      errorMessage.value = describeError(error);
-      phase.value = 'failed';
-    } finally {
-      stopProgressTimer();
+    const startedAt = snapshot.value.startedAt;
+    if (phase.value !== 'analyzing' || startedAt === null) {
+      return 0;
     }
-  }
 
-  onScopeDispose(stopProgressTimer);
+    return Math.min((now.value - startedAt) / ANALYSIS_TIMEOUT_MS, MAX_PENDING_PROGRESS_RATIO);
+  });
 
   return {
+    snapshot,
     phase,
-    selectedFile,
-    verdict,
-    jobId,
-    hasTimedOut,
-    errorMessage,
+    file: computed(() => snapshot.value.file),
+    verdict: computed(() => snapshot.value.verdict),
+    jobId: computed(() => snapshot.value.jobId),
+    hasTimedOut: computed(() => snapshot.value.timedOut),
+    errorMessage: computed(() => snapshot.value.error),
     progressRatio,
     history,
-    selectFile,
-    startAnalysis,
-    reset
+    analyse: requestAnalysis,
+    retry: () => sendToBackground({ type: RETRY_MESSAGE }),
+    reset: () => sendToBackground({ type: RESET_MESSAGE })
   };
 }

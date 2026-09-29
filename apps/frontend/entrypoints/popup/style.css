@@ -1,4 +1,10 @@
 @import '../../src/ui/theme.css';
+@import '@fontsource/cinzel/latin-500.css';
+@import '@fontsource/cinzel/latin-600.css';
+@import '@fontsource/spectral/latin-400.css';
+@import '@fontsource/spectral/latin-400-italic.css';
+@import '@fontsource/spectral/latin-500.css';
+@import '@fontsource/space-mono/latin-400.css';
 
 *,
 *::before,

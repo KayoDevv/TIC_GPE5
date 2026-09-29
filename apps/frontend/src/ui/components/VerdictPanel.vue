@@ -2,6 +2,7 @@
 import { computed, ref } from 'vue';
 import PopupButton from './PopupButton.vue';
 import { formatFileSize } from '../fileSize';
+import type { SessionFile } from '../useAnalysisSession';
 import {
   hasVerdictDetails,
   type VerdictDetails,
@@ -10,7 +11,7 @@ import {
 
 const props = defineProps<{
   presentation: VerdictPresentation;
-  file: File | null;
+  file: SessionFile | null;
   details: VerdictDetails;
   jobId: string | null;
 }>();

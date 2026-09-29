@@ -1,18 +1,41 @@
 import { defineBackground } from 'wxt/utils/define-background';
-import { POPUP_PORT_NAME, toolbarIconPaths, type CharonState } from '../src/ui/charonState';
+import {
+  analyseFile,
+  recoverInterruptedSession,
+  resetSession,
+  retryLastFile
+} from '../src/p0/analysisRunner';
+import {
+  ANALYSE_MESSAGE,
+  decodeFile,
+  RESET_MESSAGE,
+  RETRY_MESSAGE,
+  type CharonMessage
+} from '../src/p0/fileMessage';
+import { loadSnapshot, watchSnapshot, type AnalysisSnapshot } from '../src/p0/session';
+import { snapshotState, toolbarIconPaths } from '../src/ui/charonState';
 
-function showState(state: CharonState): void {
-  void chrome.action.setIcon({ path: toolbarIconPaths(state) });
+function showOnToolbar(snapshot: AnalysisSnapshot): void {
+  void chrome.action.setIcon({ path: toolbarIconPaths(snapshotState(snapshot)) });
+}
+
+function handle(message: CharonMessage): Promise<void> {
+  if (message.type === ANALYSE_MESSAGE) {
+    return analyseFile(decodeFile(message));
+  }
+
+  return message.type === RETRY_MESSAGE ? retryLastFile() : resetSession();
 }
 
 export default defineBackground(() => {
-  chrome.runtime.onConnect.addListener((port) => {
-    if (port.name !== POPUP_PORT_NAME) {
-      return;
-    }
+  watchSnapshot(showOnToolbar);
+  void recoverInterruptedSession()
+    .then(loadSnapshot)
+    .then(showOnToolbar);
 
-    port.onMessage.addListener((message: { state: CharonState }) => showState(message.state));
-    // The analysis lives in the popup, so closing it ends the analysis: back to idle.
-    port.onDisconnect.addListener(() => showState('idle'));
+  chrome.runtime.onMessage.addListener((message: CharonMessage) => {
+    if ([ANALYSE_MESSAGE, RETRY_MESSAGE, RESET_MESSAGE].includes(message?.type)) {
+      void handle(message);
+    }
   });
 });

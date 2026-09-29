@@ -1,6 +1,6 @@
 /** Persisted light/dark preference of the popup. */
 
-import { canUseChromeStorage } from './storage';
+import { canUseChromeStorage, watchStorageKey } from './storage';
 
 export type Theme = 'light' | 'dark';
 
@@ -20,4 +20,10 @@ export async function saveTheme(theme: Theme): Promise<void> {
   if (canUseChromeStorage()) {
     await chrome.storage.local.set({ [THEME_KEY]: theme });
   }
+}
+
+export function watchTheme(listener: (theme: Theme) => void): () => void {
+  return watchStorageKey<string>(THEME_KEY, (value) =>
+    listener(value === 'dark' ? 'dark' : DEFAULT_THEME)
+  );
 }

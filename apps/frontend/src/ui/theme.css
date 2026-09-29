@@ -1,11 +1,8 @@
-@import '@fontsource/cinzel/latin-500.css';
-@import '@fontsource/cinzel/latin-600.css';
-@import '@fontsource/spectral/latin-400.css';
-@import '@fontsource/spectral/latin-400-italic.css';
-@import '@fontsource/spectral/latin-500.css';
-@import '@fontsource/space-mono/latin-400.css';
+/* Design tokens. `:host` serves the side tab's shadow root, where `:root` never matches; the
+   web fonts load in the popup only (style.css), so pages fall back to the serif stacks. */
 
-:root {
+:root,
+:host {
   color-scheme: light;
 
   --font-display: 'Cinzel', Georgia, serif;
@@ -61,7 +58,7 @@
   --motion-fast: 180ms ease-out;
 }
 
-:root.theme-dark {
+.theme-dark {
   color-scheme: dark;
 
   --bg: #1c1b16;

@@ -1,6 +1,7 @@
 /** Maps backend verdict payloads to the labels, tones and metrics rendered by the popup. */
 
 import type { TechnicalSummary, VerdictDecision, VerdictMessage } from '../p0/network';
+import type { AnalysisSnapshot } from '../p0/session';
 
 export type VerdictTone = 'allowed' | 'warning' | 'blocked';
 
@@ -72,6 +73,18 @@ export function presentVerdict(verdict: VerdictMessage): VerdictPresentation {
     label: presentation.label,
     detail: verdict.user_explanation?.trim() || presentation.defaultDetail
   };
+}
+
+export function presentSnapshot(snapshot: AnalysisSnapshot): VerdictPresentation | null {
+  if (snapshot.phase !== 'completed') {
+    return null;
+  }
+
+  if (snapshot.timedOut) {
+    return TIMEOUT_PRESENTATION;
+  }
+
+  return snapshot.verdict ? presentVerdict(snapshot.verdict) : null;
 }
 
 function readTiles(summary: TechnicalSummary): SummaryMetric[] {
