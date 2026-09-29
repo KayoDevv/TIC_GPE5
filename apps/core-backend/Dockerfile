@@ -1,4 +1,4 @@
-# ghcr-image: charon-core-backend:v1.0.2
+# ghcr-image: charon-core-backend:v1.0.3
 # Core Backend — FastAPI API gateway. Validates uploads, stores to S3/MinIO,
 # produces file.requested, consumes verdict.result, streams verdicts over WS.
 # Build context = monorepo root: make build-<service>

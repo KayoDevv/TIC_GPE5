@@ -20,8 +20,10 @@ HEADER_RE = re.compile(r"^#\s*ghcr-image:\s*(\S+)")
 REFERENCE_RE = re.compile(r"ghcr\.io/[a-z0-9_-]+/([a-z0-9._-]+):([A-Za-z0-9._-]+)")
 MK_ASSIGN_RE = re.compile(r"^([A-Z_]+_VERSION)\s*\?=\s*(\S+)")
 
+# .claude holds other checkouts of this repo (agent worktrees): --write must never
+# rewrite their files.
 SKIP_DIRS = {".git", "node_modules", ".venv", "venv", "__pycache__",
-             ".pytest_cache", ".idea", ".remember", "maquette"}
+             ".pytest_cache", ".idea", ".remember", "maquette", ".claude"}
 BINARY_SUFFIXES = (".png", ".jpg", ".jpeg", ".gif", ".ico", ".pdf", ".onnx",
                    ".duckdb", ".zip", ".gz", ".tar", ".woff", ".woff2",
                    ".pyc", ".so", ".bin", ".model", ".npy")

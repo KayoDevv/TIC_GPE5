@@ -24,7 +24,7 @@ export interface AnalysisSession {
   reset: () => void;
 }
 
-const ANALYSIS_TIMEOUT_MS = 130_000;
+const ANALYSIS_TIMEOUT_MS = 160_000;
 const PROGRESS_TICK_MS = 250;
 const MAX_PENDING_PROGRESS_RATIO = 0.98;
 const COMPLETED_PROGRESS_RATIO = 1;

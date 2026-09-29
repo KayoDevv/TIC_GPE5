@@ -42,7 +42,10 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379/0"
 
     # --- WebSocket ---
-    ws_verdict_timeout_seconds: int = 130
+    # Above the Verdict Layer's own deadline: it declares a sandbox timeout 125 s after the
+    # first layer result (not the upload), checked every 5 s, so that verdict lands ~130-135 s
+    # after upload. At 130 s the socket closed just before it.
+    ws_verdict_timeout_seconds: int = 150
     # How long a submitted job stays claimable by its tenant on the WebSocket.
     job_owner_ttl_seconds: int = 900
     # How long a verdict waits for its WebSocket (same bound as the Verdict Layer state).

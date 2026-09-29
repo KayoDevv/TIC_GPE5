@@ -5,13 +5,13 @@ OWNER ?= kayodevv
 
 AGENT_VERSION    ?= v1.2.1
 PDF_VERSION      ?= v1.2.2
-CONSUMER_VERSION ?= v1.1.1
-BACKEND_VERSION  ?= v1.0.2
+CONSUMER_VERSION ?= v1.1.2
+BACKEND_VERSION  ?= v1.0.3
 ML_VERSION       ?= v1.0.1
 VERDICT_VERSION  ?= v1.0.1
 LLM_VERSION      ?= v1.0.1
 SINKHOLE_VERSION ?= v1.0.1
-WEBSITE_VERSION  ?= v1.1.5
+WEBSITE_VERSION  ?= v1.1.6
 
 AGENT_IMAGE    := ghcr.io/$(OWNER)/ubuntu-sandbox:$(AGENT_VERSION)
 PDF_IMAGE      := ghcr.io/$(OWNER)/ubuntu-pdf-sandbox:$(PDF_VERSION)

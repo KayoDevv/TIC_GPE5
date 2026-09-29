@@ -19,6 +19,7 @@ on:
 
 permissions:
   contents: read
+  packages: read      # pulls a detonation image that is missing from the node
 
 concurrency:
   group: deploy-pipeline
@@ -140,6 +141,18 @@ jobs:
           tar czf - -C infrastructure/k8s-manifests overlays/prod applications/sandbox components \
           | ssh $SSH_OPTS "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
             'rm -rf ~/charon-deploy/km && mkdir -p ~/charon-deploy/km && tar xzf - -C ~/charon-deploy/km'
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # The detonation Jobs never pull (imagePullPolicy: Never): an agent version bump
+      # that is not copied onto the node fails every detonation with ErrImageNeverPull.
+      - name: Ensure the detonation images are on the node
+        run: scripts/ci/import-sandbox-agents.sh "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" --missing-only
 
       - name: Apply sandbox (overlays/prod — in-cluster DNS + gVisor)
         run: |

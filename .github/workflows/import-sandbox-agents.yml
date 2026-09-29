@@ -26,37 +26,14 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # Run this workflow from the ref whose versions you want imported.
-      - name: Resolve agent versions from their Dockerfile headers
-        run: |
-          set -euo pipefail
-          hdr() {
-            local ref
-            ref=$(sed -n 's|^#[[:space:]]*ghcr-image:[[:space:]]*\([^[:space:]]*\).*|\1|p' "$1" | head -1)
-            [ -n "$ref" ] && [ "$ref" != "${ref##*:}" ] || return 1
-            printf '%s' "${ref##*:}"
-          }
-          A=$(hdr apps/workers/sandbox_layer/Dockerfile.agent) \
-            || { echo "::error::no 'ghcr-image' header on Dockerfile.agent"; exit 1; }
-          P=$(hdr apps/workers/sandbox_layer/Dockerfile.pdf-agent) \
-            || { echo "::error::no 'ghcr-image' header on Dockerfile.pdf-agent"; exit 1; }
-          echo "AGENT_IMAGE=ghcr.io/kayodevv/ubuntu-sandbox:$A" >> "$GITHUB_ENV"
-          echo "PDF_IMAGE=ghcr.io/kayodevv/ubuntu-pdf-sandbox:$P" >> "$GITHUB_ENV"
-          echo "ELF agent -> $A   |   PDF agent -> $P"
-
+      # Run this workflow from the ref whose versions you want imported: the script reads
+      # them from the agent Dockerfile headers.
       - name: Log in to GHCR
         uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Pull agent images at their header versions
-        run: |
-          set -euo pipefail
-          docker pull "$AGENT_IMAGE"
-          docker pull "$PDF_IMAGE"
-          docker image ls | grep ubuntu-
 
       - name: Install OpenVPN client
         run: sudo apt-get update && sudo apt-get install -y openvpn
@@ -78,33 +55,8 @@ jobs:
           echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_deploy
           chmod 600 ~/.ssh/id_deploy
 
-      - name: Preflight (SSH + passwordless sudo for ctr)
-        run: |
-          set -euo pipefail
-          ssh $SSH_OPTS "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
-            'sudo -n k3s ctr images ls >/dev/null 2>&1' \
-            || { echo "::error::The SSH user lacks passwordless sudo for 'k3s ctr'. Run 'make import-images' on the node manually, or grant NOPASSWD for k3s."; exit 1; }
-          echo "sudo/ctr OK"
-
-      - name: Ship + import into k3s containerd
-        run: |
-          set -euo pipefail
-          for img in "$AGENT_IMAGE" "$PDF_IMAGE"; do
-            # Drop the CRI record first, or KEP-2535 forces a re-auth pull.
-            ssh $SSH_OPTS "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
-              "sudo -n k3s crictl rmi '$img' >/dev/null 2>&1 || true"
-            echo "==> importing $img"
-            docker save "$img" \
-            | ssh $SSH_OPTS "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
-                'sudo -n k3s ctr images import -'
-          done
-          echo "--- agent images now in k3s ---"
-          # A silent miss surfaces later as ErrImageNeverPull on the next Job.
-          for img in "$AGENT_IMAGE" "$PDF_IMAGE"; do
-            ssh $SSH_OPTS "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
-              "sudo -n k3s ctr images ls -q | grep -Fx '$img'" \
-              || { echo "::error::$img absent from containerd after import"; exit 1; }
-          done
+      - name: Import both agent images into k3s containerd
+        run: scripts/ci/import-sandbox-agents.sh "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}"
 
       - name: Disconnect VPN
         if: always()

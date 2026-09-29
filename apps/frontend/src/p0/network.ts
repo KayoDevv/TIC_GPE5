@@ -42,7 +42,8 @@ export class ApiError extends Error {
   }
 }
 
-const DEFAULT_TIMEOUT_MS = 130_000;
+// Longer than the backend's 150 s so the backend's own 4008 timeout is what the popup sees.
+const DEFAULT_TIMEOUT_MS = 160_000;
 const UNKNOWN_UPLOADER = 'unknown-uploader';
 const WS_CLOSE_TIMEOUT = 4008;
 const WS_CLOSE_AUTH_FAILED = 4001;

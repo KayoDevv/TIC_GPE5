@@ -10,7 +10,7 @@ metadata:
   name: charon-alloy
 rules:
   - apiGroups: [""]
-    resources: ["pods", "pods/log", "namespaces", "nodes", "nodes/proxy"]
+    resources: ["pods", "pods/log", "namespaces", "nodes", "nodes/proxy", "events"]
     verbs: ["get", "list", "watch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -77,6 +77,17 @@ data:
 
     loki.source.kubernetes "pods" {
       targets    = discovery.relabel.pods.output
+      forward_to = [loki.write.default.receiver]
+    }
+
+    // Kubernetes Events are not container output: a pod that never starts (ErrImageNeverPull,
+    // quota refusal, deadline) leaves no log, only events, which the API server drops after
+    // ~1 h. Query them in Grafana with {job="kubernetes-events"}.
+    // ponytail: every Alloy pod of the DaemonSet tails all events; fine on the single node,
+    // move this to one Deployment replica before adding nodes or events get duplicated.
+    loki.source.kubernetes_events "cluster" {
+      job_name   = "kubernetes-events"
+      log_format = "logfmt"
       forward_to = [loki.write.default.receiver]
     }
 

@@ -257,8 +257,10 @@ def _analysis_container(
             k8s_client.V1EnvVar(name="EMAIL_CONTEXT_JSON", value=json.dumps(email_context)),
             k8s_client.V1EnvVar(name="SANDBOX_TIMEOUT_S", value=str(TIMEOUT_S)),
         ],
+        # Without an explicit ephemeral-storage request, Kubernetes defaults it to the 2Gi
+        # limit and the namespace quota (3Gi) admits a single detonation at a time.
         resources=k8s_client.V1ResourceRequirements(
-            requests={"cpu": "500m", "memory": "512Mi"},
+            requests={"cpu": "500m", "memory": "512Mi", "ephemeral-storage": "1Gi"},
             limits={"cpu": "2000m", "memory": "2Gi", "ephemeral-storage": "2Gi"},
         ),
         security_context=k8s_client.V1SecurityContext(

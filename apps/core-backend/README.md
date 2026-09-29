@@ -95,7 +95,7 @@ Real-time verdict delivery channel.
 |---|---|
 | Invalid JWT | Close with code `4001` |
 | Invalid `job_id` format, or a job the tenant does not own | Close with code `4003` |
-| No verdict after 130 s | Close with code `4008` (timeout — slightly above Sandbox 125 s limit) |
+| No verdict after 150 s | Close with code `4008` (timeout — above the Verdict Layer's 125 s sandbox deadline, which starts at the first layer result and is checked every 5 s) |
 
 ---
 

@@ -55,7 +55,7 @@ async def ws_verdict(websocket: WebSocket, job_id: str) -> None:
     1. Authenticate via guard
     2. Validate job_id via guard
     3. Check the caller's tenant owns the job
-    4. Wait for the verdict in the mailbox, or time out (130s)
+    4. Wait for the verdict in the mailbox, or time out (150s)
     5. Send verdict and close connection
     """
     # --- 1. Auth guard ---

@@ -13,4 +13,4 @@ resources:
 # Derived from the Dockerfile header by `make sync-versions`.
 images:
   - name: ghcr.io/kayodevv/charon-sandbox-consumer
-    newTag: v1.1.1
+    newTag: v1.1.2
