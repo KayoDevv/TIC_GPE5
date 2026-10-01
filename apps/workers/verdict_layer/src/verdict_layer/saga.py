@@ -20,6 +20,7 @@ class VerdictSaga:
         store: StateStore,
         emit_verdict: EmitFn,
         ml_block_threshold: int,
+        ml_solo_block_threshold: int,
         timeout_default: str,
         sandbox_timeout_seconds: int,
         ml_abstain_verdict: str,
@@ -27,6 +28,7 @@ class VerdictSaga:
         self._store = store
         self._emit = emit_verdict
         self._ml_threshold = ml_block_threshold
+        self._ml_solo_threshold = ml_solo_block_threshold
         self._timeout_default = timeout_default
         self._timeout_seconds = sandbox_timeout_seconds
         self._ml_abstain_verdict = ml_abstain_verdict
@@ -76,6 +78,7 @@ class VerdictSaga:
         decision = decide(
             state,
             ml_block_threshold=self._ml_threshold,
+            ml_solo_block_threshold=self._ml_solo_threshold,
             timeout_default=self._timeout_default,
             ml_abstain_verdict=self._ml_abstain_verdict,
         )

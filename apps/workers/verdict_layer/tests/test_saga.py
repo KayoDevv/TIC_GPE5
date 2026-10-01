@@ -34,6 +34,7 @@ def _make_saga(store, emitter, timeout_seconds=125) -> VerdictSaga:
         store=store,
         emit_verdict=emitter.emit,
         ml_block_threshold=90,
+        ml_solo_block_threshold=98,
         timeout_default="warning",
         sandbox_timeout_seconds=timeout_seconds,
         ml_abstain_verdict="warning",

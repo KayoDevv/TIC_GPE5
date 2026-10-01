@@ -20,6 +20,6 @@ images:
   - name: ghcr.io/kayodevv/charon-ml-layer
     newTag: v1.1.0
   - name: ghcr.io/kayodevv/charon-verdict-layer
-    newTag: v1.0.1
+    newTag: v1.0.2
   - name: ghcr.io/kayodevv/charon-llm-layer
     newTag: v1.0.1

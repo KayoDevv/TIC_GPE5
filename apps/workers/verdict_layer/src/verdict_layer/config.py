@@ -19,6 +19,9 @@ class Settings(BaseSettings):
     reaper_interval_seconds: int = 5
 
     ml_block_threshold: int = 90
+    # Above this score the static model blocks on its own, but only when the
+    # behavioral analysis is partial (timeout/error); a clean sandbox still wins.
+    ml_solo_block_threshold: int = 98
 
     default_timeout_verdict: str = "warning"
 

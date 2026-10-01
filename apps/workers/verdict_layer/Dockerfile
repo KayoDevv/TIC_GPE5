@@ -1,4 +1,4 @@
-# ghcr-image: charon-verdict-layer:v1.0.1
+# ghcr-image: charon-verdict-layer:v1.0.2
 # Verdict Layer — "The Judge". Aggregates ml_layer.result + sandbox_layer.result
 # + llm_layer.result (Redis-backed Saga) into a single verdict.result.
 # Build context = monorepo root: make build-<service>

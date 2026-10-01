@@ -1,8 +1,10 @@
 from verdict_layer.decision_matrix import (
     ML_ABSTAINED_EXPLANATION,
+    ML_BLOCKED_EXPLANATION,
     ML_DISPUTED_EXPLANATION,
     SANDBOX_ERROR_EXPLANATION,
     SANDBOX_MALICIOUS_EXPLANATION,
+    SANDBOX_TIMEOUT_EXPLANATION,
     JobState,
     VerdictDecision,
     decide,
@@ -20,6 +22,7 @@ def _decide(
     return decide(
         state,
         ml_block_threshold=_BLOCK_THRESHOLD,
+        ml_solo_block_threshold=98,
         timeout_default=timeout_default,
         ml_abstain_verdict=ml_abstain_verdict,
     )
@@ -87,10 +90,21 @@ class TestSandboxTimeout:
         result = _decide(state, timeout_default="blocked")
         assert result.final_decision == "blocked"
 
-    def test_high_ml_score_wins_over_timeout(self) -> None:
-        """ML early-exit has priority even if sandbox timed out."""
+    def test_critical_ml_score_does_not_block_a_timeout(self) -> None:
+        state = JobState(ml_score=97, sandbox_timeout=True)
+        result = _decide(state)
+        assert result.final_decision == "warning"
+        assert result.user_explanation == SANDBOX_TIMEOUT_EXPLANATION
+
+    def test_near_certain_ml_score_blocks_a_timeout(self) -> None:
         state = JobState(ml_score=99, sandbox_timeout=True)
         result = _decide(state)
+        assert result.final_decision == "blocked"
+        assert result.user_explanation == ML_BLOCKED_EXPLANATION
+
+    def test_high_ml_score_follows_blocking_timeout_policy(self) -> None:
+        state = JobState(ml_score=99, sandbox_timeout=True)
+        result = _decide(state, timeout_default="blocked")
         assert result.final_decision == "blocked"
 
     def test_llm_malicious_wins_over_timeout(self) -> None:
@@ -133,10 +147,28 @@ class TestSandboxVerdict:
         assert result.final_decision == "warning"
         assert result.user_explanation == SANDBOX_ERROR_EXPLANATION
 
-    def test_ml_critical_wins_over_sandbox_malicious(self) -> None:
+    def test_sandbox_explanation_kept_when_ml_critical(self) -> None:
         state = JobState(ml_score=99, sandbox_received=True, sandbox_verdict="malicious")
         result = _decide(state)
-        assert result.user_explanation != SANDBOX_MALICIOUS_EXPLANATION
+        assert result.final_decision == "blocked"
+        assert result.user_explanation == SANDBOX_MALICIOUS_EXPLANATION
+
+    def test_ml_critical_does_not_block_a_sandbox_error(self) -> None:
+        state = JobState(ml_score=98, sandbox_received=True, sandbox_verdict="error")
+        result = _decide(state)
+        assert result.final_decision == "warning"
+        assert result.user_explanation == SANDBOX_ERROR_EXPLANATION
+
+    def test_near_certain_ml_blocks_a_sandbox_error(self) -> None:
+        state = JobState(ml_score=99, sandbox_received=True, sandbox_verdict="error")
+        result = _decide(state)
+        assert result.final_decision == "blocked"
+
+    def test_near_certain_ml_never_overrides_a_clean_sandbox(self) -> None:
+        state = JobState(ml_score=100, sandbox_received=True, sandbox_verdict="benign")
+        result = _decide(state)
+        assert result.final_decision == "warning"
+        assert result.user_explanation == ML_DISPUTED_EXPLANATION
 
     def test_timeout_wins_over_sandbox_error(self) -> None:
         # A job that both errored and timed out should read as a timeout.

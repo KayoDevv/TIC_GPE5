@@ -9,7 +9,10 @@ Decision = Literal["allowed", "blocked", "warning"]
 
 ALLOWED_ON_ML_ABSTENTION = "allowed"
 
-ML_BLOCKED_EXPLANATION = "Blocked: static analysis assigned a critical risk score."
+ML_BLOCKED_EXPLANATION = (
+    "Blocked: static analysis assigned a near-certain risk score and behavioral "
+    "analysis could not complete."
+)
 ML_DISPUTED_EXPLANATION = (
     "Warning: static analysis flagged this file, but behavioral analysis did not "
     "confirm it as malicious."
@@ -60,10 +63,10 @@ def _ml_abstained(state: JobState) -> bool:
     return state.ml_status is not None and state.ml_status != ML_ANALYSIS_COMPLETED
 
 
-def _is_ml_critical(state: JobState, ml_block_threshold: int) -> bool:
+def _is_ml_above(state: JobState, threshold: int) -> bool:
     if _ml_abstained(state):
         return False
-    return state.ml_score is not None and state.ml_score > ml_block_threshold
+    return state.ml_score is not None and state.ml_score > threshold
 
 
 def _needs_abstention_warning(state: JobState, ml_abstain_verdict: str) -> bool:
@@ -97,18 +100,20 @@ def _behavioral_decision(
 def decide(
     state: JobState,
     ml_block_threshold: int,
+    ml_solo_block_threshold: int,
     timeout_default: str,
     ml_abstain_verdict: str,
 ) -> VerdictDecision:
     summary = _build_summary(state)
     behavioral = _behavioral_decision(state, timeout_default, summary)
 
-    # A critical ML score no longer solo-blocks: the behavioral pipeline
-    # (sandbox + LLM) can clear a file the static model flagged, so a single
-    # over-confident layer cannot block a document the sandbox found benign.
-    if _is_ml_critical(state, ml_block_threshold):
-        if behavioral.final_decision == "allowed":
+    # The static model is mostly advisory: a critical score only raises a clean
+    # behavioral result to a warning. It blocks alone only when near-certain and
+    # the behavioral analysis is partial; a clean sandbox always overrides it.
+    if behavioral.final_decision == "allowed":
+        if _is_ml_above(state, ml_block_threshold):
             return VerdictDecision("warning", ML_DISPUTED_EXPLANATION, summary)
+    elif behavioral.final_decision == "warning" and _is_ml_above(state, ml_solo_block_threshold):
         return VerdictDecision("blocked", ML_BLOCKED_EXPLANATION, summary)
 
     # An "allowed" that rests on the behavioral layers alone is one layer short

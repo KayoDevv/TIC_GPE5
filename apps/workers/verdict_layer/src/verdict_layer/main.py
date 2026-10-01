@@ -118,6 +118,7 @@ async def run() -> None:
         store=store,
         emit_verdict=build_emit_verdict(publisher, settings.kafka_topic_verdict_result),
         ml_block_threshold=settings.ml_block_threshold,
+        ml_solo_block_threshold=settings.ml_solo_block_threshold,
         timeout_default=settings.default_timeout_verdict,
         sandbox_timeout_seconds=settings.sandbox_timeout_seconds,
         ml_abstain_verdict=settings.ml_abstain_verdict,
