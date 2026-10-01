@@ -18,7 +18,7 @@ images:
   - name: ghcr.io/kayodevv/charon-core-backend
     newTag: v1.0.3
   - name: ghcr.io/kayodevv/charon-ml-layer
-    newTag: v1.0.1
+    newTag: v1.1.0
   - name: ghcr.io/kayodevv/charon-verdict-layer
     newTag: v1.0.1
   - name: ghcr.io/kayodevv/charon-llm-layer

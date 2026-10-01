@@ -24,7 +24,12 @@
     "pdf_object_stream_count",
     "pdf_incremental_updates",
     "pdf_has_jbig2",
-    "pdf_has_richmedia"
+    "pdf_has_richmedia",
+    "pdf_file_size",
+    "pdf_font_count",
+    "pdf_image_count",
+    "pdf_annot_count",
+    "pdf_link_count"
   ],
-  "threshold": 0.7509031102699215
+  "threshold": 0.4271101511351985
 }

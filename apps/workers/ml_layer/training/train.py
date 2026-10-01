@@ -9,6 +9,7 @@ untouched test set.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 
 import numpy as np
@@ -24,7 +25,12 @@ logger = logging.getLogger(__name__)
 _DEFAULT_PARAMS: dict[str, object] = {
     "n_estimators": 500,
     "learning_rate": 0.05,
-    "num_leaves": 63,
+    "num_leaves": 31,
+    "min_child_samples": 50,
+    "subsample": 0.8,
+    "subsample_freq": 1,
+    "colsample_bytree": 0.8,
+    "reg_lambda": 1.0,
     "class_weight": "balanced",
     "random_state": 42,
     "n_jobs": -1,
@@ -56,7 +62,7 @@ def _deduplicate(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _feature_groups(features: np.ndarray) -> np.ndarray:
-    return np.array([hash(row.tobytes()) for row in features])
+    return np.array([hashlib.sha256(row.tobytes()).hexdigest() for row in features])
 
 
 def _grouped_holdout(

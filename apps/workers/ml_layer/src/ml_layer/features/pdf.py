@@ -44,7 +44,8 @@ class _Signals:
 
 # Append-only. The first block is legacy static structure; the "modern" block
 # targets today's multi-page, JS-free, URL-driven malware; the exploit block is
-# informed by the CIC-Evasive feature set. Files trained on an older, shorter
+# informed by the CIC-Evasive feature set; the layout block tells a real
+# document (fonts, images, size) from a lure built around a link. Files trained on an older, shorter
 # FEATURE_ORDER stay compatible because the analyzer slices to the model width.
 FEATURE_ORDER: list[str] = [
     "entropy",
@@ -72,6 +73,11 @@ FEATURE_ORDER: list[str] = [
     "pdf_incremental_updates",
     "pdf_has_jbig2",
     "pdf_has_richmedia",
+    "pdf_file_size",
+    "pdf_font_count",
+    "pdf_image_count",
+    "pdf_annot_count",
+    "pdf_link_count",
 ]
 
 _SUSPICIOUS_JS_PATTERNS: list[re.Pattern[bytes]] = [
@@ -94,6 +100,9 @@ _EOF_MARKER = b"%%EOF"
 _JBIG2_FILTER = "/JBIG2Decode"
 _OBJECT_STREAM_TYPE = "/ObjStm"
 _RICHMEDIA = "/RichMedia"
+_FONT_TYPE = pikepdf.Name("/Font")
+_IMAGE_SUBTYPE = pikepdf.Name("/Image")
+_LINK_SUBTYPE = pikepdf.Name("/Link")
 
 # Performance caps: entropy stabilises within the first megabyte; oversized
 # streams are images/fonts, not scripts; and the security-relevant objects of a
@@ -248,6 +257,28 @@ def _extract_object_signals(pdf: pikepdf.Pdf, *, sig: _Signals) -> None:
                 queue.append(item)
 
 
+def _layout_counts(pdf: pikepdf.Pdf) -> dict[str, float]:
+    fonts = images = annots = links = 0
+    for obj in pdf.objects:
+        if isinstance(obj, pikepdf.Dictionary | pikepdf.Stream):
+            fonts += obj.get("/Type") == _FONT_TYPE
+            images += obj.get("/Subtype") == _IMAGE_SUBTYPE
+    for page in pdf.pages:
+        page_annots = page.obj.get("/Annots")
+        if isinstance(page_annots, pikepdf.Array):
+            annots += len(page_annots)
+            links += sum(
+                isinstance(a, pikepdf.Dictionary) and a.get("/Subtype") == _LINK_SUBTYPE
+                for a in page_annots
+            )
+    return {
+        "pdf_font_count": float(fonts),
+        "pdf_image_count": float(images),
+        "pdf_annot_count": float(annots),
+        "pdf_link_count": float(links),
+    }
+
+
 class PDFFeatureExtractor:
     def extract(self, data: bytes) -> dict[str, float]:
         features = _zero_features()
@@ -259,6 +290,7 @@ class PDFFeatureExtractor:
             return features
 
         features["entropy"] = shannon_entropy(data[:_ENTROPY_SAMPLE_BYTES])
+        features["pdf_file_size"] = float(len(data))
 
         try:
             features["pdf_header_version"] = float(pdf.pdf_version)
@@ -272,6 +304,11 @@ class PDFFeatureExtractor:
 
         features["pdf_object_count"] = float(len(list(pdf.objects)))
         features["pdf_incremental_updates"] = float(data.count(_EOF_MARKER))
+
+        try:
+            features.update(_layout_counts(pdf))
+        except Exception:  # noqa: BLE001
+            pass
 
         sig = _Signals()
         _extract_object_signals(pdf, sig=sig)

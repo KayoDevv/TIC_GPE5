@@ -31,8 +31,8 @@ def extractor() -> PDFFeatureExtractor:
 
 
 class TestFeatureOrder:
-    def test_feature_order_has_25_entries(self) -> None:
-        assert len(FEATURE_ORDER) == 25
+    def test_feature_order_has_30_entries(self) -> None:
+        assert len(FEATURE_ORDER) == 30
 
     def test_feature_order_has_no_duplicates(self) -> None:
         assert len(FEATURE_ORDER) == len(set(FEATURE_ORDER))
@@ -64,6 +64,11 @@ class TestFeatureOrder:
             "pdf_incremental_updates",
             "pdf_has_jbig2",
             "pdf_has_richmedia",
+            "pdf_file_size",
+            "pdf_font_count",
+            "pdf_image_count",
+            "pdf_annot_count",
+            "pdf_link_count",
         }
         assert set(FEATURE_ORDER) == expected
 
@@ -646,3 +651,45 @@ class TestExploitVectorFeatures:
         sig = _Signals()
         _inspect_dict_entry("/Subtype", pikepdf.Name("/Widget"), sig)
         assert sig.richmedia_found is False
+
+
+class TestLayoutFeatures:
+    @staticmethod
+    def _layout_pdf() -> bytes:
+        pdf = pikepdf.Pdf.new()
+        pdf.add_blank_page(page_size=(612, 792))
+        pdf.add_blank_page(page_size=(612, 792))
+        font = pdf.make_indirect(
+            pikepdf.Dictionary(Type=pikepdf.Name("/Font"), Subtype=pikepdf.Name("/Type1"))
+        )
+        image = pdf.make_stream(b"\x00" * 4)
+        image.Subtype = pikepdf.Name("/Image")
+        link = pikepdf.Dictionary(Type=pikepdf.Name("/Annot"), Subtype=pikepdf.Name("/Link"))
+        note = pikepdf.Dictionary(Type=pikepdf.Name("/Annot"), Subtype=pikepdf.Name("/Text"))
+        page = pdf.pages[0]
+        page.obj["/Resources"] = pikepdf.Dictionary(
+            Font=pikepdf.Dictionary(F1=font), XObject=pikepdf.Dictionary(Im1=image)
+        )
+        page.obj["/Annots"] = pikepdf.Array([link, note, pikepdf.Integer(1)])
+        pdf.pages[1].obj["/Annots"] = pikepdf.Name("/NotAnArray")
+        pdf.Root["/Extra"] = pdf.make_indirect(pikepdf.Array([1]))
+        buf = io.BytesIO()
+        pdf.save(buf)
+        return buf.getvalue()
+
+    def test_counts_fonts_images_annots_and_links(self, extractor: PDFFeatureExtractor) -> None:
+        data = self._layout_pdf()
+        features = extractor.extract(data)
+        assert features["pdf_file_size"] == float(len(data))
+        assert features["pdf_font_count"] == 1.0
+        assert features["pdf_image_count"] == 1.0
+        assert features["pdf_annot_count"] == 3.0
+        assert features["pdf_link_count"] == 1.0
+
+    def test_layout_failure_keeps_other_features(
+        self, extractor: PDFFeatureExtractor, minimal_pdf_bytes: bytes
+    ) -> None:
+        with patch("ml_layer.features.pdf._layout_counts", side_effect=RuntimeError):
+            features = extractor.extract(minimal_pdf_bytes)
+        assert features["pdf_font_count"] == 0.0
+        assert features["pdf_page_count"] == 1.0

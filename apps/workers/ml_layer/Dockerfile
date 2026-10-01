@@ -1,5 +1,5 @@
-# ghcr-image: charon-ml-layer:v1.0.1
-# ML Layer — "The Static Analyst". Consumes file.requested, extracts 16 static
+# ghcr-image: charon-ml-layer:v1.1.0
+# ML Layer — "The Static Analyst". Consumes file.requested, extracts 30 static
 # PDF features (pikepdf) and scores them with a LightGBM->ONNX model, producing
 # ml_layer.result. SLA < 500 ms.
 # Build context = monorepo root: make build-<service>
@@ -41,9 +41,11 @@ RUN pip install --no-cache-dir ./packages/core \
         "pydantic-settings>=2.5,<3"
 
 COPY apps/workers/ml_layer/src /app/apps/workers/ml_layer/src
-# The trained model ships inside the image (read at startup; MODEL_PATH above).
+# The trained model ships inside the image (read at startup; MODEL_PATH above),
+# with its sidecar: without it the tuned threshold is lost and scores are raw.
 COPY apps/workers/ml_layer/models/ml_model_pdf.onnx \
-     /app/apps/workers/ml_layer/models/ml_model_pdf.onnx
+     apps/workers/ml_layer/models/ml_model_pdf.metadata.json \
+     /app/apps/workers/ml_layer/models/
 
 # Non-root UID (distinct from sandbox=10001, llm=10003,
 # core-backend=10004).
