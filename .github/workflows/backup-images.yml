@@ -17,7 +17,6 @@ on:
 
 permissions:
   contents: read
-  packages: write
 
 concurrency:
   group: backup-images
@@ -30,6 +29,10 @@ jobs:
   backup:
     name: Snapshot ${{ github.event.inputs.source }} -> ${{ github.event.inputs.target }}
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
     steps:
       - uses: actions/checkout@v7
 

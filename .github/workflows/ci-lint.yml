@@ -14,9 +14,9 @@ concurrency:
 
 jobs:
   # Each linter runs only when files it cares about change (see .github/filters.yml).
-  # A PR that touches none of them (e.g. Python-only or docs-only) runs no linter.
   changes:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     outputs:
       yaml: ${{ steps.filter.outputs.lint-yaml }}
       k8s: ${{ steps.filter.outputs.lint-k8s }}
@@ -35,6 +35,7 @@ jobs:
     if: ${{ needs.changes.outputs.yaml == 'true' }}
     name: YAML Syntax Check
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -56,6 +57,7 @@ jobs:
     if: ${{ needs.changes.outputs.k8s == 'true' }}
     name: Kubernetes Manifest Validation
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -108,6 +110,7 @@ jobs:
     if: ${{ needs.changes.outputs.docker == 'true' }}
     name: Dockerfile Lint
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -134,6 +137,7 @@ jobs:
     if: ${{ needs.changes.outputs.compose == 'true' }}
     name: Docker Compose Validation
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -155,6 +159,7 @@ jobs:
     if: ${{ needs.changes.outputs.terraform == 'true' }}
     name: Terraform Validation
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -191,6 +196,7 @@ jobs:
     if: ${{ always() }}
     needs: [changes, yaml-lint, kube-validate, dockerfile-lint, docker-compose-validate, terraform-validate]
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Fail if any linter failed
         run: |

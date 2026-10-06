@@ -1,28 +1,23 @@
 name: CI — Tests
 
-# Runs on every PR to main and on direct pushes to main / feat branches.
-# All jobs must pass before a PR can be merged (enforce in branch ruleset).
-
 on:
   pull_request:
     branches: [main]
 
 permissions:
-  contents: read   # checkout only — no write needed
+  contents: read
   pull-requests: read   # dorny/paths-filter lists changed files via the PR API
 
-# Cancel superseded runs on the same branch/PR to save runner minutes.
 concurrency:
   group: ci-tests-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
 
-  # Detect which suites a PR affects (see .github/filters.yml). Each suite runs
-  # only when its own sources or the shared zt_shared lib change; a docs-only PR
-  # runs no test job at all.
+  # Each suite runs only when its sources change (see .github/filters.yml).
   changes:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     outputs:
       test-core: ${{ steps.filter.outputs.test-core }}
       test-ml-layer: ${{ steps.filter.outputs.test-ml-layer }}
@@ -40,13 +35,13 @@ jobs:
 
   # ────────────────────────────────────────────────────────────────────────────
   # packages/core — Pydantic event models + Kafka producer/consumer
-  # Foundation of the whole pipeline: all other Python packages depend on it.
   # ────────────────────────────────────────────────────────────────────────────
   test-core:
     needs: changes
     if: ${{ needs.changes.outputs.test-core == 'true' }}
     name: Test · packages/core
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
       - uses: actions/checkout@v7
@@ -71,13 +66,13 @@ jobs:
 
   # ────────────────────────────────────────────────────────────────────────────
   # apps/workers/ml_layer — static PDF analysis (LightGBM / ONNX Runtime)
-  # Depends on test-core: validates the foundation before building on it.
   # ────────────────────────────────────────────────────────────────────────────
   test-ml-layer:
     needs: changes
     if: ${{ needs.changes.outputs.test-ml-layer == 'true' }}
     name: Test · apps/workers/ml_layer
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
       - uses: actions/checkout@v7
@@ -102,23 +97,16 @@ jobs:
 
   # ────────────────────────────────────────────────────────────────────────────
   # apps/workers/sandbox_layer — behavioural analysis engine (pure core only)
-  #
-  # What runs here: golden tests + hypothesis unit tests (test_golden_core.py,
-  # test_lolbins.py, test_pipeline_order.py). These are 100 % pure — no
-  # subprocess, no I/O, no real sample, no K8s, no strace.
-  #
-  # What does NOT run here: the imperative shell (strace, MinIO, K8s Job
-  # creation). That is validated on the VM via `make sandbox-validate`.
-  #
-  # Deps: aiokafka is needed because run_analysis.py / run_pdf_analysis.py
-  # import AIOKafkaProducer at module level (even though the tests never call
-  # the Kafka code path).
   # ────────────────────────────────────────────────────────────────────────────
+  # Pure core only (golden + hypothesis unit tests): no subprocess, I/O, K8s or strace
+  # — the imperative shell is validated on the VM via `make sandbox-validate`.
+  # aiokafka is still required: run_analysis.py imports AIOKafkaProducer at module level.
   test-sandbox-layer:
     needs: changes
     if: ${{ needs.changes.outputs.test-sandbox-layer == 'true' }}
     name: Test · apps/workers/sandbox_layer (pure core)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
       - uses: actions/checkout@v7
@@ -173,6 +161,7 @@ jobs:
     if: ${{ needs.changes.outputs.test-core-backend == 'true' }}
     name: Test · apps/core-backend
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
       - uses: actions/checkout@v7
@@ -203,6 +192,7 @@ jobs:
     if: ${{ needs.changes.outputs.test-verdict-layer == 'true' }}
     name: Test · apps/workers/verdict_layer
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
       - name: Setup Python + Poetry
@@ -228,6 +218,7 @@ jobs:
     if: ${{ needs.changes.outputs.test-llm-layer == 'true' }}
     name: Test · apps/workers/llm_layer
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
       - name: Setup Python + Poetry
@@ -253,6 +244,7 @@ jobs:
     if: ${{ needs.changes.outputs.test-frontend == 'true' }}
     name: Test · apps/frontend
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
@@ -291,6 +283,7 @@ jobs:
       - test-sandbox-layer
       - test-frontend
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Fail if any test suite failed
         run: |

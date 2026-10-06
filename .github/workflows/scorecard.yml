@@ -1,0 +1,68 @@
+name: OpenSSF Scorecard
+
+# Supply-chain / CI posture audit (Token-Permissions, Dangerous-Workflow,
+# Pinned-Dependencies…). Private repo without GitHub Advanced Security, so the
+# SARIF-to-code-scanning path is unavailable: results are rendered to the run
+# summary and kept as a downloadable JSON artifact instead, and publish_results
+# is off (publishing is public-repo only).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+    paths: ['.github/**']
+  schedule:
+    - cron: '27 3 * * 1'
+  workflow_dispatch:
+
+permissions: read-all
+
+concurrency:
+  group: scorecard-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analysis:
+    name: Scorecard analysis
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Run Scorecard
+        uses: ossf/scorecard-action@v2.4.4
+        with:
+          results_file: scorecard.json
+          results_format: json
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_results: false
+
+      - name: Render summary
+        if: ${{ always() && hashFiles('scorecard.json') != '' }}
+        run: |
+          {
+            echo "## OpenSSF Scorecard"
+            echo ""
+            echo "Aggregate score: **$(jq -r '.score // "n/a"' scorecard.json)**"
+            echo ""
+            echo "| Check | Score | Reason |"
+            echo "|---|---|---|"
+            jq -r '.checks[] | "| \(.name) | \(.score) | \(.reason) |"' scorecard.json
+            echo ""
+            echo "### Token-Permissions & Dangerous-Workflow"
+            jq -r '.checks[]
+              | select(.name == "Token-Permissions" or .name == "Dangerous-Workflow")
+              | "\n**\(.name)** — score \(.score)\n"
+                + ((.details // []) | map("- " + .) | join("\n"))' scorecard.json
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload results
+        if: ${{ always() && hashFiles('scorecard.json') != '' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: scorecard-results
+          path: scorecard.json
+          retention-days: 7

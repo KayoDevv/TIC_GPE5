@@ -1,11 +1,7 @@
 name: CI — Build Docker Images
 
-# Verification-only build on every PR to main.
-# Goal: confirm every Dockerfile compiles cleanly and has no CRITICAL/HIGH CVEs
-# before merge. Nothing is pushed — the actual push happens in cd-deploy.yml.
-#
-# The service matrix lives in .github/service-matrix.json — single source of
-# truth shared with cd-deploy.yml, so the two workflows never diverge.
+# Verification-only: build + Trivy-scan changed images, push nothing.
+# Service matrix: .github/service-matrix.json (shared with cd-publish-images / cd-deploy).
 
 on:
   pull_request:
@@ -20,10 +16,10 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Detect which services a PR touches (see .github/filters.yml). Only those get
-  # built/scanned; a PR that touches nothing buildable builds nothing.
+  # Only services a PR touches get built/scanned (see .github/filters.yml).
   changes:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     outputs:
       services: ${{ steps.filter.outputs.changes }}
     steps:
@@ -36,6 +32,7 @@ jobs:
   load-matrix:
     needs: changes
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     outputs:
       matrix: ${{ steps.read.outputs.matrix }}
       has: ${{ steps.read.outputs.has }}
@@ -58,6 +55,7 @@ jobs:
     name: Build · ${{ matrix.name }}
     needs: load-matrix
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.load-matrix.outputs.matrix) }}
@@ -120,6 +118,7 @@ jobs:
     if: ${{ always() }}
     needs: [changes, load-matrix, build]
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Fail if any upstream job failed
         run: |

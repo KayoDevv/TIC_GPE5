@@ -23,6 +23,7 @@ jobs:
   # ruleset). The matrix below only runs when a schema actually changed.
   changes:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     outputs:
       schemas: ${{ steps.filter.outputs.schemas }}
     steps:
@@ -37,6 +38,7 @@ jobs:
     if: ${{ needs.changes.outputs.schemas == 'true' }}
     name: BACKWARD_TRANSITIVE · ${{ matrix.schema }}
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     strategy:
       fail-fast: false   # check all schemas, not just the first broken one
       matrix:
@@ -104,6 +106,7 @@ jobs:
     if: ${{ always() }}
     needs: [changes, check]
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Fail if the schema check failed
         run: |

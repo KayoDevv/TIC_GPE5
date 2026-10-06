@@ -20,6 +20,7 @@ jobs:
   # the ruleset). The contract job only runs when sandbox/llm/contract change.
   changes:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     outputs:
       contract: ${{ steps.filter.outputs.contract }}
     steps:
@@ -34,6 +35,7 @@ jobs:
     if: ${{ needs.changes.outputs.contract == 'true' }}
     name: Validate sandbox -> LLM contract
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
 
@@ -112,6 +114,7 @@ jobs:
     if: ${{ always() }}
     needs: [changes, contract]
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Fail if the contract check failed
         run: |

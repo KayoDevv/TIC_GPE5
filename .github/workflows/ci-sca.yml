@@ -16,6 +16,7 @@ jobs:
   # Only when a manifest or lock file moves. See .github/filters.yml.
   changes:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     outputs:
       sca: ${{ steps.filter.outputs.sca }}
     steps:
@@ -30,6 +31,7 @@ jobs:
     if: ${{ needs.changes.outputs.sca == 'true' }}
     name: Dependency CVEs
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -72,6 +74,7 @@ jobs:
     if: ${{ always() }}
     needs: [changes, dependencies]
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Fail if the scan failed
         run: |

@@ -1,6 +1,6 @@
 # CHARON — Trivy CVE Suppression
 # Each entry is a conscious, documented acceptance of risk.
-# Reviewed: 2026-07-22
+# Reviewed: 2026-10-01
 
 # ── pdfjs-dist ──────────────────────────────────────────────────────────────
 # CVE-2024-4367 — Arbitrary JavaScript execution in PDF.js (HIGH)
@@ -41,6 +41,13 @@ CVE-2025-66471
 CVE-2026-21441
 # CVE-2026-44431 — information disclosure via cross-origin redirect header forwarding
 CVE-2026-44431
+# CVE-2026-97687 — HTTPS proxy TLS config override -> traffic interception (fixed 2.8.0) (HIGH)
+# CVE-2026-97689 — DoS via unbounded memory in the chunk parser (fixed 2.8.0) (HIGH)
+# Same class: both require urllib3 to drive outbound HTTP to an attacker peer.
+# Sandbox agents have deny-all egress; llm-layer reaches vLLM via httpx, not
+# urllib3 (it only shows up via an inaccurate third-party SBOM there).
+CVE-2026-97687
+CVE-2026-97689
 
 # ── starlette (FastAPI dependency, core-backend) ─────────────────────────────
 # starlette==0.46.2 is pulled in by fastapi in the charon-core-backend image.
@@ -75,3 +82,27 @@ CVE-2026-54283
 GHSA-6v7p-g79w-8964
 # CVE-2025-47273 — setuptools 70.3.0 path traversal in PackageIndex (HIGH)
 CVE-2025-47273
+
+# ── openssl / libssl (sandbox images, runtime) ────────────────────────────────────────
+# Affected images: ubuntu-sandbox, ubuntu-pdf-sandbox (ubuntu 22.04),
+# sandbox-consumer (debian 13.7).
+#
+# Accepted: both CVEs act on attacker-controlled TLS/QUIC/DTLS traffic. The
+# detonation agents run under a Calico NetworkPolicy with deny-all egress
+# (charon.io/role=analysis) -> no outbound TLS at all. The consumer only opens
+# client connections to known in-cluster services (Kafka, MinIO, API server);
+# it never terminates DTLS/QUIC nor talks to an attacker peer. Fixed in the next
+# OS package bump -> revisit on base rebuild.
+#
+# CVE-2026-84782 — information disclosure via DTLS handshake retransmission (HIGH)
+CVE-2026-84782
+# CVE-2026-75804 — DoS via unenforced QUIC connection flow control (HIGH)
+CVE-2026-75804
+
+# ── libpcre2 (sandbox-consumer, debian) ────────────────────────────────────────
+# CVE-2026-103111 — out-of-bounds write via a crafted regular expression (HIGH)
+#
+# Accepted: exploiting this needs an ATTACKER-CONTROLLED regex. The consumer
+# only compiles its own fixed patterns (job labels, parsing); no sample input is
+# ever used as a regex. Fixed in libpcre2 deb13u3 -> revisit on base rebuild.
+CVE-2026-103111
