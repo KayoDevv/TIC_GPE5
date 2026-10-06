@@ -19,10 +19,13 @@ boto3 = "^1.42.97"
 python-jose = { version = "^3.3.0", extras = ["cryptography"] }
 pydantic = "^2.13.4"
 pydantic-settings = "^2.6.0"
-python-multipart = "^0.0.20"
+python-multipart = ">=0.0.30,<0.1"  # CVE-2026-24486/42561/53539
 httpx = "^0.28.1"
 zt-shared = { path = "../../packages/core", develop = true }
 redis = "^5.2.0"
+urllib3 = ">=2.8"  # pin transitive (boto3) to clear CVE-2026-97687/97689
+cryptography = ">=50.0.0"  # pin transitive (python-jose) to clear CVE-2026-69247/69249 + GHSA-537c-gmf6-5ccf
+pyasn1 = ">=0.6.4"  # pin transitive (python-jose/rsa/ecdsa) to clear CVE-2026-59884/59885/59886
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3.0"

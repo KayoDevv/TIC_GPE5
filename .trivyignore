@@ -67,11 +67,14 @@ CVE-2026-48818
 CVE-2026-54283
 
 # ── pip vendored libs (llm-layer) ───────────────────────────────────────────
-# python:3.14-slim ships pip 26.2.1, which vendors msgpack and setuptools under
-# pip/_vendor/. Trivy reads pip/_vendor/vendor.txt and reports both as fixable,
-# but neither is installed as a distribution and neither can be upgraded: the
-# versions are frozen inside pip itself and 26.2.1 is the latest release, so no
-# `pip install --upgrade` changes what vendor.txt declares.
+# python:3.14-slim ships pip 26.2.1, which vendors msgpack, setuptools and
+# urllib3 under pip/_vendor/. Trivy reads pip/_vendor/vendor.txt and reports
+# them as fixable, but none is installed as a distribution and none can be
+# upgraded: the versions are frozen inside pip itself and 26.2.1 is the latest
+# release, so no `pip install --upgrade` changes what vendor.txt declares.
+# (urllib3 is NOT a real dependency of llm-layer — its only runtime deps are
+# httpx and zt-shared; it appears zero times in poetry.lock. The 2.7.0 Trivy
+# sees is solely pip's vendored copy.)
 #
 # Not exploitable here: the vendored code only ever runs when pip runs, and
 # nothing in the image invokes pip after build — the container starts

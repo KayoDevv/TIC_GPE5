@@ -13,16 +13,18 @@ packages = [{include = "ml_layer", from = "src"}]
 python = "^3.11"
 pikepdf = "^10.9"
 onnxruntime = "^1.27"
-numpy = "^2.4"
+numpy = ">=1.26,<2"  # VM GPE-NYX is x86-64-v1: NumPy 2.x manylinux wheels (x86-64-v2) crash at import
 zt-shared = { path = "../../../packages/core", develop = true }
 boto3 = "^1.43.40"
 httpx = "^0.28.1"
 pydantic-settings = "^2.5"
+urllib3 = ">=2.8"  # pin transitive (boto3) to clear CVE-2026-97687/97689
+pillow = ">=12.3.0"  # pin transitive (pikepdf) to clear CVE-2026-54058..59205
 
 [tool.poetry.group.training.dependencies]
 lightgbm = "^4.5"
 scikit-learn = "^1.5"
-pandas = "^3.0"
+pandas = ">=2.2,<3"  # follows numpy<2 (VM constraint); pandas 3.x requires numpy>=2.3
 onnxmltools = "^1.13"
 skl2onnx = "^1.17"
 pyzipper = "^0.4.0"

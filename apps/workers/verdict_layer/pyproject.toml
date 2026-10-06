@@ -9,6 +9,7 @@ packages = [{ include = "verdict_layer", from = "src" }]
 [tool.poetry.dependencies]
 python = "^3.11"
 redis = "^5.2.0"
+pyjwt = ">=2.15"  # pin transitive (redis) to clear CVE-2026-102268
 aiokafka = "^0.12.0"
 pydantic = "^2.9.0"
 pydantic-settings = "^2.6.0"
