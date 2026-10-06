@@ -11,7 +11,7 @@ ML_VERSION       ?= v1.1.0
 VERDICT_VERSION  ?= v1.0.2
 LLM_VERSION      ?= v1.0.1
 SINKHOLE_VERSION ?= v1.0.1
-WEBSITE_VERSION  ?= v1.1.7
+WEBSITE_VERSION  ?= v1.1.8
 
 AGENT_IMAGE    := ghcr.io/$(OWNER)/ubuntu-sandbox:$(AGENT_VERSION)
 PDF_IMAGE      := ghcr.io/$(OWNER)/ubuntu-pdf-sandbox:$(PDF_VERSION)
