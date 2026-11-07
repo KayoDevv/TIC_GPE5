@@ -1,4 +1,4 @@
-# ghcr-image: ubuntu-sandbox:v1.2.1
+# ghcr-image: ubuntu-sandbox:v1.2.2
 # Hardened guest image for ELF sample execution.
 # Runs in a batch/v1 K8s Job with cap SYS_PTRACE.
 # Contains the analysis agent (run_analysis.py) + Python deps.
@@ -40,7 +40,7 @@ RUN echo "base packages for ${IMAGE_VERSION}" \
 RUN pip3 install --no-cache-dir \
     aiokafka==0.10.0 \
     pydantic==2.7.1 \
-    urllib3==2.2.1
+    urllib3==2.8.0
 
 # Anti-sandbox decoys — fake user files
 RUN mkdir -p /home/user/Documents /home/user/Downloads /home/user/Desktop && \
