@@ -1,4 +1,4 @@
-# ghcr-image: ubuntu-pdf-sandbox:v1.2.2
+# ghcr-image: ubuntu-pdf-sandbox:v1.2.3
 # PDF sandbox image.
 # Runs in a batch/v1 K8s Job with cap SYS_PTRACE.
 # Tools: mupdf 1.24.10 (built from source) + pdfid + strace + Python agent
@@ -148,7 +148,7 @@ RUN ldconfig
 RUN pip3 install --no-cache-dir \
     aiokafka==0.10.0 \
     pydantic==2.7.1 \
-    urllib3==2.2.1
+    urllib3==2.8.0
 
 # Didier Stevens' pdfid (the real one — PyPI pdfid != this tool)
 # Pinning: pass --build-arg PDFID_COMMIT=<sha> --build-arg PDFID_SHA256=<sha256>
