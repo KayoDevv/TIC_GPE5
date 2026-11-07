@@ -1,4 +1,4 @@
-# ghcr-image: charon-ml-layer:v1.1.1
+# ghcr-image: charon-ml-layer:v1.1.2
 # ML Layer — "The Static Analyst". Consumes file.requested, extracts 30 static
 # PDF features (pikepdf) and scores them with a LightGBM->ONNX model, producing
 # ml_layer.result. SLA < 500 ms.

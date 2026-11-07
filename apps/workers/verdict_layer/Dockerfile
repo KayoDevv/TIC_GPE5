@@ -1,4 +1,4 @@
-# ghcr-image: charon-verdict-layer:v1.0.3
+# ghcr-image: charon-verdict-layer:v1.0.4
 
 # ── Builder: hash-pinned deps into an isolated venv # ──
 FROM python:3.12-slim AS builder
