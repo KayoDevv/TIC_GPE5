@@ -53,3 +53,10 @@ GHSA-6v7p-g79w-8964
 CVE-2026-114613
 # CVE-2025-47273 — setuptools 70.3.0 path traversal in PackageIndex (HIGH)
 CVE-2025-47273
+# urllib3 CVEs below are pip 26.2.1's vendored copy (urllib3 2.7.0), not a
+# runtime dependency of llm-layer and not upgradable (frozen inside pip). The
+# real urllib3 in the sandbox agents was bumped to 2.8.0 instead.
+# CVE-2026-97687 — urllib3 HTTPS-proxy TLS config override -> interception (HIGH)
+CVE-2026-97687
+# CVE-2026-97689 — urllib3 DoS via unbounded memory in the chunk parser (HIGH)
+CVE-2026-97689
