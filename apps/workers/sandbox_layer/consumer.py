@@ -50,7 +50,7 @@ GROUP_ID        = os.getenv("KAFKA_GROUP_ID", "charon-sandbox-v1")
 K8S_NAMESPACE   = os.getenv("K8S_NAMESPACE", "sandbox")
 JOB_IMAGE       = os.environ["SANDBOX_JOB_IMAGE"]
 PDF_JOB_IMAGE   = os.environ["SANDBOX_PDF_JOB_IMAGE"]
-TIMEOUT_S       = int(os.getenv("SANDBOX_TIMEOUT_S", "180"))
+TIMEOUT_S       = int(os.getenv("SANDBOX_TIMEOUT_S", "300"))
 PUBLISH_MARGIN_S = 60  # extra wall-clock after analysis for the Job to publish its result
 MINIO_ENDPOINT  = os.getenv("MINIO_ENDPOINT", "minio.minio.svc.cluster.local:9000")
 

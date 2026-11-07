@@ -740,7 +740,7 @@ run-consumer:
 	K8S_NAMESPACE=sandbox \
 	SANDBOX_JOB_IMAGE=$(AGENT_IMAGE) \
 	SANDBOX_PDF_JOB_IMAGE=$(PDF_IMAGE) \
-	SANDBOX_TIMEOUT_S=180 \
+	SANDBOX_TIMEOUT_S=300 \
 	python3 apps/workers/sandbox_layer/consumer.py
 
 # ══════════════════════════════════════════════════════════════════════════════
