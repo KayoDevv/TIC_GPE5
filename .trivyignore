@@ -60,3 +60,20 @@ CVE-2025-47273
 CVE-2026-97687
 # CVE-2026-97689 — urllib3 DoS via unbounded memory in the chunk parser (HIGH)
 CVE-2026-97689
+
+# ── website npm build tooling (not shipped) ──────────────────────────────────
+# @simple-git/argv-parser, shell-quote and simple-git appear in
+# apps/website/package-lock.json as build-time tooling pulled transitively by the
+# Nuxt toolchain. The deployed website is a STATIC site: the `nuxt generate`
+# output is served by nginx-unprivileged (see apps/website/Dockerfile) and
+# node_modules never ships. These command-injection CVEs require attacker-
+# controlled input to a git/shell wrapper that only runs during the trusted CI
+# build, with no untrusted input. Revisit by bumping simple-git 4.x / shell-quote
+# 1.11 when the toolchain allows the major bump.
+#
+# CVE-2026-102829 — @simple-git/argv-parser 1.1.1 unsafe editor detection (CRITICAL)
+CVE-2026-102829
+# CVE-2026-102422 — shell-quote 1.10.0 arbitrary command execution (CRITICAL)
+CVE-2026-102422
+# CVE-2026-102828 — simple-git 3.36.0 unsafe-operation guard bypass (CRITICAL)
+CVE-2026-102828
