@@ -12,10 +12,10 @@ class Settings(BaseSettings):
     kafka_topic_verdict_result: str = "verdict.result"
 
     redis_url: str = "redis://localhost:6379/0"
-    redis_state_ttl_seconds: int = 300
+    redis_state_ttl_seconds: int = 360
     redis_lock_ttl_seconds: int = 3600
 
-    sandbox_timeout_seconds: int = 125
+    sandbox_timeout_seconds: int = 315
     reaper_interval_seconds: int = 5
 
     ml_block_threshold: int = 90

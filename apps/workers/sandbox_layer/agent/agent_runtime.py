@@ -24,7 +24,7 @@ KAFKA_BOOTSTRAP = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka.kafka.svc.cluster.
 TOPIC_OUT       = os.getenv("KAFKA_TOPIC_OUT", "sandbox_layer.result")
 MINIO_ENDPOINT  = os.getenv("MINIO_ENDPOINT", "minio.minio.svc.cluster.local:9000")
 EMAIL_CONTEXT   = json.loads(os.getenv("EMAIL_CONTEXT_JSON", "{}"))
-TIMEOUT_S       = int(os.getenv("SANDBOX_TIMEOUT_S", "120"))
+TIMEOUT_S       = int(os.getenv("SANDBOX_TIMEOUT_S", "300"))
 
 
 def get_logger(name: str) -> logging.Logger:

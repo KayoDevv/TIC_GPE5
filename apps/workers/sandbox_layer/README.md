@@ -43,7 +43,7 @@ ubuntu-sandbox (ELF)  /  ubuntu-pdf-sandbox (PDF)  pod (K8s Job, release-tagged)
 ## Analysis process (state-diff)
 
 1. **Snapshot BEFORE** — SHA-256 hashing over the FS (`/etc /home /tmp /var /opt`), `ps`, `ss`, crontab, systemd units
-2. **Instrumented execution** — `strace -f -tt -e trace=all` with the `SYS_PTRACE` cap, timeout `SANDBOX_TIMEOUT_S` (default: 120s)
+2. **Instrumented execution** — `strace -f -tt -e trace=all` with the `SYS_PTRACE` cap, timeout `SANDBOX_TIMEOUT_S` (default: 300s)
 3. **Memory forensics** — read `/proc/[pid]/maps` + `/proc/[pid]/mem`, extract RWX regions, decoded strings
 4. **Snapshot AFTER** — same scope
 5. **Diff** — files created/modified/deleted, new processes, opened sockets, crontab/systemd/persistence changes
@@ -183,7 +183,7 @@ egress only to those 2 namespaces + DNS + the K8s API — all other traffic is b
 | Capability | `SYS_PTRACE` only |
 | Seccomp | `charon-seccomp.json` (whitelist) |
 | NetworkPolicy | `analysis-deny-egress` — DENY-ALL egress |
-| Hard timeout | `activeDeadlineSeconds: 180` |
+| Hard timeout | `activeDeadlineSeconds: 360` (SANDBOX_TIMEOUT_S + 60) |
 | Resources | requests 500m/512Mi · limits 2000m/2Gi |
 
 ### NetworkPolicy consumer-egress — allowed destinations
