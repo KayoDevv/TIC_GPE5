@@ -22,4 +22,4 @@ images:
   - name: ghcr.io/kayodevv/charon-verdict-layer
     newTag: v1.0.4
   - name: ghcr.io/kayodevv/charon-llm-layer
-    newTag: v1.0.4
+    newTag: v1.0.5

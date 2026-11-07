@@ -1,4 +1,4 @@
-# ghcr-image: charon-llm-layer:v1.0.4
+# ghcr-image: charon-llm-layer:v1.0.5
 # LLM Layer — "The Semantic Analyst".
 # Consumes sandbox_layer.result, produces llm_layer.result (binary verdict + text).
 
