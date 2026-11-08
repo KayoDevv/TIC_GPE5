@@ -20,7 +20,7 @@ Core Backend (FastAPI)
     ▼                                                  ▼
 ML Layer                                        Sandbox Layer
 Static analysis (ONNX)                          Behavioral detonation (K8s Job · runc)
-SLA < 500 ms                                    SLA < 120 s
+SLA < 500 ms                                    SLA < 300 s
     │ ml_layer.result                                  │ sandbox_layer.result
     │                                                  ├──────────────────────┐
     │                                                  ▼                      │
@@ -45,18 +45,23 @@ SLA < 500 ms                                    SLA < 120 s
 | **Frontend** | Vue 3, WXT, TypeScript, Tailwind | Chrome/Edge extension (Manifest V3). Intercepts downloads, shows verdict UI | — |
 | **Core Backend** | Python, FastAPI | Entry point: validates (≤ 35 MB), uploads to S3/MinIO, emits Kafka event, pushes verdict via WebSocket | — |
 | **ML Layer** | Python, LightGBM/ONNX Runtime | Static analysis: entropy, PE sections, imports/exports → risk score 0–100 | < 500 ms |
-| **Sandbox Layer** | Python, K8s `batch/v1 Job` (hardened `runc` + seccomp, gVisor optional) | Behavioral detonation in isolated containers, `strace` + state-diff + `/proc` forensics → IOC list (MITRE ATT&CK) | < 120 s |
+| **Sandbox Layer** | Python, K8s `batch/v1 Job` (hardened `runc` + seccomp, gVisor optional) | Behavioral detonation in isolated containers, `strace` + state-diff + `/proc` forensics → IOC list (MITRE ATT&CK) | < 300 s |
 | **LLM Layer** | Python, vLLM, Llama-3.3-70B | Correlates email context + sandbox IOCs → binary decision + human-readable explanation | 3–5 s |
 | **Verdict Layer** | Python, Redis | Saga aggregator: collects async results, applies decision matrix, emits final verdict | — |
 
 ### Decision matrix
 
-| Condition | Verdict |
-|---|---|
-| `ml_layer.risk_score > 90` | `blocked` immediately (remaining layers run for audit logs) |
-| `llm_layer.is_malicious == true` | `blocked` |
-| Sandbox timeout after 125 s | `warning` or `blocked` (per-tenant config) |
-| All results received, none of the above | `allowed` |
+Precedence order (first match wins). The ML score is **advisory** — it never blocks on its own.
+
+| # | Condition | Verdict |
+|---|---|---|
+| ① | `llm_layer.is_malicious == true` | `blocked` |
+| ② | Sandbox verdict `malicious` | `blocked` (the LLM is not even called) |
+| ③ | Sandbox timeout (300 s) / Sandbox `error` | `blocked` or `warning` (per config) / `warning` |
+| ④ | `ml_layer.risk_score` (advisory) | `> 90` raises a clean verdict to `warning`; blocks **solo only `> 98`, and only when the behavioral analysis is partial** |
+| ⑤ | All results received, none of the above | `allowed` |
+
+A block dictated by the Sandbox is never overturned by the LLM.
 
 ### Frontend visual states
 
