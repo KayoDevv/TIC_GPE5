@@ -4,7 +4,7 @@
 # ml_layer.result. SLA < 500 ms.
 
 # ── Builder: hash-pinned deps into an isolated venv # ──
-FROM python:3.12-slim AS builder
+FROM python:3.16-rc-alpine3.23 AS builder
 
 WORKDIR /app
 ENV PIP_NO_CACHE_DIR=1 \
@@ -29,7 +29,7 @@ RUN find /opt/venv -depth -type d -name __pycache__ -exec rm -rf {} + 2>/dev/nul
     rm -rf /root/.cache
 
 # ── Final # ──
-FROM python:3.12-slim
+FROM python:3.16-rc-alpine3.23
 
 ARG IMAGE_VERSION=dev
 
